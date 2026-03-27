@@ -1,0 +1,6 @@
+node_modules
+g4-app/node_modules
+g4-app/dist
+g4-app/.env
+dist
+.env
