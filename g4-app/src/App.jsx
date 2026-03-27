@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import { AuthScreen } from "./AuthScreen.jsx";
 import { supabase } from "./lib/supabase.js";
+
+/**
+ * `true` — tylko zalogowani widzą dane (ustaw w .env przy deployu: VITE_REQUIRE_AUTH=true).
+ * Domyślnie / brak zmiennej — aplikacja publiczna (jak dotychczas, klucz anon w RLS).
+ */
+const requireAuth =
+  import.meta.env.VITE_REQUIRE_AUTH === "true" ||
+  import.meta.env.VITE_REQUIRE_AUTH === "1";
 
 /** Ciemny motyw, czytelna typografia — style inline, bez biblioteki UI. */
 const s = {
@@ -16,13 +25,6 @@ const s = {
     color: "#e8e8e8",
     background: "#070707",
     textAlign: "left",
-  },
-  h1: {
-    fontSize: "1.65rem",
-    marginTop: 0,
-    fontWeight: 600,
-    color: "#ffffff",
-    letterSpacing: "-0.03em",
   },
   h2: {
     fontSize: "1.15rem",
@@ -49,14 +51,17 @@ const s = {
     background: "#101010",
     marginBottom: "2rem",
   },
+  /** Rozbite border / tło — żeby nie mieszać shorthand z `borderColor` / `backgroundColor` przy podświetleniach (React 19). */
   input: {
     padding: "0.55rem 0.65rem",
-    border: "1px solid #3d3d3d",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#3d3d3d",
     borderRadius: "8px",
     font: "inherit",
     boxSizing: "border-box",
     width: "100%",
-    background: "#141414",
+    backgroundColor: "#141414",
     color: "#f5f5f5",
     outline: "none",
   },
@@ -301,6 +306,150 @@ function dataDoInputa(v) {
   return String(v).slice(0, 10);
 }
 
+/** YYYY-MM-DD do sortowania osi czasu; niepoprawne → null. */
+function dataDoSortuYYYYMMDD(v) {
+  const s = dataDoInputa(v);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+/** Wyświetlanie daty DD.MM.RRRR. */
+function dataPLZFormat(yyyymmdd) {
+  if (!yyyymmdd || !/^\d{4}-\d{2}-\d{2}$/.test(String(yyyymmdd))) return "—";
+  const s = String(yyyymmdd).slice(0, 10);
+  return `${s.slice(8, 10)}.${s.slice(5, 7)}.${s.slice(0, 4)}`;
+}
+
+/** Tekst z pola bazy — bezpiecznie; `x?.trim()` na liczbie/bool daje crash (`undefined()`). */
+function tekstTrim(v) {
+  if (v == null || v === "") return "";
+  return String(v).trim();
+}
+
+/** Kamień milowy uznany za „domknięty” — nie podświetlamy przeterminowania. */
+const KM_STATUS_PULPIT_ZAMKNIETE = new Set(["zrealizowane", "rozliczone", "anulowane"]);
+
+/** KR wymaga koordynacji (spotkanie / decyzja zleceniodawcy). */
+function pulpitKrRekordWymagaUwagi(rekord) {
+  if (!rekord) return false;
+  return tekstTrim(rekord.status).toLowerCase() === "oczekuje na zamawiającego";
+}
+
+/** Plan KM minął (dzień), a etap nie jest zamknięty — jak na pulpicie. */
+function pulpitKmPlanPrzeterminowany(row, dziśYYYYMMDD) {
+  const plan = dataDoSortuYYYYMMDD(row.data_planowana);
+  if (!plan || !dziśYYYYMMDD) return false;
+  if (plan >= dziśYYYYMMDD) return false;
+  const st = tekstTrim(row.status).toLowerCase();
+  if (KM_STATUS_PULPIT_ZAMKNIETE.has(st)) return false;
+  return true;
+}
+
+/** KM: zagrożenie, opis ryzyka lub plan po terminie przy etapie jeszcze „otwartym”. */
+function pulpitKmWymagaUwagi(row, dziśYYYYMMDD) {
+  if (row.zagrozenie === "tak" || row.zagrozenie === true) return true;
+  if (tekstTrim(row.zagrozenie_opis)) return true;
+  return pulpitKmPlanPrzeterminowany(row, dziśYYYYMMDD);
+}
+
+/** LOG: nierozwiązane zdarzenie — do dokończenia na spotkaniu. */
+function pulpitLogWymagaUwagi(row) {
+  const st = tekstTrim(row.status_zdarzenia).toLowerCase();
+  return st === "w trakcie" || st === "oczekuje";
+}
+
+/** Widok LOG: jest tekst w „Wymagane działanie” — podświetl to pole i „Odpowiedzialny”. */
+function logWidokPodswietlGdyJestWymaganeDzialanie(row) {
+  return !!tekstTrim(row.wymagane_dzialanie);
+}
+
+/** PW: planowy termin zlecenia minął (dzień kalendarzowy), a „Odebrane” nie jest zaznaczone. */
+function pulpitPwWymagaUwagi(z, dziśYYYYMMDD) {
+  if (z.czy_odebrane === true) return false;
+  const term = dataDoSortuYYYYMMDD(z.termin_zlecenia);
+  if (!term || !dziśYYYYMMDD) return false;
+  return term < dziśYYYYMMDD;
+}
+
+/** Podświetlenie inputu/selecta zgodne z regułami „wymaga uwagi” na pulpicie. */
+function stylPolaUwagiPulpitu(czyUwaga) {
+  if (!czyUwaga) return {};
+  return {
+    borderColor: "rgba(248,113,113,0.95)",
+    boxShadow: "0 0 0 1px rgba(248,113,113,0.45)",
+    backgroundColor: "rgba(248,113,113,0.14)",
+  };
+}
+
+function stylKomorkiTabeliUwagi(czyUwaga) {
+  if (!czyUwaga) return {};
+  return {
+    backgroundColor: "rgba(248,113,113,0.14)",
+    boxShadow: "inset 0 0 0 1px rgba(248,113,113,0.45)",
+  };
+}
+
+/** Krótka etykieta inline (np. status w nagłówku karty KR). */
+function stylEtykietyUwagiPulpitu(czyUwaga) {
+  if (!czyUwaga) return {};
+  return {
+    color: "#fecaca",
+    backgroundColor: "rgba(248,113,113,0.18)",
+    padding: "0.1rem 0.35rem",
+    borderRadius: "4px",
+    border: "1px solid rgba(248,113,113,0.5)",
+  };
+}
+
+const PULPIT_KIND_ORDER = { kr_start: 0, km: 1, pw: 2, log: 3 };
+
+/** Przy tym samym dniu na osi: PW — najpierw data zlecenia, potem termin planowy, na końcu oddanie faktyczne. */
+const PW_PULPIT_ANCHOR_ORDER = { data_zlecenia: 0, termin_zlecenia: 1, data_oddania: 2 };
+
+/** Mała ikonka typu wpisu na osi czasu pulpitu (KM / PW / LOG / start KR). */
+function pulpitIkonTypu(kind) {
+  const box = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "1.35rem",
+    height: "1.35rem",
+    flexShrink: 0,
+  };
+  const svg = (aria, color, pathD) => (
+    <span role="img" aria-label={aria} style={{ ...box, color }}>
+      <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden style={{ display: "block" }}>
+        <path fill="currentColor" d={pathD} />
+      </svg>
+    </span>
+  );
+  switch (kind) {
+    case "km":
+      return svg(
+        "KM — kamień milowy",
+        "#f87171",
+        "M6 3v18h2V9l11-3V6L8 8V3H6z",
+      );
+    case "pw":
+      return svg(
+        "PW — podwykonawca",
+        "#fbbf24",
+        "M10 2h4a2 2 0 0 1 2 2v2h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2V4a2 2 0 0 1 2-2zm0 4h4V4h-4v2z",
+      );
+    case "log":
+      return svg(
+        "LOG — dziennik",
+        "#38bdf8",
+        "M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h12v2H4v-2Z",
+      );
+    default:
+      return svg(
+        "Start projektu (KR)",
+        "#4ade80",
+        "M6 2h12v5H6V2Zm0 8h12v14H6V10Z",
+      );
+  }
+}
+
 /** Dziś w formacie YYYY-MM-DD (domyślna data zdarzenia w LOG). */
 function dzisiajDataYYYYMMDD() {
   const d = new Date();
@@ -346,6 +495,45 @@ const KM_STATUS_W_BAZIE = [
   "anulowane",
 ];
 
+/** Zgodnie z supabase/kamienie-milowe-typ-odniesienia.sql — co oznacza data odniesienia. */
+const KM_TYP_ODNIESIENIA_W_BAZIE = ["linia", "zlecenie"];
+
+/** Etykieta w UI / tabeli dla wartości typ_odniesienia. */
+function kmEtykietaTypuOdniesienia(typ) {
+  const t = String(typ ?? "").trim();
+  if (!t) return "";
+  if (t === "linia") return "Linia";
+  if (t === "zlecenie") return "Zlecenie";
+  return t;
+}
+
+/** Komórka tabeli: typ (linia / zlecenie) + data odniesienia. */
+function kmKomorkaOdniesienia(row) {
+  const typRaw = String(row.typ_odniesienia ?? "").trim();
+  const typLbl = typRaw ? kmEtykietaTypuOdniesienia(typRaw) : "";
+  const dataStr = row.data_odniesienia ? dataDoInputa(row.data_odniesienia) : "";
+  if (!typLbl && !dataStr) return "—";
+  return (
+    <>
+      {typLbl ? (
+        <span
+          style={{
+            display: "block",
+            fontSize: "0.68rem",
+            color: "#94a3b8",
+            fontWeight: 500,
+            marginBottom: dataStr ? "0.12rem" : 0,
+            lineHeight: 1.25,
+          }}
+        >
+          {typLbl}
+        </span>
+      ) : null}
+      <span>{dataStr || "—"}</span>
+    </>
+  );
+}
+
 /** Zgodnie z dziennik-zdarzen-kolumny.sql (CHECK) — status wpisu w LOG. */
 const LOG_STATUS_ZDARZENIA_W_BAZIE = ["w trakcie", "ukończone", "oczekuje"];
 
@@ -390,6 +578,26 @@ function logPustyForm() {
   };
 }
 
+function logWierszDoFormu(row) {
+  const stRaw = String(row.status_zdarzenia ?? "").trim();
+  const status = LOG_STATUS_ZDARZENIA_W_BAZIE.includes(stRaw) ? stRaw : "w trakcie";
+  return {
+    typ_zdarzenia: row.typ_zdarzenia != null ? String(row.typ_zdarzenia) : "",
+    opis: row.opis != null ? String(row.opis) : "",
+    data_zdarzenia: dataDoInputa(row.data_zdarzenia),
+    osoba_zglaszajaca:
+      row.osoba_zglaszajaca != null && row.osoba_zglaszajaca !== ""
+        ? String(row.osoba_zglaszajaca)
+        : "",
+    wymagane_dzialanie: row.wymagane_dzialanie != null ? String(row.wymagane_dzialanie) : "",
+    osoba_odpowiedzialna_za_zadanie:
+      row.osoba_odpowiedzialna_za_zadanie != null && row.osoba_odpowiedzialna_za_zadanie !== ""
+        ? String(row.osoba_odpowiedzialna_za_zadanie)
+        : "",
+    status_zdarzenia: status,
+  };
+}
+
 function zadaniePustyForm() {
   return {
     zadanie: "",
@@ -424,18 +632,121 @@ function zadanieWierszDoFormu(row) {
   };
 }
 
+function podwykonawcaPustyForm() {
+  return {
+    nazwa_firmy: "",
+    osoba_kontaktowa: "",
+    telefon: "",
+  };
+}
+
+function podwykonawcaWierszDoFormu(row) {
+  return {
+    nazwa_firmy: row.nazwa_firmy != null ? String(row.nazwa_firmy) : "",
+    osoba_kontaktowa: row.osoba_kontaktowa != null ? String(row.osoba_kontaktowa) : "",
+    telefon: row.telefon != null ? String(row.telefon) : "",
+  };
+}
+
+function krZleceniePwKwotaDoPayload(raw) {
+  const t = String(raw ?? "")
+    .trim()
+    .replace(/\s/g, "")
+    .replace(",", ".");
+  if (t === "") return null;
+  const n = Number.parseFloat(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function krZleceniePwKwotaEtykieta(wartosc) {
+  if (wartosc == null || wartosc === "") return "—";
+  const n =
+    typeof wartosc === "number"
+      ? wartosc
+      : Number.parseFloat(String(wartosc).replace(",", ".").replace(/\s/g, ""));
+  if (!Number.isFinite(n)) return "—";
+  return (
+    new Intl.NumberFormat("pl-PL", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n) + "\u00a0zł"
+  );
+}
+
+function krZleceniePwPustyForm() {
+  return {
+    podwykonawca_id: "",
+    numer_zlecenia: "",
+    opis_zakresu: "",
+    data_zlecenia: "",
+    termin_zlecenia: "",
+    data_oddania: "",
+    cena_netto: "",
+    czy_sprawdzone: false,
+    czy_odebrane: false,
+    status: "",
+    pracownik_weryfikacja: "",
+    osoba_faktury_nazwa: "",
+    osoba_faktury_email: "",
+    osoba_faktury_telefon: "",
+    uwagi: "",
+  };
+}
+
+function krZleceniePwWierszDoFormu(row) {
+  let cenaStr = "";
+  if (row.cena_netto != null && row.cena_netto !== "") {
+    const n =
+      typeof row.cena_netto === "number"
+        ? row.cena_netto
+        : Number.parseFloat(String(row.cena_netto).replace(",", "."));
+    cenaStr = Number.isFinite(n) ? String(n).replace(".", ",") : String(row.cena_netto);
+  }
+  return {
+    podwykonawca_id: row.podwykonawca_id != null ? String(row.podwykonawca_id) : "",
+    numer_zlecenia: row.numer_zlecenia != null ? String(row.numer_zlecenia) : "",
+    opis_zakresu: row.opis_zakresu != null ? String(row.opis_zakresu) : "",
+    data_zlecenia: dataDoInputa(row.data_zlecenia),
+    termin_zlecenia: dataDoInputa(row.termin_zlecenia),
+    data_oddania: dataDoInputa(row.data_oddania),
+    cena_netto: cenaStr,
+    czy_sprawdzone: row.czy_sprawdzone === true,
+    czy_odebrane: row.czy_odebrane === true,
+    status: row.status != null ? String(row.status) : "",
+    pracownik_weryfikacja:
+      row.pracownik_weryfikacja != null && row.pracownik_weryfikacja !== ""
+        ? String(row.pracownik_weryfikacja)
+        : "",
+    osoba_faktury_nazwa: row.osoba_faktury_nazwa != null ? String(row.osoba_faktury_nazwa) : "",
+    osoba_faktury_email: row.osoba_faktury_email != null ? String(row.osoba_faktury_email) : "",
+    osoba_faktury_telefon: row.osoba_faktury_telefon != null ? String(row.osoba_faktury_telefon) : "",
+    uwagi: row.uwagi != null ? String(row.uwagi) : "",
+  };
+}
+
 function kmPustyForm() {
   return {
+    typ_odniesienia: "",
+    data_odniesienia: "",
+    offset_miesiecy: "",
     data_planowana: "",
     etap: "",
     status: "",
-    data_realna: "",
     osoba_odpowiedzialna: "",
     uwagi: "",
     osiagniete: "",
     zagrozenie: "",
     zagrozenie_opis: "",
   };
+}
+
+/** Puste → null; liczba całkowita ≥ 0 → wartość; inaczej null (walidacja przy zapisie). */
+function offsetMiesiecyDoBazy(v) {
+  const s = String(v ?? "").trim();
+  if (s === "") return null;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
 }
 
 /** „tak” / „nie” / „” → boolean lub null (pusto w bazie). */
@@ -460,10 +771,18 @@ function kmTekstDoKomorki(val) {
 
 function kmWierszDoFormu(row) {
   return {
+    typ_odniesienia:
+      row.typ_odniesienia != null && String(row.typ_odniesienia).trim() !== ""
+        ? String(row.typ_odniesienia).trim()
+        : "",
+    data_odniesienia: dataDoInputa(row.data_odniesienia),
+    offset_miesiecy:
+      row.offset_miesiecy != null && row.offset_miesiecy !== ""
+        ? String(row.offset_miesiecy)
+        : "",
     data_planowana: dataDoInputa(row.data_planowana),
     etap: row.etap != null ? String(row.etap) : "",
     status: row.status != null ? String(row.status) : "",
-    data_realna: dataDoInputa(row.data_realna),
     osoba_odpowiedzialna:
       row.osoba_odpowiedzialna != null && row.osoba_odpowiedzialna !== ""
         ? String(row.osoba_odpowiedzialna)
@@ -476,6 +795,9 @@ function kmWierszDoFormu(row) {
 }
 
 export default function App() {
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+
   /** Widok górnych przycisków: KR | ID (pracownik) | TASK (zadania). */
   const [widok, setWidok] = useState("kr");
   /** Otwarty rekord KR (szczegóły + etapy); null = główny ekran z samą listą. */
@@ -486,9 +808,16 @@ export default function App() {
   const [widokLogDlaKr, setWidokLogDlaKr] = useState(null);
   /** Podgląd INFO: KR + KM + LOG tylko do odczytu. */
   const [widokInfoDlaKr, setWidokInfoDlaKr] = useState(null);
+  /** Zlecenia PW dla wybranego kodu KR (osobny widok z listy — przycisk PW). */
+  const [widokPwDlaKr, setWidokPwDlaKr] = useState(null);
+  /** Pulpit / oś czasu — złączone KM, PW, LOG chronologicznie dla jednego KR. */
+  const [widokPulpitDlaKr, setWidokPulpitDlaKr] = useState(null);
+  /** Pulpit: pierwszy klucz sortowania — data; potem typ (KM/PW/LOG), potem kolejność dodania. */
+  const [pulpitSortDaty, setPulpitSortDaty] = useState("asc");
   const [dziennikWpisy, setDziennikWpisy] = useState([]);
   const [dziennikFetchError, setDziennikFetchError] = useState(null);
   const [logForm, setLogForm] = useState(() => logPustyForm());
+  const [logEdycjaId, setLogEdycjaId] = useState(null);
   const [kmEdycjaId, setKmEdycjaId] = useState(null);
   const [kmForm, setKmForm] = useState(() => kmPustyForm());
 
@@ -496,6 +825,22 @@ export default function App() {
   const [zadaniaFetchError, setZadaniaFetchError] = useState(null);
   const [zadanieEdycjaId, setZadanieEdycjaId] = useState(null);
   const [zadanieForm, setZadanieForm] = useState(() => zadaniePustyForm());
+
+  const [podwykonawcyList, setPodwykonawcyList] = useState([]);
+  const [podwykonawcyFetchError, setPodwykonawcyFetchError] = useState(null);
+  const [pwEdycjaId, setPwEdycjaId] = useState(null);
+  const [pwForm, setPwForm] = useState(() => podwykonawcaPustyForm());
+
+  const [krZleceniaPwList, setKrZleceniaPwList] = useState([]);
+  const [krZleceniaPwFetchError, setKrZleceniaPwFetchError] = useState(null);
+  const [krZleceniePwEdycjaId, setKrZleceniePwEdycjaId] = useState(null);
+  const [krZleceniePwForm, setKrZleceniePwForm] = useState(() => krZleceniePwPustyForm());
+  /** Kod KR dla zapisywanego zlecenia — wypełniany przy edycji z zakładki PW (gdy brak widokPwDlaKr). */
+  const [krZleceniePwKontekstKr, setKrZleceniePwKontekstKr] = useState(null);
+
+  /** Wszystkie wiersze z kr_zlecenie_podwykonawcy — widok zakładki PW. */
+  const [pwZleceniaWszystkieList, setPwZleceniaWszystkieList] = useState([]);
+  const [pwZleceniaWszystkieFetchError, setPwZleceniaWszystkieFetchError] = useState(null);
 
   const [krList, setKrList] = useState([]);
   const [etapy, setEtapy] = useState([]);
@@ -509,6 +854,7 @@ export default function App() {
 
   const [newKr, setNewKr] = useState("");
   const [newNazwaObiektu, setNewNazwaObiektu] = useState("");
+  const [newRodzajPracy, setNewRodzajPracy] = useState("");
   const [newDzial, setNewDzial] = useState("");
   const [newOsobaProwadzaca, setNewOsobaProwadzaca] = useState("");
   const [newDataRozpoczecia, setNewDataRozpoczecia] = useState("");
@@ -530,6 +876,7 @@ export default function App() {
   const [editForm, setEditForm] = useState({
     kr: "",
     nazwa_obiektu: "",
+    rodzaj_pracy: "",
     dzial: "",
     osoba_prowadzaca: "",
     data_rozpoczecia: "",
@@ -633,6 +980,62 @@ export default function App() {
     setZadaniaList(data ?? []);
   }
 
+  async function fetchPodwykonawcy() {
+    setPodwykonawcyFetchError(null);
+    const { data, error } = await supabase
+      .from("podwykonawca")
+      .select("*")
+      .order("nazwa_firmy", { ascending: true });
+
+    if (error) {
+      console.error("Błąd pobierania podwykonawców:", error);
+      setPodwykonawcyFetchError(error.message);
+      setPodwykonawcyList([]);
+      return;
+    }
+    setPodwykonawcyList(data ?? []);
+  }
+
+  async function fetchKrZleceniaPwForKr(krKod) {
+    const k = String(krKod ?? "").trim();
+    if (!k) {
+      setKrZleceniaPwList([]);
+      setKrZleceniaPwFetchError(null);
+      return;
+    }
+    setKrZleceniaPwFetchError(null);
+    const { data, error } = await supabase
+      .from("kr_zlecenie_podwykonawcy")
+      .select("*, podwykonawca(nazwa_firmy)")
+      .eq("kr", k)
+      .order("id", { ascending: true });
+
+    if (error) {
+      console.error("Błąd pobierania zleceń PW dla KR:", error);
+      setKrZleceniaPwFetchError(error.message);
+      setKrZleceniaPwList([]);
+      return;
+    }
+    setKrZleceniaPwList(data ?? []);
+  }
+
+  async function fetchWszystkieZleceniaPw() {
+    setPwZleceniaWszystkieFetchError(null);
+    const { data, error } = await supabase
+      .from("kr_zlecenie_podwykonawcy")
+      .select("*, podwykonawca(nazwa_firmy)")
+      .order("kr", { ascending: true })
+      .order("id", { ascending: true });
+
+    if (error) {
+      console.error("Błąd pobierania listy zleceń PW:", error);
+      setPwZleceniaWszystkieFetchError(error.message);
+      setPwZleceniaWszystkieList([]);
+      return;
+    }
+    setPwZleceniaWszystkieList(data ?? []);
+  }
+
   async function fetchDziennikForKr(krKod) {
     const k = String(krKod ?? "").trim();
     if (!k) {
@@ -660,14 +1063,22 @@ export default function App() {
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
     setDziennikWpisy([]);
     setDziennikFetchError(null);
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
     setEditingKrKey(null);
     setZadanieEdycjaId(null);
     setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
     setWidok("kr");
     void fetchKR();
     void fetchEtapy();
@@ -678,14 +1089,22 @@ export default function App() {
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
     setDziennikWpisy([]);
     setDziennikFetchError(null);
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
     setEditingKrKey(null);
     setZadanieEdycjaId(null);
     setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
     setWidok("pracownik");
     void fetchPracownicy();
   }
@@ -695,17 +1114,76 @@ export default function App() {
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
     setDziennikWpisy([]);
     setDziennikFetchError(null);
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
     setEditingKrKey(null);
     setZadanieEdycjaId(null);
     setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
     setWidok("zadania");
     void fetchZadania();
     void fetchPracownicy();
+  }
+
+  function przejdzDoPodwykonawcow() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setWidok("podwykonawca");
+    void fetchPodwykonawcy();
+    void fetchPracownicy();
+  }
+
+  /** Ekran pomocy: kiedy aplikacja podświetla „zagrożenia” / wymagające uwagi (pulpit, lista KR). */
+  function przejdzDoInfoZagrozen() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setWidok("zagrozenia");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function addPracownik(e) {
@@ -830,15 +1308,299 @@ export default function App() {
     await fetchZadania();
   }
 
+  function wczytajPwDoEdycji(row) {
+    setPwEdycjaId(row.id);
+    setPwForm(podwykonawcaWierszDoFormu(row));
+  }
+
+  function anulujPwEdycje() {
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+  }
+
+  async function zapiszPodwykonawce(e) {
+    e.preventDefault();
+    const nazwa = String(pwForm.nazwa_firmy ?? "").trim();
+    if (!nazwa) {
+      alert("Pole „Nazwa firmy” jest wymagane.");
+      return;
+    }
+
+    const payload = {
+      nazwa_firmy: nazwa,
+      osoba_kontaktowa: String(pwForm.osoba_kontaktowa ?? "").trim() || null,
+      telefon: String(pwForm.telefon ?? "").trim() || null,
+    };
+
+    if (pwEdycjaId != null) {
+      const { error } = await supabase
+        .from("podwykonawca")
+        .update(payload)
+        .eq("id", pwEdycjaId)
+        .select("id");
+
+      if (error) {
+        console.error(error);
+        alert(
+          "Zapis podwykonawcy: " +
+            error.message +
+            (String(error.message).includes("relation") || String(error.message).includes("schema")
+              ? "\n\nUtwórz tabelę: g4-app/supabase/podwykonawca-tabela.sql, potem RLS (rls-policies-anon.sql)."
+              : "") +
+            "\n\nSprawdź polityki INSERT/UPDATE dla podwykonawca."
+        );
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("podwykonawca").insert([payload]).select("id");
+
+      if (error) {
+        console.error(error);
+        alert(
+          "Dodawanie podwykonawcy: " +
+            error.message +
+            (String(error.message).includes("relation") || String(error.message).includes("schema")
+              ? "\n\nUruchom podwykonawca-tabela.sql oraz sekcję podwykonawca w rls-policies-anon.sql."
+              : "")
+        );
+        return;
+      }
+    }
+
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    await fetchPodwykonawcy();
+  }
+
+  async function usunPodwykonawce(id) {
+    if (!window.confirm("Usunąć tego podwykonawcę z bazy?")) return;
+    const { error } = await supabase.from("podwykonawca").delete().eq("id", id);
+    if (error) {
+      console.error(error);
+      alert(
+        "Usuwanie: " +
+          error.message +
+          "\n\nSprawdź politykę DELETE dla podwykonawca (rls-policies-anon.sql)."
+      );
+      return;
+    }
+    if (pwEdycjaId === id) {
+      anulujPwEdycje();
+    }
+    await fetchPodwykonawcy();
+  }
+
+  function wczytajKrZleceniePwDoEdycji(row) {
+    setKrZleceniePwKontekstKr(row.kr != null ? String(row.kr).trim() : "");
+    setKrZleceniePwEdycjaId(row.id);
+    setKrZleceniePwForm(krZleceniePwWierszDoFormu(row));
+  }
+
+  function anulujKrZleceniePwEdycje() {
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+  }
+
+  async function zapiszKrZleceniePw(e) {
+    e.preventDefault();
+    const k =
+      (widokPwDlaKr != null ? String(widokPwDlaKr).trim() : "") ||
+      (krZleceniePwKontekstKr != null ? String(krZleceniePwKontekstKr).trim() : "");
+    if (!k) return;
+
+    const pwId = Number.parseInt(String(krZleceniePwForm.podwykonawca_id ?? "").trim(), 10);
+    if (!Number.isFinite(pwId)) {
+      alert("Wybierz podwykonawcę z listy. Nową firmę dodasz w zakładce PW.");
+      return;
+    }
+
+    const payload = {
+      kr: k,
+      podwykonawca_id: pwId,
+      numer_zlecenia: String(krZleceniePwForm.numer_zlecenia ?? "").trim() || null,
+      opis_zakresu: String(krZleceniePwForm.opis_zakresu ?? "").trim() || null,
+      data_zlecenia: String(krZleceniePwForm.data_zlecenia ?? "").trim() || null,
+      termin_zlecenia: String(krZleceniePwForm.termin_zlecenia ?? "").trim() || null,
+      data_oddania: String(krZleceniePwForm.data_oddania ?? "").trim() || null,
+      cena_netto: krZleceniePwKwotaDoPayload(krZleceniePwForm.cena_netto),
+      czy_sprawdzone: !!krZleceniePwForm.czy_sprawdzone,
+      czy_odebrane: !!krZleceniePwForm.czy_odebrane,
+      status: String(krZleceniePwForm.status ?? "").trim() || null,
+      pracownik_weryfikacja: String(krZleceniePwForm.pracownik_weryfikacja ?? "").trim() || null,
+      osoba_faktury_nazwa: String(krZleceniePwForm.osoba_faktury_nazwa ?? "").trim() || null,
+      osoba_faktury_email: String(krZleceniePwForm.osoba_faktury_email ?? "").trim() || null,
+      osoba_faktury_telefon: String(krZleceniePwForm.osoba_faktury_telefon ?? "").trim() || null,
+      uwagi: String(krZleceniePwForm.uwagi ?? "").trim() || null,
+    };
+
+    if (krZleceniePwEdycjaId != null) {
+      const { error } = await supabase
+        .from("kr_zlecenie_podwykonawcy")
+        .update(payload)
+        .eq("id", krZleceniePwEdycjaId)
+        .select("id");
+
+      if (error) {
+        console.error(error);
+        const msg = String(error.message);
+        const brakKolumny =
+          msg.includes("cena_netto") ||
+          msg.includes("termin_zlecenia") ||
+          msg.includes("data_oddania") ||
+          msg.includes("czy_sprawdzone") ||
+          msg.includes("czy_odebrane") ||
+          /column.*schema cache/i.test(msg);
+        alert(
+          "Zapis zlecenia PW: " +
+            msg +
+            (msg.includes("relation") || msg.includes("schema") || brakKolumny
+              ? "\n\nUruchom w SQL Editor: g4-app/supabase/kr-zlecenie-podwykonawcy-kolumny-netto-termin-odbior.sql (istniejąca tabela bez nowych pól). Przy pustej bazie wystarczy pełny kr-zlecenie-podwykonawcy.sql."
+              : "") +
+            (msg.includes("relation") || (msg.includes("schema") && !brakKolumny)
+              ? "\n\nSekcja kr_zlecenie w rls-policies-anon.sql (i przy logowaniu: rls-policies-authenticated.sql)."
+              : "")
+        );
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("kr_zlecenie_podwykonawcy").insert([payload]).select("id");
+
+      if (error) {
+        console.error(error);
+        const msg = String(error.message);
+        const brakKolumny =
+          msg.includes("cena_netto") ||
+          msg.includes("termin_zlecenia") ||
+          msg.includes("data_oddania") ||
+          msg.includes("czy_sprawdzone") ||
+          msg.includes("czy_odebrane") ||
+          /column.*schema cache/i.test(msg);
+        alert(
+          "Dodawanie zlecenia PW: " +
+            msg +
+            (msg.includes("relation") || msg.includes("schema") || brakKolumny
+              ? "\n\nUruchom w SQL Editor: kr-zlecenie-podwykonawcy-kolumny-netto-termin-odbior.sql albo pełny kr-zlecenie-podwykonawcy.sql oraz RLS."
+              : "")
+        );
+        return;
+      }
+    }
+
+    anulujKrZleceniePwEdycje();
+    await fetchKrZleceniaPwForKr(k);
+    void fetchWszystkieZleceniaPw();
+  }
+
+  async function usunKrZleceniePw(id, krRef) {
+    if (!window.confirm("Usunąć to zlecenie podwykonawcy przy tym KR?")) return;
+    const k =
+      (widokPwDlaKr != null ? String(widokPwDlaKr).trim() : "") ||
+      (krRef != null ? String(krRef).trim() : "") ||
+      (krZleceniePwKontekstKr != null ? String(krZleceniePwKontekstKr).trim() : "");
+    const { error } = await supabase.from("kr_zlecenie_podwykonawcy").delete().eq("id", id);
+    if (error) {
+      console.error(error);
+      alert("Usuwanie: " + error.message + "\n\nSprawdź politykę DELETE (rls-policies-anon.sql).");
+      return;
+    }
+    if (krZleceniePwEdycjaId === id) {
+      anulujKrZleceniePwEdycje();
+    }
+    if (k) await fetchKrZleceniaPwForKr(k);
+    void fetchWszystkieZleceniaPw();
+  }
+
   useEffect(() => {
+    if (widok !== "podwykonawca") return;
+    void fetchWszystkieZleceniaPw();
+  }, [widok]);
+
+  useEffect(() => {
+    if (!requireAuth) {
+      setAuthReady(true);
+      return;
+    }
+    let mounted = true;
+    supabase.auth.getSession().then(({ data: { session: sess } }) => {
+      if (!mounted) return;
+      setSession(sess);
+      setAuthReady(true);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess);
+    });
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!requireAuth) {
+      void (async () => {
+        await fetchKR();
+        await fetchEtapy();
+        void fetchPracownicy();
+        void fetchZadania();
+        void fetchPodwykonawcy();
+        setInitialFetchDone(true);
+      })();
+      return;
+    }
+    if (!session?.user) {
+      setInitialFetchDone(false);
+      return;
+    }
     void (async () => {
       await fetchKR();
       await fetchEtapy();
       void fetchPracownicy();
       void fetchZadania();
+      void fetchPodwykonawcy();
       setInitialFetchDone(true);
     })();
-  }, []);
+  }, [requireAuth, session?.user?.id]);
+
+  useEffect(() => {
+    if (widok !== "kr") return;
+    const kInfo = widokInfoDlaKr != null ? String(widokInfoDlaKr).trim() : "";
+    const kPw = widokPwDlaKr != null ? String(widokPwDlaKr).trim() : "";
+    const kPulpit = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
+    const k = kInfo || kPw || kPulpit;
+    if (!k) {
+      setKrZleceniaPwList([]);
+      setKrZleceniaPwFetchError(null);
+      return;
+    }
+    void fetchKrZleceniaPwForKr(k);
+    void fetchPodwykonawcy();
+  }, [widok, widokInfoDlaKr, widokPwDlaKr, widokPulpitDlaKr]);
+
+  /** Pulpit korzysta z tej samej tablicy co widok LOG; po KM edycja czyści `dziennikWpisy` — odśwież przy powrocie na oś. */
+  useEffect(() => {
+    if (widok !== "kr") return;
+    const kP = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
+    if (!kP) return;
+    const pulpitNaWierzchu =
+      widokKmDlaKr == null &&
+      widokLogDlaKr == null &&
+      widokPwDlaKr == null &&
+      widokInfoDlaKr == null &&
+      wybranyKrKlucz == null;
+    if (!pulpitNaWierzchu) return;
+    void fetchDziennikForKr(kP);
+  }, [
+    widok,
+    widokPulpitDlaKr,
+    widokKmDlaKr,
+    widokLogDlaKr,
+    widokPwDlaKr,
+    widokInfoDlaKr,
+    wybranyKrKlucz,
+  ]);
 
   const etapyWedlugKr = useMemo(() => {
     const mapa = new Map();
@@ -868,12 +1630,24 @@ export default function App() {
 
   const mapaProwadzacychId = useMemo(() => mapaNrPracownika(pracownicy), [pracownicy]);
 
+  const podwykonawcyPosortowani = useMemo(
+    () =>
+      [...podwykonawcyList].sort((a, b) =>
+        String(a.nazwa_firmy ?? "").localeCompare(String(b.nazwa_firmy ?? ""), "pl", {
+          sensitivity: "base",
+          numeric: true,
+        })
+      ),
+    [podwykonawcyList]
+  );
+
   function openEditKr(item) {
     setEditingKrKey(item.kr);
     void fetchPracownicy();
     setEditForm({
       kr: item.kr != null && item.kr !== "" ? String(item.kr) : "",
       nazwa_obiektu: item.nazwa_obiektu ?? "",
+      rodzaj_pracy: item.rodzaj_pracy != null ? String(item.rodzaj_pracy) : "",
       dzial: item.dzial ?? "",
       osoba_prowadzaca:
         item.osoba_prowadzaca != null && item.osoba_prowadzaca !== ""
@@ -898,8 +1672,10 @@ export default function App() {
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
     setDziennikWpisy([]);
     setDziennikFetchError(null);
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
@@ -915,8 +1691,10 @@ export default function App() {
     setWidokKmDlaKr(k);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
     setDziennikWpisy([]);
     setDziennikFetchError(null);
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setWybranyKrKlucz(null);
     setEditingKrKey(null);
@@ -934,16 +1712,24 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function otworzLogDlaKr(item) {
+  function otworzLogDlaKr(item, opts) {
     const k = String(item.kr).trim();
+    const edytujRow = opts?.edytujRow ?? null;
     setWidokLogDlaKr(k);
     setWidokKmDlaKr(null);
     setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
     setWybranyKrKlucz(null);
     setEditingKrKey(null);
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
-    setLogForm(logPustyForm());
+    if (edytujRow != null && edytujRow.id != null && String(edytujRow.id).trim() !== "") {
+      setLogEdycjaId(String(edytujRow.id));
+      setLogForm(logWierszDoFormu(edytujRow));
+    } else {
+      setLogEdycjaId(null);
+      setLogForm(logPustyForm());
+    }
     setDziennikFetchError(null);
     void fetchPracownicy();
     void fetchDziennikForKr(k);
@@ -954,8 +1740,26 @@ export default function App() {
     setWidokLogDlaKr(null);
     setDziennikWpisy([]);
     setDziennikFetchError(null);
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function wczytajLogDoEdycji(row) {
+    const rid = row?.id;
+    if (rid == null || String(rid).trim() === "") {
+      alert(
+        "Brak identyfikatora wpisu w bazie — nie można otworzyć edycji. Odśwież listę (w LOG jest ponowne pobranie dziennika)."
+      );
+      return;
+    }
+    setLogEdycjaId(String(rid));
+    setLogForm(logWierszDoFormu(row));
+  }
+
+  function anulujEdycjeLog() {
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
   }
 
   function otworzInfoDlaKr(item) {
@@ -963,10 +1767,12 @@ export default function App() {
     setWidokInfoDlaKr(k);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
+    setWidokPwDlaKr(null);
     setWybranyKrKlucz(null);
     setEditingKrKey(null);
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setDziennikFetchError(null);
     void fetchKR();
@@ -978,8 +1784,77 @@ export default function App() {
 
   function powrotZInfoDoListy() {
     setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    const kHub = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
+    if (kHub) void fetchDziennikForKr(kHub);
+    else {
+      setDziennikWpisy([]);
+      setDziennikFetchError(null);
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** Pulpit — jedna oś czasu: KM, PW, LOG + skrót kontaktów (przycisk przy wierszu KR). */
+  function otworzPulpitDlaKr(item) {
+    const k = String(item.kr).trim();
+    setWidokPulpitDlaKr(k);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWybranyKrKlucz(null);
+    setEditingKrKey(null);
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setDziennikFetchError(null);
+    void fetchKR();
+    void fetchEtapy();
+    void fetchPracownicy();
+    void fetchDziennikForKr(k);
+    void fetchPodwykonawcy();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function powrotZPulpituDoListy() {
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
     setDziennikWpisy([]);
     setDziennikFetchError(null);
+    setKrZleceniaPwList([]);
+    setKrZleceniaPwFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** Zlecenia PW dla wybranego KR — osobny widok z listy (przycisk PW obok KR). */
+  function otworzPwDlaKr(item) {
+    const k = String(item.kr).trim();
+    setWidokPwDlaKr(k);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWybranyKrKlucz(null);
+    setEditingKrKey(null);
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setDziennikFetchError(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    void fetchPodwykonawcy();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function powrotZPwDoListy() {
+    setWidokPwDlaKr(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1009,8 +1884,7 @@ export default function App() {
       return;
     }
 
-    const payload = {
-      kr: widokLogDlaKr,
+    const payloadWspolne = {
       typ_zdarzenia: typ,
       opis: String(logForm.opis ?? "").trim() || null,
       data_zdarzenia: dataZdarzenia,
@@ -1020,11 +1894,49 @@ export default function App() {
         String(logForm.osoba_odpowiedzialna_za_zadanie ?? "").trim() || null,
       status_zdarzenia: statusDoBazy,
     };
+    const payloadInsert = { kr: widokLogDlaKr, ...payloadWspolne };
 
-    const { error } = await supabase.from("dziennik_zdarzen").insert([payload]).select("id");
+    let error;
+    if (logEdycjaId != null) {
+      const idStr = String(logEdycjaId).trim();
+      const res = await supabase
+        .from("dziennik_zdarzen")
+        .update(payloadWspolne)
+        .eq("id", idStr)
+        .select("id");
+      error = res.error;
+      if (
+        !error &&
+        (!Array.isArray(res.data) || res.data.length === 0)
+      ) {
+        error = {
+          message:
+            "Aktualizacja nie zmieniła żadnego wiersza (zły identyfikator, wpis usunięty albo brak uprawnień UPDATE/SELECT dla dziennik_zdarzen).",
+        };
+      }
+    } else {
+      const res = await supabase
+        .from("dziennik_zdarzen")
+        .insert([payloadInsert])
+        .select("id");
+      error = res.error;
+      if (
+        !error &&
+        (!Array.isArray(res.data) || res.data.length === 0)
+      ) {
+        error = {
+          message:
+            "INSERT nie zwrócił wiersza — sprawdź uprawnienia INSERT i SELECT (RETURNING) dla dziennik_zdarzen.",
+        };
+      }
+    }
 
     if (error) {
       console.error(error);
+      const hintRls =
+        session?.user != null
+          ? "\n\nJesteś zalogowany — PostgREST używa roli authenticated (nie anon). Uruchom w SQL Editor plik g4-app/supabase/rls-policies-authenticated.sql (sekcja dziennik_zdarzen), jeśli jeszcze tego nie zrobiłeś."
+          : "\n\nSprawdź polityki SELECT/INSERT/UPDATE dla dziennik_zdarzen w g4-app/supabase/rls-policies-anon.sql.";
       alert(
         "Zapis do dziennika: " +
           error.message +
@@ -1035,11 +1947,12 @@ export default function App() {
           String(error.message).toLowerCase().includes("constraint")
             ? "\n\nStatus musi być jedną z wartości: w trakcie, ukończone, oczekuje (CHECK w bazie)."
             : "") +
-          "\n\nSprawdź też polityki SELECT/INSERT dla dziennik_zdarzen w rls-policies-anon.sql."
+          hintRls
       );
       return;
     }
 
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     await fetchDziennikForKr(widokLogDlaKr);
   }
@@ -1072,12 +1985,34 @@ export default function App() {
       return;
     }
 
+    const offsetStr = String(kmForm.offset_miesiecy ?? "").trim();
+    if (offsetStr !== "" && offsetMiesiecyDoBazy(kmForm.offset_miesiecy) === null) {
+      alert('Offset (miesiące) musi być pusty albo liczbą całkowitą ≥ 0.');
+      return;
+    }
+
+    const typOdnWart = String(kmForm.typ_odniesienia ?? "").trim();
+    const typOdnDoBazy =
+      typOdnWart === ""
+        ? null
+        : KM_TYP_ODNIESIENIA_W_BAZIE.includes(typOdnWart)
+          ? typOdnWart
+          : null;
+    if (typOdnWart !== "" && typOdnDoBazy === null) {
+      alert(
+        'Typ odniesienia: wybierz „— brak —”, Linia lub Zlecenie (wartości zgodne z bazą).'
+      );
+      return;
+    }
+
     const payload = {
       kr: widokKmDlaKr,
+      typ_odniesienia: typOdnDoBazy,
+      data_odniesienia: String(kmForm.data_odniesienia ?? "").trim() || null,
+      offset_miesiecy: offsetMiesiecyDoBazy(kmForm.offset_miesiecy),
       data_planowana: String(kmForm.data_planowana ?? "").trim() || null,
       etap: etapTrim,
       status: statusDoBazy,
-      data_realna: String(kmForm.data_realna ?? "").trim() || null,
       osoba_odpowiedzialna: String(kmForm.osoba_odpowiedzialna ?? "").trim() || null,
       uwagi: String(kmForm.uwagi ?? "").trim() || null,
       osiagniete: takNieDoBool(kmForm.osiagniete),
@@ -1098,11 +2033,11 @@ export default function App() {
           "Zapis kamienia milowego: " +
             error.message +
             (String(error.message).includes("column") || String(error.message).includes("schema")
-              ? "\n\nUruchom w SQL Editor plik g4-app/supabase/kamienie-milowe-kolumny.sql (brakujące kolumny)."
+              ? "\n\nUruchom w SQL Editor: kamienie-milowe-kolumny.sql, kamienie-milowe-odniesienie-offset.sql, kamienie-milowe-typ-odniesienia.sql (brakujące kolumny)."
               : "") +
             (String(error.message).toLowerCase().includes("check") ||
             String(error.message).toLowerCase().includes("constraint")
-              ? "\n\nStatus musi być z listy w aplikacji lub NULL — zob. kamienie-milowe-status-check.sql."
+              ? "\n\nStatus / typ odniesienia — zob. kamienie-milowe-status-check.sql i kamienie-milowe-typ-odniesienia.sql."
               : "") +
             "\n\nSprawdź też polityki INSERT/UPDATE w rls-policies-anon.sql."
         );
@@ -1117,11 +2052,11 @@ export default function App() {
           "Dodawanie kamienia milowego: " +
             error.message +
             (String(error.message).includes("column") || String(error.message).includes("schema")
-              ? "\n\nUruchom w SQL Editor plik g4-app/supabase/kamienie-milowe-kolumny.sql."
+              ? "\n\nUruchom w SQL Editor: kamienie-milowe-kolumny.sql, kamienie-milowe-odniesienie-offset.sql, kamienie-milowe-typ-odniesienia.sql."
               : "") +
             (String(error.message).toLowerCase().includes("check") ||
             String(error.message).toLowerCase().includes("constraint")
-              ? "\n\nZob. kamienie-milowe-status-check.sql (CHECK na status)."
+              ? "\n\nZob. kamienie-milowe-status-check.sql i kamienie-milowe-typ-odniesienia.sql."
               : "") +
             "\n\nSprawdź też polityki INSERT w rls-policies-anon.sql."
         );
@@ -1139,7 +2074,16 @@ export default function App() {
     const { error } = await supabase.from("kamienie_milowe").delete().eq("id", id);
     if (error) {
       console.error(error);
-      alert("Usuwanie: " + error.message + "\n\nSprawdź politykę DELETE w rls-policies-anon.sql.");
+      const msg = String(error.message);
+      const fkFaktury =
+        msg.toLowerCase().includes("foreign key") && msg.toLowerCase().includes("faktury");
+      alert(
+        "Usuwanie: " +
+          msg +
+          (fkFaktury
+            ? "\n\nDo tego etapu są przypisane faktury (tabela faktury). Domyślnie baza nie pozwala usunąć kamienia milowego, dopóki coś na niego wskazuje.\n\nRozwiązanie: w SQL Editor uruchom plik g4-app/supabase/faktury-etap-on-delete.sql (ustalenie co się dzieje z fakturami przy usuwaniu KM), albo w panelu usuń lub zmień powiązane faktury."
+            : "\n\nJeśli to nie jest powiązanie z inną tabelą — sprawdź politykę DELETE w rls-policies-anon.sql.")
+      );
       return;
     }
     if (kmEdycjaId === id) {
@@ -1168,17 +2112,351 @@ export default function App() {
     return krList.find((row) => String(row.kr) === k) ?? null;
   }, [krList, widokInfoDlaKr]);
 
+  const rekordKrPulpit = useMemo(() => {
+    if (widokPulpitDlaKr == null || String(widokPulpitDlaKr).trim() === "") return null;
+    const k = String(widokPulpitDlaKr).trim();
+    return krList.find((row) => String(row.kr) === k) ?? null;
+  }, [krList, widokPulpitDlaKr]);
+
+  function pulpitEdytujKarte(karta) {
+    if (!rekordKrPulpit) return;
+    if (karta.kind === "kr_start") {
+      otworzEdycjeKrZTabeli(rekordKrPulpit);
+      return;
+    }
+    if (karta.kind === "km") {
+      const row = etapy.find((e) => e.id === karta.edytujId);
+      if (!row) {
+        alert("Nie znaleziono kamienia milowego — odśwież pulpit.");
+        return;
+      }
+      otworzKmDlaKr(rekordKrPulpit);
+      wczytajKmDoEdycji(row);
+      return;
+    }
+    if (karta.kind === "pw") {
+      const z = krZleceniaPwList.find((x) => x.id === karta.edytujId);
+      if (!z) {
+        alert("Nie znaleziono zlecenia PW — odśwież pulpit.");
+        return;
+      }
+      otworzPwDlaKr(rekordKrPulpit);
+      wczytajKrZleceniePwDoEdycji(z);
+      return;
+    }
+    if (karta.kind === "log") {
+      const row = dziennikWpisy.find((r) => String(r.id) === String(karta.edytujId));
+      if (!row) {
+        alert("Nie znaleziono wpisu dziennika — odśwież pulpit.");
+        return;
+      }
+      otworzLogDlaKr(rekordKrPulpit, { edytujRow: row });
+    }
+  }
+
+  /** Telefony / e-maile ze zleceń PW na pulpicie (szybki podgląd). */
+  const pulpitSkrotKontaktow = useMemo(() => {
+    if (widokPulpitDlaKr == null) return { telefony: [], emaile: [] };
+    const tel = new Set();
+    const em = new Set();
+    for (const z of krZleceniaPwList) {
+      const t = z.osoba_faktury_telefon != null ? String(z.osoba_faktury_telefon).trim() : "";
+      if (t) tel.add(t);
+      const e = z.osoba_faktury_email != null ? String(z.osoba_faktury_email).trim() : "";
+      if (e) em.add(e);
+    }
+    return { telefony: [...tel], emaile: [...em] };
+  }, [widokPulpitDlaKr, krZleceniaPwList]);
+
+  /**
+   * Oznaczenie wiersza na liście KR (status „oczekuje na …” albo problematyczny KM).
+   * Pełny podział uwag (LOG / PW) jest na pulpicie projektu.
+   */
+  const kodyKrZWyroznieniemUwagi = useMemo(() => {
+    const set = new Set();
+    const dziś = dzisiajDataYYYYMMDD();
+    for (const row of krList) {
+      if (pulpitKrRekordWymagaUwagi(row)) set.add(String(row.kr).trim());
+    }
+    for (const e of etapy) {
+      if (pulpitKmWymagaUwagi(e, dziś)) set.add(String(e.kr).trim());
+    }
+    return set;
+  }, [krList, etapy]);
+
+  const pulpitOśKarty = useMemo(() => {
+    const k = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
+    if (!k) return [];
+    const dziś = dzisiajDataYYYYMMDD();
+    const out = [];
+    let tie = 0;
+    const rekord = krList.find((row) => String(row.kr) === k) ?? null;
+
+    const sortKeyStart = dataDoSortuYYYYMMDD(rekord?.data_rozpoczecia);
+    if (rekord && sortKeyStart) {
+      const dzialT = tekstTrim(rekord.dzial);
+      const statusT = tekstTrim(rekord.status);
+      const zlecT = tekstTrim(rekord.zleceniodawca);
+      const zlKontaktT = tekstTrim(rekord.osoba_odpowiedzialna_zleceniodawcy);
+      out.push({
+        sortKey: sortKeyStart,
+        tieBreak: tie++,
+        kind: "kr_start",
+        edytujId: null,
+        title: "KR",
+        subtitle: tekstTrim(rekord.nazwa_obiektu) || null,
+        wymagaUwagi: pulpitKrRekordWymagaUwagi(rekord),
+        bodyLines: [
+          dzialT ? `Dział: ${dzialT}` : null,
+          statusT ? `Status KR: ${statusT}` : null,
+          podpisOsobyProwadzacej(rekord.osoba_prowadzaca, mapaProwadzacychId)
+            ? `Osoba prowadząca: ${podpisOsobyProwadzacej(rekord.osoba_prowadzaca, mapaProwadzacychId)}`
+            : null,
+          zlecT ? `Zleceniodawca: ${zlecT}` : null,
+          zlKontaktT ? `Kontakt ZL: ${zlKontaktT}` : null,
+        ].filter(Boolean),
+      });
+    }
+
+    const kmRows = etapy
+      .filter((row) => String(row.kr) === k)
+      .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+    for (const row of kmRows) {
+      const sortKey =
+        dataDoSortuYYYYMMDD(row.data_planowana) ||
+        dataDoSortuYYYYMMDD(row.data_odniesienia) ||
+        null;
+      const et = row.etap != null ? String(row.etap) : "—";
+      const osiagnT = tekstTrim(row.osiagniete);
+      const uwagiT = tekstTrim(row.uwagi);
+      const zagrozOpisT = tekstTrim(row.zagrozenie_opis);
+      const lines = [
+        tekstTrim(row.status) ? `Status etapu: ${tekstTrim(row.status)}` : null,
+        row.data_planowana
+          ? `Data planowana: ${dataPLZFormat(dataDoInputa(row.data_planowana))}`
+          : null,
+        row.data_odniesienia
+          ? `Data odniesienia: ${dataPLZFormat(dataDoInputa(row.data_odniesienia))}`
+          : null,
+        tekstTrim(row.typ_odniesienia)
+          ? `Typ odniesienia: ${kmEtykietaTypuOdniesienia(row.typ_odniesienia)}`
+          : null,
+        row.offset_miesiecy != null && row.offset_miesiecy !== ""
+          ? `Offset: +${row.offset_miesiecy} mc`
+          : null,
+        osiagnT ? `Osiągnięte: ${osiagnT}` : null,
+        uwagiT ? `Uwagi: ${uwagiT}` : null,
+        row.zagrozenie === "tak" || row.zagrozenie === true
+          ? `Zagrożenie: ${zagrozOpisT || "tak"}`
+          : zagrozOpisT
+            ? `Zagrożenie (opis): ${zagrozOpisT}`
+            : null,
+      ].filter(Boolean);
+      out.push({
+        sortKey,
+        tieBreak: tie++,
+        kind: "km",
+        edytujId: row.id,
+        title: `KM · ${et}`,
+        subtitle: null,
+        wymagaUwagi: pulpitKmWymagaUwagi(row, dziś),
+        bodyLines: lines,
+      });
+    }
+
+    for (const z of krZleceniaPwList) {
+      const firma =
+        z.podwykonawca && typeof z.podwykonawca === "object" && !Array.isArray(z.podwykonawca)
+          ? z.podwykonawca.nazwa_firmy
+          : null;
+      const pwFlag = [
+        z.czy_sprawdzone === true ? "sprawdzone" : null,
+        z.czy_odebrane === true ? "odebrane" : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      const zakresT = tekstTrim(z.opis_zakresu);
+      const lines = [
+        tekstTrim(z.numer_zlecenia) ? `Nr zlecenia: ${tekstTrim(z.numer_zlecenia)}` : null,
+        z.data_zlecenia ? `Data zlecenia: ${dataPLZFormat(dataDoInputa(z.data_zlecenia))}` : null,
+        z.termin_zlecenia
+          ? `Termin zlecenia (plan): ${dataPLZFormat(dataDoInputa(z.termin_zlecenia))}`
+          : null,
+        z.data_oddania ? `Data oddania (faktyczna): ${dataPLZFormat(dataDoInputa(z.data_oddania))}` : null,
+        z.cena_netto != null && z.cena_netto !== ""
+          ? `Cena netto: ${krZleceniePwKwotaEtykieta(z.cena_netto)}`
+          : null,
+        tekstTrim(z.status) ? `Status: ${tekstTrim(z.status)}` : null,
+        pwFlag ? `Stan: ${pwFlag}` : null,
+        zakresT
+          ? `Zakres: ${zakresT.length > 280 ? `${zakresT.slice(0, 277)}…` : zakresT}`
+          : null,
+        tekstTrim(z.osoba_faktury_nazwa)
+          ? `Osoba (faktury PW): ${tekstTrim(z.osoba_faktury_nazwa)}`
+          : null,
+        tekstTrim(z.osoba_faktury_telefon) ? `Tel.: ${tekstTrim(z.osoba_faktury_telefon)}` : null,
+        tekstTrim(z.osoba_faktury_email) ? `E-mail: ${tekstTrim(z.osoba_faktury_email)}` : null,
+        tekstTrim(z.uwagi) ? `Uwagi: ${tekstTrim(z.uwagi)}` : null,
+      ].filter(Boolean);
+      const firmaT = firma != null ? tekstTrim(firma) : "";
+      const dZ = dataDoSortuYYYYMMDD(z.data_zlecenia);
+      const dT = dataDoSortuYYYYMMDD(z.termin_zlecenia);
+      const dO = dataDoSortuYYYYMMDD(z.data_oddania);
+      const pwPunkty = [
+        dZ ? { sortKey: dZ, pwAnchor: "data_zlecenia", subtitle: "Data zlecenia", uwaga: false } : null,
+        dT
+          ? {
+              sortKey: dT,
+              pwAnchor: "termin_zlecenia",
+              subtitle: "Termin zlecenia (plan)",
+              uwaga: pulpitPwWymagaUwagi(z, dziś),
+            }
+          : null,
+        dO
+          ? { sortKey: dO, pwAnchor: "data_oddania", subtitle: "Data oddania (faktyczna)", uwaga: false }
+          : null,
+      ].filter(Boolean);
+      const punkty =
+        pwPunkty.length > 0
+          ? pwPunkty
+          : [{ sortKey: null, pwAnchor: "data_zlecenia", subtitle: null, uwaga: false }];
+      for (const p of punkty) {
+        out.push({
+          sortKey: p.sortKey,
+          tieBreak: tie++,
+          kind: "pw",
+          pwAnchor: p.pwAnchor,
+          edytujId: z.id,
+          title: `PW · ${firmaT || "—"}`,
+          subtitle: p.subtitle,
+          wymagaUwagi: p.uwaga === true,
+          bodyLines: lines,
+        });
+      }
+    }
+
+    const dziennikDlaProjektu = dziennikWpisy.filter((row) => String(row.kr ?? "").trim() === k);
+    for (const row of dziennikDlaProjektu) {
+      const sortKey = dataDoSortuYYYYMMDD(row.data_zdarzenia) || null;
+      const typZdT = tekstTrim(row.typ_zdarzenia);
+      const lines = [
+        tekstTrim(row.status_zdarzenia) ? `Status zdarzenia: ${tekstTrim(row.status_zdarzenia)}` : null,
+        tekstTrim(row.opis) ? `Opis: ${tekstTrim(row.opis)}` : null,
+        tekstTrim(row.wymagane_dzialanie)
+          ? `Wymagane działanie: ${tekstTrim(row.wymagane_dzialanie)}`
+          : null,
+        typZdT ? `Typ: ${typZdT}` : null,
+        podpisOsobyProwadzacej(row.osoba_zglaszajaca, mapaProwadzacychId)
+          ? `Zgłaszający: ${podpisOsobyProwadzacej(row.osoba_zglaszajaca, mapaProwadzacychId)}`
+          : null,
+        podpisOsobyProwadzacej(row.osoba_odpowiedzialna_za_zadanie, mapaProwadzacychId)
+          ? `Odpowiedzialny: ${podpisOsobyProwadzacej(row.osoba_odpowiedzialna_za_zadanie, mapaProwadzacychId)}`
+          : null,
+      ].filter(Boolean);
+      out.push({
+        sortKey,
+        tieBreak: tie++,
+        kind: "log",
+        edytujId: row.id,
+        title: "LOG",
+        subtitle: typZdT || null,
+        wymagaUwagi: pulpitLogWymagaUwagi(row),
+        bodyLines: lines,
+      });
+    }
+
+    const cmpData =
+      pulpitSortDaty === "desc"
+        ? (ka, kb) => kb.localeCompare(ka)
+        : (ka, kb) => ka.localeCompare(kb);
+    out.sort((a, b) => {
+      const ha = a.sortKey != null && a.sortKey !== "";
+      const hb = b.sortKey != null && b.sortKey !== "";
+      if (ha !== hb) return ha ? -1 : 1;
+      if (ha && hb) {
+        const ka = a.sortKey;
+        const kb = b.sortKey;
+        if (ka !== kb) return cmpData(ka, kb);
+      }
+      const oa = PULPIT_KIND_ORDER[a.kind] ?? 9;
+      const ob = PULPIT_KIND_ORDER[b.kind] ?? 9;
+      if (oa !== ob) return oa - ob;
+      if (a.kind === "pw" && b.kind === "pw" && a.pwAnchor && b.pwAnchor) {
+        const da = PW_PULPIT_ANCHOR_ORDER[a.pwAnchor] ?? 9;
+        const db = PW_PULPIT_ANCHOR_ORDER[b.pwAnchor] ?? 9;
+        if (da !== db) return da - db;
+      }
+      return a.tieBreak - b.tieBreak;
+    });
+    return out;
+  }, [
+    widokPulpitDlaKr,
+    pulpitSortDaty,
+    etapy,
+    krZleceniaPwList,
+    dziennikWpisy,
+    krList,
+    mapaProwadzacychId,
+  ]);
+
+  /** Wiersze pulpitu z jednym skokiem „teraz” (dzisiaj) — zależnie od sortowania listy. */
+  const pulpitWierszeZTeraz = useMemo(() => {
+    const karty = pulpitOśKarty;
+    const dziś = dzisiajDataYYYYMMDD();
+    const n = karty.length;
+    if (n === 0) return [{ typ: "teraz", klucz: "teraz-pusta" }];
+    let insertAt;
+    if (pulpitSortDaty === "asc") {
+      const t = karty.findIndex((k) => k.sortKey && k.sortKey > dziś);
+      if (t === -1) {
+        let lastD = -1;
+        for (let i = 0; i < n; i++) if (karty[i].sortKey) lastD = i;
+        insertAt = lastD + 1;
+      } else insertAt = t;
+    } else {
+      const t = karty.findIndex((k) => !(k.sortKey && k.sortKey > dziś));
+      if (t === -1) insertAt = n;
+      else insertAt = t;
+    }
+    const wiersze = [];
+    for (let i = 0; i < n; i++) {
+      if (i === insertAt) wiersze.push({ typ: "teraz", klucz: `teraz-przed-${i}` });
+      wiersze.push({ typ: "karta", karta: karty[i], idx: i });
+    }
+    if (insertAt === n) wiersze.push({ typ: "teraz", klucz: "teraz-po-ostatniej" });
+    return wiersze;
+  }, [pulpitOśKarty, pulpitSortDaty]);
+
   function powrotDoListyKr() {
+    const kWr = wybranyKrKlucz != null ? String(wybranyKrKlucz).trim() : "";
+    const kPu = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
+    const naPulpit = kWr !== "" && kPu !== "" && kWr === kPu;
+
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
-    setDziennikWpisy([]);
-    setDziennikFetchError(null);
+    setWidokPwDlaKr(null);
+    if (!naPulpit) {
+      setWidokPulpitDlaKr(null);
+      setPulpitSortDaty("asc");
+      setDziennikWpisy([]);
+      setDziennikFetchError(null);
+      setKrZleceniaPwList([]);
+      setKrZleceniaPwFetchError(null);
+    }
+    setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
     setEditingKrKey(null);
+    if (!naPulpit) {
+      setKrZleceniePwEdycjaId(null);
+      setKrZleceniePwKontekstKr(null);
+      setKrZleceniePwForm(krZleceniePwPustyForm());
+    }
+    void fetchKR();
+    if (naPulpit) void fetchDziennikForKr(kPu);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1227,6 +2505,7 @@ export default function App() {
       .update({
         kr: nowyKr,
         nazwa_obiektu: editForm.nazwa_obiektu.trim() || null,
+        rodzaj_pracy: String(editForm.rodzaj_pracy ?? "").trim() || null,
         dzial: dzialWart,
         osoba_prowadzaca: editForm.osoba_prowadzaca.trim() || null,
         data_rozpoczecia: editForm.data_rozpoczecia.trim() || null,
@@ -1240,7 +2519,7 @@ export default function App() {
       })
       .eq("kr", staryKr)
       .select(
-        "kr, dzial, nazwa_obiektu, osoba_prowadzaca, data_rozpoczecia, status, zleceniodawca, osoba_odpowiedzialna_zleceniodawcy, link_umowy, okres_projektu_od, okres_projektu_do"
+        "kr, dzial, nazwa_obiektu, rodzaj_pracy, osoba_prowadzaca, data_rozpoczecia, status, zleceniodawca, osoba_odpowiedzialna_zleceniodawcy, link_umowy, okres_projektu_od, okres_projektu_do"
       );
 
     if (error) {
@@ -1271,10 +2550,24 @@ export default function App() {
 
     if (nowyKr !== staryKr) {
       setWybranyKrKlucz(nowyKr);
+      const { error: errPw } = await supabase
+        .from("kr_zlecenie_podwykonawcy")
+        .update({ kr: nowyKr })
+        .eq("kr", staryKr);
+      if (errPw) {
+        console.error(errPw);
+        alert(
+          "Kod KR zaktualizowany, ale powiązania zleceń PW mogły nie zostać przeniesione: " +
+            errPw.message +
+            "\n\nSprawdź tabelę kr_zlecenie_podwykonawcy lub uruchom migrację kr-zlecenie-podwykonawcy.sql."
+        );
+      }
     }
     setEditingKrKey(null);
     await fetchKR();
     await fetchEtapy();
+    await fetchKrZleceniaPwForKr(nowyKr);
+    void fetchWszystkieZleceniaPw();
   }
 
   async function addKR(e) {
@@ -1296,6 +2589,7 @@ export default function App() {
         {
           kr: newKr.trim(),
           nazwa_obiektu: newNazwaObiektu.trim() || null,
+          rodzaj_pracy: newRodzajPracy.trim() || null,
           dzial: dzialIns,
           osoba_prowadzaca: newOsobaProwadzaca.trim() || null,
           data_rozpoczecia: newDataRozpoczecia.trim() || null,
@@ -1334,6 +2628,7 @@ export default function App() {
 
     setNewKr("");
     setNewNazwaObiektu("");
+    setNewRodzajPracy("");
     setNewDzial("");
     setNewOsobaProwadzaca("");
     setNewDataRozpoczecia("");
@@ -1346,16 +2641,61 @@ export default function App() {
     await fetchKR();
   }
 
+  if (requireAuth) {
+    if (!authReady) {
+      return (
+        <div
+          style={{
+            ...s.page,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: "100vh",
+          }}
+        >
+          <p style={s.muted}>Ładowanie…</p>
+        </div>
+      );
+    }
+
+    if (!session?.user) {
+      return <AuthScreen />;
+    }
+  }
+
   const showEmptyKrHint =
     widok === "kr" &&
     initialFetchDone &&
     !krFetchError &&
     krList.length === 0;
 
+  const dziśUwagiPulpitu = dzisiajDataYYYYMMDD();
+  const kmFormWierszRegulPulpitu = {
+    zagrozenie: kmForm.zagrozenie,
+    zagrozenie_opis: kmForm.zagrozenie_opis,
+    data_planowana: kmForm.data_planowana,
+    status: kmForm.status,
+  };
+  const kmFormPlanPrzeterminowany = pulpitKmPlanPrzeterminowany(
+    kmFormWierszRegulPulpitu,
+    dziśUwagiPulpitu,
+  );
+  const kmFormZagrozenieTak = kmForm.zagrozenie === "tak";
+  const kmFormOpisZagrozeniaWypelniony = !!tekstTrim(kmForm.zagrozenie_opis);
+  const logFormPodswWymDzialIPerson = logWidokPodswietlGdyJestWymaganeDzialanie({
+    wymagane_dzialanie: logForm.wymagane_dzialanie,
+  });
+  const pwFormWymagaUwagiPulpitu = pulpitPwWymagaUwagi(
+    {
+      termin_zlecenia: krZleceniePwForm.termin_zlecenia,
+      czy_odebrane: !!krZleceniePwForm.czy_odebrane,
+    },
+    dziśUwagiPulpitu,
+  );
+  const krEdycjaStatusWymagaUwagi = pulpitKrRekordWymagaUwagi({ status: editForm.status });
+
   return (
     <div style={s.page}>
-      <h1 style={s.h1}>Dane z bazy</h1>
-
       <nav style={s.topNav} aria-label="Wybór tabeli">
         <span style={s.navGroup}>
           <button
@@ -1379,12 +2719,61 @@ export default function App() {
           >
             TASK
           </button>
+          <button
+            type="button"
+            style={widok === "podwykonawca" ? s.btnNavActive : s.btnNav}
+            onClick={przejdzDoPodwykonawcow}
+            title="Podwykonawcy (PW)"
+          >
+            PW
+          </button>
+          <button
+            type="button"
+            style={widok === "zagrozenia" ? s.btnNavActive : s.btnNav}
+            onClick={przejdzDoInfoZagrozen}
+            title="Kiedy wiersze są na czerwono — pulpit i lista KR"
+          >
+            INFO · zagrożenia
+          </button>
         </span>
+        {requireAuth && session?.user ? (
+          <>
+            <span style={s.navSep} aria-hidden="true" />
+            <span style={{ ...s.navGroup, marginLeft: "auto" }}>
+              <span
+                style={{
+                  ...s.muted,
+                  fontSize: "0.8rem",
+                  maxWidth: "min(14rem, 40vw)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={session.user.email ?? ""}
+              >
+                {session.user.email}
+              </span>
+              <button
+                type="button"
+                style={s.btnNav}
+                onClick={() => void supabase.auth.signOut()}
+              >
+                Wyloguj
+              </button>
+            </span>
+          </>
+        ) : null}
       </nav>
       <p style={{ ...s.muted, marginTop: "-0.35rem", marginBottom: "1rem", fontSize: "0.82rem" }}>
         {widok === "kr" ? (
           <>
             Widok: <strong style={{ color: "#d4d4d4" }}>tabela kr + kamienie milowe</strong>
+          </>
+        ) : widok === "zagrozenia" ? (
+          <>
+            Pomoc:{" "}
+            <strong style={{ color: "#fca5a5" }}>czerwone podświetlenia</strong> na pulpicie i liście KR —
+            poniżej pełna lista reguł
           </>
         ) : widok === "zadania" ? (
           <>
@@ -1392,6 +2781,12 @@ export default function App() {
             <strong style={{ color: "#d4d4d4" }}>
               tabela zadania (sprzęt, organizacja — bez powiązania z KR)
             </strong>
+          </>
+        ) : widok === "podwykonawca" ? (
+          <>
+            Widok:{" "}
+            <strong style={{ color: "#d4d4d4" }}>tabela podwykonawca</strong> (PW — firmy
+            zewnętrzne)
           </>
         ) : (
           <>
@@ -1433,6 +2828,150 @@ export default function App() {
             <code style={s.code}>g4-app/supabase/rls-policies-anon.sql</code>.
           </span>
         </div>
+      ) : null}
+
+      {widok === "podwykonawca" && podwykonawcyFetchError ? (
+        <div style={s.errBox} role="alert">
+          <strong>Błąd pobierania podwykonawców.</strong> {podwykonawcyFetchError}
+          <br />
+          <span style={{ fontSize: "0.88em" }}>
+            Utwórz tabelę <code style={s.code}>podwykonawca</code>{" "}
+            (<code style={s.code}>podwykonawca-tabela.sql</code>) i sekcję PW w{" "}
+            <code style={s.code}>rls-policies-anon.sql</code>.
+          </span>
+        </div>
+      ) : null}
+
+      {widok === "zagrozenia" ? (
+        <section style={s.krTopWrap} aria-labelledby="zagrozenia-naglowek">
+          <h2 id="zagrozenia-naglowek" style={{ ...s.krTopTitle, fontSize: "1rem", marginTop: 0 }}>
+            INFO — zagrożenia i podświetlenia „wymaga uwagi”
+          </h2>
+          <p style={{ ...s.muted, fontSize: "0.88rem", lineHeight: 1.55, marginBottom: "1.25rem" }}>
+            Poniżej reguły <strong style={{ color: "#fecaca" }}>obowiązujące w tej wersji aplikacji</strong>. Chodzi
+            o szybki odczyt przed spotkaniem: co wymaga decyzji, domknięcia lub koordynacji. Podświetlenia nie
+            zastępują ludzkiej oceny — bazują na polach w bazie (statusy, daty, zaznaczenia).
+          </p>
+
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+            Pulpit projektu — oś czasu (wiersz listy)
+          </h3>
+          <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "0.65rem" }}>
+            Wiersz jest traktowany jako <strong style={{ color: "#f87171" }}>wymagający uwagi</strong> (czerwony
+            pasek z lewej, jaśniejszy tekst, wykrzyknik przed skrótem, delikatne tło), gdy spełnia{" "}
+            <strong>którykolwiek</strong> warunek dla danego typu wpisu:
+          </p>
+          <ul
+            style={{
+              margin: "0 0 1.15rem 0",
+              paddingLeft: "1.25rem",
+              fontSize: "0.85rem",
+              lineHeight: 1.65,
+              color: "#e5e5e5",
+            }}
+          >
+            <li style={{ marginBottom: "0.5rem" }}>
+              <strong style={{ color: "#4ade80" }}>KR</strong> (pozycja startu projektu na osi): status projektu w
+              tabeli <code style={s.code}>kr</code> to dokładnie{" "}
+              <strong style={{ color: "#fecaca" }}>„oczekuje na zamawiającego”</strong>.
+            </li>
+            <li style={{ marginBottom: "0.5rem" }}>
+              <strong style={{ color: "#f87171" }}>KM</strong> — <strong>którykolwiek</strong> z warunków: pole
+              zagrożenia ustawione na tak (lub równoważna wartość w bazie); albo wypełniony{" "}
+              <strong>opis zagrożenia</strong>; albo <strong>data planowana</strong> jest wcześniejsza niż{" "}
+              <strong>dziś</strong>, przy czym status etapu <strong>nie</strong> należy do zamkniętych:{" "}
+              <em>zrealizowane</em>, <em>rozliczone</em>, <em>anulowane</em>.
+            </li>
+            <li style={{ marginBottom: "0.5rem" }}>
+              <strong style={{ color: "#38bdf8" }}>LOG</strong>: status zdarzenia to{" "}
+              <strong>„w trakcie”</strong> lub <strong>„oczekuje”</strong> (wpis nie jest uznany za domknięty —
+              status <em>ukończone</em> wyłącza podświetlenie).
+            </li>
+            <li style={{ marginBottom: "0.5rem" }}>
+              <strong style={{ color: "#fbbf24" }}>PW</strong> na osi: do trzech punktów w czasie (data zlecenia,
+              termin planowy, data oddania — jeśli jest). <strong>Czerwień</strong> tylko przy punkcie{" "}
+              <strong>termin zlecenia (plan)</strong>, gdy ten dzień jest przed <strong>dziś</strong>, a{" "}
+              <strong>odebrane</strong> nie jest zaznaczone; punkt „data zlecenia” nie oznacza zagrożenia sam z siebie.
+            </li>
+          </ul>
+
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+            Pulpit — karta „Dane projektu”
+          </h3>
+          <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
+            <strong>Czerwona ramka</strong> i dopisek przy nagłówku karty, gdy status KR tego projektu to{" "}
+            <strong style={{ color: "#fecaca" }}>„oczekuje na zamawiającego”</strong> (ta sama reguła co dla wiersza
+            startu KR na osi).
+          </p>
+
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+            Pulpit — zielona linia „Teraz”
+          </h3>
+          <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
+            To <strong>nie</strong> jest zagrożenie — oznacza <strong style={{ color: "#86efac" }}>aktualną datę
+            (dziś)</strong> na osi czasu, żeby widać było „gdzie jesteśmy” względem przeszłych i przyszłych wpisów.
+          </p>
+
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+            Pulpit — skrzynka „Wymaga uwagi”
+          </h3>
+          <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
+            Pod przyciskami <strong>KM / PW / LOG / …</strong> pojawia się podsumowanie, jeśli na osi jest co najmniej{" "}
+            <strong>jedna</strong> pozycja spełniająca powyższe reguły — z liczbą takich pozycji.
+          </p>
+
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+            Lista główna KR (tabela przed wejściem w Pulpit)
+          </h3>
+          <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "0.65rem" }}>
+            <strong>Różowe tło</strong> wiersza i <strong style={{ color: "#f87171" }}>!</strong> przy kodzie KR, gdy:
+          </p>
+          <ul
+            style={{
+              margin: "0 0 0.35rem 0",
+              paddingLeft: "1.25rem",
+              fontSize: "0.85rem",
+              lineHeight: 1.65,
+              color: "#e5e5e5",
+            }}
+          >
+            <li style={{ marginBottom: "0.5rem" }}>
+              status tego KR to <strong>„oczekuje na zamawiającego”</strong>, <strong>albo</strong>
+            </li>
+            <li style={{ marginBottom: "0.5rem" }}>
+              <strong>którykolwiek kamień milowy</strong> przypisany do tego kodu KR spełnia reguły „uwagi” jak dla{" "}
+              <strong style={{ color: "#f87171" }}>KM</strong> na pulpicie (zagrożenie / opis / plan po terminie przy
+              etapie nie zamkniętym).
+            </li>
+          </ul>
+          <p style={{ ...s.muted, fontSize: "0.82rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
+            Lista <strong>nie</strong> ma wczytanego całego dziennika ani wszystkich terminów PW dla każdego projektu —
+            dlatego <strong>LOG</strong> i <strong>PW</strong> „na czerwono” zobaczysz dopiero na{" "}
+            <strong>pulpicie</strong> danego KR.
+          </p>
+
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#a3a3a3" }}>
+            Jak „zgasić” czerwień (skrót)
+          </h3>
+          <ul
+            style={{
+              margin: "0 0 1.5rem 0",
+              paddingLeft: "1.25rem",
+              fontSize: "0.82rem",
+              lineHeight: 1.6,
+              color: "#c4c4c4",
+            }}
+          >
+            <li>KR / KM: zmień status lub usuń zagrożenie / zaktualizuj plan, domknij etap zgodnie z regułami powyżej.</li>
+            <li>LOG: ustaw status na <strong>ukończone</strong>, gdy sprawa jest załatwiona.</li>
+            <li>PW: odhacz <strong>odebrane</strong> lub skoryguj termin w bazie.</li>
+          </ul>
+
+          <p style={{ ...s.muted, fontSize: "0.8rem", marginBottom: 0 }}>
+            Wróć do pracy: <strong style={{ color: "#d4d4d4" }}>KR</strong> (lista projektów) lub inna zakładka w menu
+            u góry.
+          </p>
+        </section>
       ) : null}
 
       {showEmptyKrHint ? (
@@ -1818,11 +3357,499 @@ export default function App() {
         </>
       ) : null}
 
+      {widok === "podwykonawca" ? (
+        <>
+          <h2 style={{ ...s.h2, marginTop: 0 }}>PW — podwykonawcy</h2>
+          <p style={{ ...s.muted, marginBottom: "0.75rem" }}>
+            Tabela <code style={s.code}>podwykonawca</code>: nazwa firmy, osoba kontaktowa, telefon.
+            Skrót <strong style={{ color: "#d4d4d4" }}>PW</strong> w menu to katalog firm. Zlecenia przy
+            konkretnym KR dodajesz na liście projektów → przycisk <strong>PW</strong> przy wierszu (nie zakładka{" "}
+            <strong>PW</strong>).
+          </p>
+
+          <h3
+            style={{
+              fontSize: "1rem",
+              fontWeight: 600,
+              color: "#fff",
+              margin: "0 0 0.5rem",
+            }}
+          >
+            Aktualne zlecenia PW (wszystkie KR)
+          </h3>
+          <p style={{ ...s.muted, marginBottom: "0.65rem", fontSize: "0.82rem" }}>
+            Tabela <code style={s.code}>kr_zlecenie_podwykonawcy</code> — podgląd zbiorczy. Edytuj lub usuń z
+            tej tabeli albo z wiersza projektu na liście KR (przycisk <strong>PW</strong>).
+          </p>
+          {pwZleceniaWszystkieFetchError ? (
+            <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
+              <strong>Nie udało się wczytać zleceń PW.</strong> {pwZleceniaWszystkieFetchError}
+              <br />
+              <span style={{ fontSize: "0.88em" }}>
+                Uruchom <code style={s.code}>kr-zlecenie-podwykonawcy.sql</code> i RLS w{" "}
+                <code style={s.code}>rls-policies-anon.sql</code>.
+              </span>
+            </div>
+          ) : pwZleceniaWszystkieList.length === 0 ? (
+            <p style={{ ...s.muted, marginBottom: "1.25rem" }}>Brak zapisanych zleceń PW w bazie.</p>
+          ) : (
+            <>
+              <div style={{ ...s.tableWrap, marginBottom: "1rem" }}>
+                <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>KR</th>
+                      <th style={s.th}>Podwykonawca</th>
+                      <th style={s.th}>Nr zlecenia</th>
+                      <th style={s.th}>Zakres</th>
+                      <th style={s.th}>Data zlecenia</th>
+                      <th style={s.th}>Termin zlecenia</th>
+                      <th style={s.th}>Data oddania</th>
+                      <th style={s.th}>Netto</th>
+                      <th style={s.th}>Status</th>
+                      <th style={s.th}>Spr.</th>
+                      <th style={s.th}>Odb.</th>
+                      <th style={s.th}>Weryfikacja (nasz)</th>
+                      <th style={s.th}>Faktury (PW)</th>
+                      <th style={s.th} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pwZleceniaWszystkieList.map((z) => {
+                      const zakres = kmTekstDoKomorki(z.opis_zakresu);
+                      const fakt =
+                        [z.osoba_faktury_nazwa, z.osoba_faktury_email, z.osoba_faktury_telefon]
+                          .filter((x) => x != null && String(x).trim() !== "")
+                          .join(" · ") || "—";
+                      const firma =
+                        z.podwykonawca &&
+                        typeof z.podwykonawca === "object" &&
+                        !Array.isArray(z.podwykonawca)
+                          ? z.podwykonawca.nazwa_firmy
+                          : null;
+                      return (
+                        <tr key={z.id}>
+                          <td style={s.td}>
+                            <strong style={{ color: "#7dd3fc" }}>{z.kr?.trim() ? z.kr : "—"}</strong>
+                          </td>
+                          <td style={s.td}>
+                            <strong style={{ color: "#f5f5f5" }}>{firma?.trim() ? firma : "—"}</strong>
+                          </td>
+                          <td style={s.td}>{z.numer_zlecenia?.trim() ? z.numer_zlecenia : "—"}</td>
+                          <td style={s.td} title={zakres.title || undefined}>
+                            {zakres.text}
+                          </td>
+                          <td style={s.td}>{z.data_zlecenia ? dataDoInputa(z.data_zlecenia) : "—"}</td>
+                          <td style={s.td}>{z.termin_zlecenia ? dataDoInputa(z.termin_zlecenia) : "—"}</td>
+                          <td style={s.td}>{z.data_oddania ? dataDoInputa(z.data_oddania) : "—"}</td>
+                          <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                            {krZleceniePwKwotaEtykieta(z.cena_netto)}
+                          </td>
+                          <td style={s.td}>{z.status?.trim() ? z.status : "—"}</td>
+                          <td style={s.td}>{z.czy_sprawdzone === true ? "tak" : "nie"}</td>
+                          <td style={s.td}>{z.czy_odebrane === true ? "tak" : "nie"}</td>
+                          <td style={s.td}>
+                            {podpisOsobyProwadzacej(z.pracownik_weryfikacja, mapaProwadzacychId) ?? "—"}
+                          </td>
+                          <td style={{ ...s.td, maxWidth: "10rem" }} title={fakt !== "—" ? fakt : undefined}>
+                            {fakt === "—" ? "—" : fakt.length > 32 ? `${fakt.slice(0, 30)}…` : fakt}
+                          </td>
+                          <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                            <button
+                              type="button"
+                              style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                              onClick={() => wczytajKrZleceniePwDoEdycji(z)}
+                            >
+                              Edytuj
+                            </button>{" "}
+                            <button
+                              type="button"
+                              style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                              onClick={() => usunKrZleceniePw(z.id, z.kr)}
+                            >
+                              Usuń
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {krZleceniePwEdycjaId != null ? (
+                <>
+                  <h3
+                    style={{
+                      fontSize: "0.95rem",
+                      fontWeight: 600,
+                      color: "#fff",
+                      margin: "0 0 0.5rem",
+                    }}
+                  >
+                    Edycja zlecenia PW — KR{" "}
+                    <strong style={{ color: "#7dd3fc" }}>{krZleceniePwKontekstKr ?? "—"}</strong>
+                  </h3>
+                  <form
+                    style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1.75rem" }}
+                    onSubmit={zapiszKrZleceniePw}
+                  >
+                    <label style={s.label}>
+                      Podwykonawca <span style={{ color: "#fca5a5" }}>*</span>
+                      <select
+                        style={s.input}
+                        value={krZleceniePwForm.podwykonawca_id}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, podwykonawca_id: ev.target.value }))
+                        }
+                        required
+                      >
+                        <option value="">— wybierz z bazy PW —</option>
+                        {podwykonawcyPosortowani.map((p) => (
+                          <option key={String(p.id)} value={String(p.id)}>
+                            {String(p.nazwa_firmy ?? "").trim() || `id ${p.id}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={s.label}>
+                      Numer zlecenia (u nas / u PW)
+                      <input
+                        style={s.input}
+                        type="text"
+                        value={krZleceniePwForm.numer_zlecenia}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, numer_zlecenia: ev.target.value }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Zakres / opis zlecenia
+                      <textarea
+                        style={{ ...s.input, minHeight: "3.5rem", resize: "vertical" }}
+                        value={krZleceniePwForm.opis_zakresu}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, opis_zakresu: ev.target.value }))
+                        }
+                        rows={2}
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Data zlecenia
+                      <input
+                        style={s.input}
+                        type="date"
+                        value={krZleceniePwForm.data_zlecenia}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, data_zlecenia: ev.target.value }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Termin zlecenia — planowany
+                      <input
+                        style={s.input}
+                        type="date"
+                        value={krZleceniePwForm.termin_zlecenia}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, termin_zlecenia: ev.target.value }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Data oddania — faktyczna
+                      <input
+                        style={s.input}
+                        type="date"
+                        value={krZleceniePwForm.data_oddania}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, data_oddania: ev.target.value }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Cena netto (PLN)
+                      <input
+                        style={s.input}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="np. 12500,50"
+                        value={krZleceniePwForm.cena_netto}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, cena_netto: ev.target.value }))
+                        }
+                      />
+                    </label>
+                    <div style={{ marginBottom: "0.85rem" }}>
+                      <span
+                        style={{ display: "block", marginBottom: "0.4rem", color: "#d4d4d4", fontSize: "0.82rem" }}
+                      >
+                        Odbiór / weryfikacja
+                      </span>
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                          cursor: "pointer",
+                          marginBottom: "0.35rem",
+                          color: "#e5e5e5",
+                          fontSize: "0.88rem",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={krZleceniePwForm.czy_sprawdzone}
+                          onChange={(ev) =>
+                            setKrZleceniePwForm((f) => ({ ...f, czy_sprawdzone: ev.target.checked }))
+                          }
+                        />
+                        Sprawdzone
+                      </label>
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                          cursor: "pointer",
+                          color: "#e5e5e5",
+                          fontSize: "0.88rem",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={krZleceniePwForm.czy_odebrane}
+                          onChange={(ev) =>
+                            setKrZleceniePwForm((f) => ({ ...f, czy_odebrane: ev.target.checked }))
+                          }
+                        />
+                        Odebrane
+                      </label>
+                    </div>
+                    <label style={s.label}>
+                      Status
+                      <input
+                        style={s.input}
+                        type="text"
+                        placeholder="np. w trakcie, rozliczone"
+                        value={krZleceniePwForm.status}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, status: ev.target.value }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Osoba weryfikacji — nasz pracownik (<code style={s.code}>pracownik</code>)
+                      <select
+                        style={s.input}
+                        value={String(krZleceniePwForm.pracownik_weryfikacja ?? "")}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({
+                            ...f,
+                            pracownik_weryfikacja: ev.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">— brak —</option>
+                        {pracownicyPosortowani.map((p) => (
+                          <option key={String(p.nr)} value={String(p.nr)}>
+                            {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={s.label}>
+                      Kontakt fakturowy — osoba (PW)
+                      <input
+                        style={s.input}
+                        type="text"
+                        value={krZleceniePwForm.osoba_faktury_nazwa}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({
+                            ...f,
+                            osoba_faktury_nazwa: ev.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      E-mail do faktur (PW)
+                      <input
+                        style={s.input}
+                        type="email"
+                        autoComplete="email"
+                        value={krZleceniePwForm.osoba_faktury_email}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({
+                            ...f,
+                            osoba_faktury_email: ev.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Telefon fakturowy (PW)
+                      <input
+                        style={s.input}
+                        type="text"
+                        inputMode="tel"
+                        value={krZleceniePwForm.osoba_faktury_telefon}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({
+                            ...f,
+                            osoba_faktury_telefon: ev.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label style={s.label}>
+                      Uwagi
+                      <textarea
+                        style={{ ...s.input, minHeight: "2.75rem", resize: "vertical" }}
+                        value={krZleceniePwForm.uwagi}
+                        onChange={(ev) =>
+                          setKrZleceniePwForm((f) => ({ ...f, uwagi: ev.target.value }))
+                        }
+                        rows={2}
+                      />
+                    </label>
+                    <div style={s.btnRow}>
+                      <button type="submit" style={s.btn}>
+                        Zapisz zmiany
+                      </button>
+                      <button type="button" style={s.btnGhost} onClick={anulujKrZleceniePwEdycje}>
+                        Anuluj edycję
+                      </button>
+                    </div>
+                  </form>
+                </>
+              ) : null}
+            </>
+          )}
+
+          <h3
+            style={{
+              fontSize: "1rem",
+              fontWeight: 600,
+              color: "#fff",
+              margin: "0 0 0.5rem",
+            }}
+          >
+            Katalog firm (podwykonawca)
+          </h3>
+
+          {podwykonawcyFetchError ? null : podwykonawcyList.length === 0 ? (
+            <p style={s.muted}>Brak wpisów — dodaj pierwszego podwykonawcę poniżej.</p>
+          ) : (
+            <div style={s.tableWrap}>
+              <table style={{ ...s.table, fontSize: "0.88rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Nazwa firmy</th>
+                    <th style={s.th}>Osoba kontaktowa</th>
+                    <th style={s.th}>Telefon</th>
+                    <th style={s.th} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {podwykonawcyList.map((row) => (
+                    <tr key={row.id}>
+                      <td style={s.td}>
+                        <strong style={{ color: "#f5f5f5" }}>
+                          {row.nazwa_firmy?.trim() ? row.nazwa_firmy : "—"}
+                        </strong>
+                      </td>
+                      <td style={s.td}>{row.osoba_kontaktowa?.trim() ? row.osoba_kontaktowa : "—"}</td>
+                      <td style={s.td}>{row.telefon?.trim() ? row.telefon : "—"}</td>
+                      <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button
+                          type="button"
+                          style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                          onClick={() => wczytajPwDoEdycji(row)}
+                        >
+                          Edytuj
+                        </button>{" "}
+                        <button
+                          type="button"
+                          style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                          onClick={() => usunPodwykonawce(row.id)}
+                        >
+                          Usuń
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h3
+            style={{
+              fontSize: "1rem",
+              fontWeight: 600,
+              color: "#fff",
+              margin: "1.5rem 0 0.65rem",
+            }}
+          >
+            {pwEdycjaId != null ? "Edycja podwykonawcy" : "Nowy podwykonawca"}
+          </h3>
+          <form
+            style={{ ...s.form, maxWidth: "min(36rem, 100%)", marginBottom: "2rem" }}
+            onSubmit={zapiszPodwykonawce}
+          >
+            <label style={s.label}>
+              Nazwa firmy <span style={{ color: "#fca5a5" }}>*</span>
+              <input
+                style={s.input}
+                type="text"
+                value={pwForm.nazwa_firmy}
+                onChange={(ev) => setPwForm((f) => ({ ...f, nazwa_firmy: ev.target.value }))}
+                required
+              />
+            </label>
+            <label style={s.label}>
+              Osoba kontaktowa
+              <input
+                style={s.input}
+                type="text"
+                value={pwForm.osoba_kontaktowa}
+                onChange={(ev) =>
+                  setPwForm((f) => ({ ...f, osoba_kontaktowa: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Telefon
+              <input
+                style={s.input}
+                type="text"
+                inputMode="tel"
+                autoComplete="tel"
+                value={pwForm.telefon}
+                onChange={(ev) => setPwForm((f) => ({ ...f, telefon: ev.target.value }))}
+              />
+            </label>
+            <div style={s.btnRow}>
+              <button type="submit" style={s.btn}>
+                {pwEdycjaId != null ? "Zapisz zmiany" : "Dodaj podwykonawcę"}
+              </button>
+              {pwEdycjaId != null ? (
+                <button type="button" style={s.btnGhost} onClick={anulujPwEdycje}>
+                  Anuluj edycję
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </>
+      ) : null}
+
       {widok === "kr" && widokKmDlaKr ? (
         <section style={s.krTopWrap} aria-labelledby="km-naglowek">
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotZKmDoListy}>
-              ← Lista KR
+              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokKmDlaKr)
+                ? "← Pulpit"
+                : "← Lista KR"}
             </button>
           </div>
           <h2
@@ -1835,29 +3862,55 @@ export default function App() {
             Wiersze w tabeli <code style={s.code}>kamienie_milowe</code> przypisane do tego KR. Pole{" "}
             <strong style={{ color: "#e5e5e5" }}>Etap</strong> jest wymagane przy zapisie.{" "}
             <strong style={{ color: "#a7f3d0" }}>Status</strong> wybierasz z listy (jak status KR —
-            planowane, w trakcie, zrealizowane itd.).
+            planowane, w trakcie, zrealizowane itd.).{" "}
+            <strong style={{ color: "#e5e5e5" }}>Typ odniesienia</strong> (linia albo zlecenie)
+            wskazuje, czego dotyczy data kotwicy;{" "}
+            <strong style={{ color: "#e5e5e5" }}>data odniesienia</strong> i{" "}
+            <strong style={{ color: "#e5e5e5" }}>offset (miesiące)</strong> służą do naliczania
+            terminu planowego; przy triggerze w bazie (
+            <code style={s.code}>kamienie-milowe-data-planowana-wylicz.sql</code>) data planu ustawi
+            się po zapisie, gdy oba pola są wypełnione.{" "}
+            <strong style={{ color: "#fca5a5" }}>Czerwień w tabeli i formularzu</strong> — te same
+            pola co ostrzeżenie na pulpicie: zagrożenie, opis zagrożenia, przeterminowany plan (przy
+            etapie niezamkniętym), status przy takim planie.
           </p>
 
           <div style={s.tableWrap}>
             <table style={s.kmTable}>
               <colgroup>
-                <col style={{ width: "9%" }} />
                 <col style={{ width: "8%" }} />
+                <col style={{ width: "7%" }} />
                 <col style={{ width: "6.5%" }} />
-                <col style={{ width: "6.5%" }} />
-                <col style={{ width: "11%" }} />
-                <col style={{ width: "5%" }} />
-                <col style={{ width: "5%" }} />
-                <col style={{ width: "18%" }} />
-                <col style={{ width: "18%" }} />
+                <col style={{ width: "4.5%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "4.5%" }} />
+                <col style={{ width: "4.5%" }} />
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "15%" }} />
                 <col style={{ width: "7%" }} />
               </colgroup>
               <thead>
                 <tr>
                   <th style={s.kmTh}>Etap</th>
                   <th style={s.kmTh}>Status</th>
+                  <th style={s.kmTh}>
+                    <span>Odniesienie</span>
+                    <span
+                      style={{
+                        display: "block",
+                        fontWeight: 400,
+                        fontSize: "0.6rem",
+                        color: "#737373",
+                        marginTop: "0.2rem",
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      linia / zlecenie
+                    </span>
+                  </th>
+                  <th style={s.kmTh}>+ mc</th>
                   <th style={s.kmTh}>Plan</th>
-                  <th style={s.kmTh}>Real</th>
                   <th style={s.kmTh}>Odpow.</th>
                   <th style={s.kmTh}>Osiąg.</th>
                   <th style={s.kmTh}>Zagr.</th>
@@ -1875,26 +3928,56 @@ export default function App() {
                       <td style={s.kmTd}>
                         <strong style={{ color: "#f5f5f5", fontWeight: 600 }}>{row.etap ?? "—"}</strong>
                       </td>
-                      <td style={{ ...s.kmTd, ...s.statusKr, fontSize: "0.68rem" }}>
+                      <td
+                        style={{
+                          ...s.kmTd,
+                          ...s.statusKr,
+                          fontSize: "0.68rem",
+                          ...stylKomorkiTabeliUwagi(pulpitKmPlanPrzeterminowany(row, dziśUwagiPulpitu)),
+                        }}
+                      >
                         {row.status ?? "—"}
                       </td>
+                      <td style={s.kmTd}>{kmKomorkaOdniesienia(row)}</td>
                       <td style={s.kmTd}>
+                        {row.offset_miesiecy != null && row.offset_miesiecy !== ""
+                          ? String(row.offset_miesiecy)
+                          : "—"}
+                      </td>
+                      <td
+                        style={{
+                          ...s.kmTd,
+                          ...stylKomorkiTabeliUwagi(pulpitKmPlanPrzeterminowany(row, dziśUwagiPulpitu)),
+                        }}
+                      >
                         {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"}
                       </td>
-                      <td style={s.kmTd}>{row.data_realna ? dataDoInputa(row.data_realna) : "—"}</td>
                       <td style={s.kmTd}>
                         {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
                       </td>
                       <td style={s.kmTd}>
                         {row.osiagniete === true ? "tak" : row.osiagniete === false ? "nie" : "—"}
                       </td>
-                      <td style={s.kmTd}>
+                      <td
+                        style={{
+                          ...s.kmTd,
+                          ...stylKomorkiTabeliUwagi(
+                            row.zagrozenie === true || row.zagrozenie === "tak",
+                          ),
+                        }}
+                      >
                         {row.zagrozenie === true ? "tak" : row.zagrozenie === false ? "nie" : "—"}
                       </td>
                       <td style={s.kmTd} title={uw.title || undefined}>
                         {uw.text}
                       </td>
-                      <td style={s.kmTd} title={oz.title || undefined}>
+                      <td
+                        style={{
+                          ...s.kmTd,
+                          ...stylKomorkiTabeliUwagi(!!tekstTrim(row.zagrozenie_opis)),
+                        }}
+                        title={oz.title || undefined}
+                      >
                         {oz.text}
                       </td>
                       <td style={{ ...s.kmTd, ...s.kmTdAkcje }}>
@@ -1946,13 +4029,70 @@ export default function App() {
             onSubmit={zapiszKm}
           >
             <label style={s.label}>
-              Data planowania
+              Typ odniesienia — co oznacza data poniżej
+              <select
+                style={s.input}
+                value={kmForm.typ_odniesienia}
+                onChange={(ev) =>
+                  setKmForm((f) => ({ ...f, typ_odniesienia: ev.target.value }))
+                }
+              >
+                <option value="">— brak —</option>
+                {(() => {
+                  const cur = String(kmForm.typ_odniesienia ?? "").trim();
+                  const orphan = cur !== "" && !KM_TYP_ODNIESIENIA_W_BAZIE.includes(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>
+                          {cur} (spoza listy — wybierz Linia lub Zlecenie i zapisz)
+                        </option>
+                      ) : null}
+                      <option value="linia">Linia (np. oś dokumentacji)</option>
+                      <option value="zlecenie">Zlecenie</option>
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Data odniesienia (od kiedy liczyć termin)
               <input
                 style={s.input}
+                type="date"
+                value={kmForm.data_odniesienia}
+                onChange={(ev) =>
+                  setKmForm((f) => ({ ...f, data_odniesienia: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Offset — liczba miesięcy
+              <input
+                style={s.input}
+                type="number"
+                min={0}
+                step={1}
+                inputMode="numeric"
+                placeholder="np. 6"
+                value={kmForm.offset_miesiecy}
+                onChange={(ev) =>
+                  setKmForm((f) => ({ ...f, offset_miesiecy: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Data planowania
+              <input
+                style={{ ...s.input, ...stylPolaUwagiPulpitu(kmFormPlanPrzeterminowany) }}
                 type="date"
                 value={kmForm.data_planowana}
                 onChange={(ev) => setKmForm((f) => ({ ...f, data_planowana: ev.target.value }))}
               />
+              <span style={{ ...s.muted, display: "block", marginTop: "0.35rem", fontSize: "0.8rem" }}>
+                Przy obu polach powyżej i triggerze w bazie data planu zwykle ustawi się automatycznie;
+                możesz też wpisać plan ręcznie (np. bez offsetu).
+              </span>
             </label>
             <label style={s.label}>
               Etap <span style={{ color: "#fca5a5" }}>*</span>
@@ -1967,7 +4107,11 @@ export default function App() {
             <label style={s.label}>
               Status kamienia milowego
               <select
-                style={{ ...s.input, ...s.statusKr }}
+                style={{
+                  ...s.input,
+                  ...s.statusKr,
+                  ...stylPolaUwagiPulpitu(kmFormPlanPrzeterminowany),
+                }}
                 value={kmForm.status}
                 onChange={(ev) => setKmForm((f) => ({ ...f, status: ev.target.value }))}
               >
@@ -1991,15 +4135,6 @@ export default function App() {
                   );
                 })()}
               </select>
-            </label>
-            <label style={s.label}>
-              Data realizacji (realna)
-              <input
-                style={s.input}
-                type="date"
-                value={kmForm.data_realna}
-                onChange={(ev) => setKmForm((f) => ({ ...f, data_realna: ev.target.value }))}
-              />
             </label>
             <label style={s.label}>
               Osoba odpowiedzialna — z bazy <code style={s.code}>pracownik</code>
@@ -2042,7 +4177,7 @@ export default function App() {
             <label style={s.label}>
               Zagrożenie
               <select
-                style={s.input}
+                style={{ ...s.input, ...stylPolaUwagiPulpitu(kmFormZagrozenieTak) }}
                 value={kmForm.zagrozenie}
                 onChange={(ev) => setKmForm((f) => ({ ...f, zagrozenie: ev.target.value }))}
               >
@@ -2054,7 +4189,12 @@ export default function App() {
             <label style={s.label}>
               Opis zagrożenia
               <textarea
-                style={{ ...s.input, minHeight: "3.5rem", resize: "vertical" }}
+                style={{
+                  ...s.input,
+                  minHeight: "3.5rem",
+                  resize: "vertical",
+                  ...stylPolaUwagiPulpitu(kmFormOpisZagrozeniaWypelniony),
+                }}
                 value={kmForm.zagrozenie_opis}
                 onChange={(ev) =>
                   setKmForm((f) => ({ ...f, zagrozenie_opis: ev.target.value }))
@@ -2076,11 +4216,393 @@ export default function App() {
         </section>
       ) : null}
 
+      {widok === "kr" && widokPwDlaKr ? (
+        <section style={s.krTopWrap} aria-labelledby="pw-kr-naglowek">
+          <div style={{ marginBottom: "1rem" }}>
+            <button type="button" style={s.btnGhost} onClick={powrotZPwDoListy}>
+              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokPwDlaKr)
+                ? "← Pulpit"
+                : "← Lista KR"}
+            </button>
+          </div>
+          <h2 id="pw-kr-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
+            Zlecenia PW — KR {widokPwDlaKr}
+          </h2>
+          <p style={{ ...s.muted, fontSize: "0.82rem", marginBottom: "0.65rem" }}>
+            Tabela <code style={s.code}>kr_zlecenie_podwykonawcy</code>: podwykonawca z bazy (
+            zakładka <strong style={{ color: "#d4d4d4" }}>PW</strong>) + szczegóły zlecenia przy tym KR.{" "}
+            <strong style={{ color: "#e5e5e5" }}>Weryfikacja</strong> — kto u Was pilnuje sprawdzenia / rozliczenia z
+            PW (<code style={s.code}>pracownik.nr</code>).{" "}
+            <strong style={{ color: "#e5e5e5" }}>Kontakt fakturowy</strong> — po stronie firmy PW. Pełny podgląd
+            read-only — przycisk <strong style={{ color: "#e5e5e5" }}>INFO</strong> na pulpicie projektu.{" "}
+            <strong style={{ color: "#fca5a5" }}>Czerwień</strong> — <strong>termin zlecenia (planowany)</strong> minął,
+            a <strong style={{ color: "#e5e5e5" }}>odebrane</strong> nie jest zaznaczone (jak na pulpicie).
+          </p>
+          {krZleceniaPwFetchError ? (
+            <div style={{ ...s.errBox, marginBottom: "0.75rem" }} role="alert">
+              {krZleceniaPwFetchError}
+              <br />
+              <span style={{ fontSize: "0.88em" }}>
+                Uruchom <code style={s.code}>kr-zlecenie-podwykonawcy.sql</code> oraz sekcję{" "}
+                <code style={s.code}>kr_zlecenie_podwykonawcy</code> w{" "}
+                <code style={s.code}>rls-policies-anon.sql</code>.
+              </span>
+            </div>
+          ) : null}
+          {krZleceniaPwFetchError ? null : krZleceniaPwList.length === 0 ? (
+            <p style={s.muted}>Brak zapisanych zleceń PW dla tego KR.</p>
+          ) : (
+            <div style={{ ...s.tableWrap, marginBottom: "1rem" }}>
+              <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Podwykonawca</th>
+                    <th style={s.th}>Nr zlecenia</th>
+                    <th style={s.th}>Zakres</th>
+                    <th style={s.th}>Data zlec.</th>
+                    <th style={s.th}>Termin</th>
+                    <th style={s.th}>Netto</th>
+                    <th style={s.th}>Status</th>
+                    <th style={s.th}>Spr.</th>
+                    <th style={s.th}>Odb.</th>
+                    <th style={s.th}>Weryfikacja (nasz)</th>
+                    <th style={s.th}>Faktury (PW)</th>
+                    <th style={s.th} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {krZleceniaPwList.map((z) => {
+                    const zakres = kmTekstDoKomorki(z.opis_zakresu);
+                    const fakt =
+                      [z.osoba_faktury_nazwa, z.osoba_faktury_email, z.osoba_faktury_telefon]
+                        .filter((x) => x != null && String(x).trim() !== "")
+                        .join(" · ") || "—";
+                    const firma =
+                      z.podwykonawca && typeof z.podwykonawca === "object" && !Array.isArray(z.podwykonawca)
+                        ? z.podwykonawca.nazwa_firmy
+                        : null;
+                    return (
+                      <tr key={z.id}>
+                        <td style={s.td}>
+                          <strong style={{ color: "#f5f5f5" }}>{firma?.trim() ? firma : "—"}</strong>
+                        </td>
+                        <td style={s.td}>{z.numer_zlecenia?.trim() ? z.numer_zlecenia : "—"}</td>
+                        <td style={s.td} title={zakres.title || undefined}>
+                          {zakres.text}
+                        </td>
+                        <td style={s.td}>{z.data_zlecenia ? dataDoInputa(z.data_zlecenia) : "—"}</td>
+                        <td
+                          style={{
+                            ...s.td,
+                            ...stylKomorkiTabeliUwagi(pulpitPwWymagaUwagi(z, dziśUwagiPulpitu)),
+                          }}
+                        >
+                          {z.termin_zlecenia ? dataDoInputa(z.termin_zlecenia) : "—"}
+                        </td>
+                        <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                          {krZleceniePwKwotaEtykieta(z.cena_netto)}
+                        </td>
+                        <td style={s.td}>{z.status?.trim() ? z.status : "—"}</td>
+                        <td style={s.td}>{z.czy_sprawdzone === true ? "tak" : "nie"}</td>
+                        <td
+                          style={{
+                            ...s.td,
+                            ...stylKomorkiTabeliUwagi(pulpitPwWymagaUwagi(z, dziśUwagiPulpitu)),
+                          }}
+                        >
+                          {z.czy_odebrane === true ? "tak" : "nie"}
+                        </td>
+                        <td style={s.td}>
+                          {podpisOsobyProwadzacej(z.pracownik_weryfikacja, mapaProwadzacychId) ?? "—"}
+                        </td>
+                        <td style={{ ...s.td, maxWidth: "12rem" }} title={fakt !== "—" ? fakt : undefined}>
+                          {fakt === "—" ? "—" : fakt.length > 42 ? `${fakt.slice(0, 40)}…` : fakt}
+                        </td>
+                        <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                            onClick={() => wczytajKrZleceniePwDoEdycji(z)}
+                          >
+                            Edytuj
+                          </button>{" "}
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                            onClick={() => usunKrZleceniePw(z.id)}
+                          >
+                            Usuń
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <h3
+            style={{
+              fontSize: "0.95rem",
+              fontWeight: 600,
+              color: "#fff",
+              margin: "0 0 0.5rem",
+            }}
+          >
+            {krZleceniePwEdycjaId != null ? "Edycja zlecenia PW" : "Nowe zlecenie PW"}
+          </h3>
+          <form
+            style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1.25rem" }}
+            onSubmit={zapiszKrZleceniePw}
+          >
+            <label style={s.label}>
+              Podwykonawca <span style={{ color: "#fca5a5" }}>*</span>
+              <select
+                style={s.input}
+                value={krZleceniePwForm.podwykonawca_id}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, podwykonawca_id: ev.target.value }))
+                }
+                required
+              >
+                <option value="">— wybierz z bazy PW —</option>
+                {podwykonawcyPosortowani.map((p) => (
+                  <option key={String(p.id)} value={String(p.id)}>
+                    {String(p.nazwa_firmy ?? "").trim() || `id ${p.id}`}
+                  </option>
+                ))}
+              </select>
+              {podwykonawcyPosortowani.length === 0 ? (
+                <span style={{ ...s.muted, fontSize: "0.78rem" }}>
+                  Brak firm w bazie — dodaj je w zakładce <strong>PW</strong>.
+                </span>
+              ) : null}
+            </label>
+            <label style={s.label}>
+              Numer zlecenia (u nas / u PW)
+              <input
+                style={s.input}
+                type="text"
+                value={krZleceniePwForm.numer_zlecenia}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, numer_zlecenia: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Zakres / opis zlecenia
+              <textarea
+                style={{ ...s.input, minHeight: "3.5rem", resize: "vertical" }}
+                value={krZleceniePwForm.opis_zakresu}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, opis_zakresu: ev.target.value }))
+                }
+                rows={2}
+              />
+            </label>
+            <label style={s.label}>
+              Data zlecenia
+              <input
+                style={s.input}
+                type="date"
+                value={krZleceniePwForm.data_zlecenia}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, data_zlecenia: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Termin zlecenia — planowany
+              <input
+                style={{ ...s.input, ...stylPolaUwagiPulpitu(pwFormWymagaUwagiPulpitu) }}
+                type="date"
+                value={krZleceniePwForm.termin_zlecenia}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, termin_zlecenia: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Data oddania — faktyczna
+              <input
+                style={s.input}
+                type="date"
+                value={krZleceniePwForm.data_oddania}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, data_oddania: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Cena netto (PLN)
+              <input
+                style={s.input}
+                type="text"
+                inputMode="decimal"
+                placeholder="np. 12500,50"
+                value={krZleceniePwForm.cena_netto}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, cena_netto: ev.target.value }))
+                }
+              />
+            </label>
+            <div style={{ marginBottom: "0.85rem" }}>
+              <span
+                style={{ display: "block", marginBottom: "0.4rem", color: "#d4d4d4", fontSize: "0.82rem" }}
+              >
+                Odbiór / weryfikacja
+              </span>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  cursor: "pointer",
+                  marginBottom: "0.35rem",
+                  color: "#e5e5e5",
+                  fontSize: "0.88rem",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={krZleceniePwForm.czy_sprawdzone}
+                  onChange={(ev) =>
+                    setKrZleceniePwForm((f) => ({ ...f, czy_sprawdzone: ev.target.checked }))
+                  }
+                />
+                Sprawdzone
+              </label>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  cursor: "pointer",
+                  color: "#e5e5e5",
+                  fontSize: "0.88rem",
+                  padding: "0.35rem 0.45rem",
+                  borderRadius: "6px",
+                  ...stylPolaUwagiPulpitu(pwFormWymagaUwagiPulpitu),
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={krZleceniePwForm.czy_odebrane}
+                  onChange={(ev) =>
+                    setKrZleceniePwForm((f) => ({ ...f, czy_odebrane: ev.target.checked }))
+                  }
+                />
+                Odebrane
+              </label>
+            </div>
+            <label style={s.label}>
+              Status
+              <input
+                style={s.input}
+                type="text"
+                placeholder="np. w trakcie, rozliczone"
+                value={krZleceniePwForm.status}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, status: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Osoba weryfikacji — nasz pracownik (<code style={s.code}>pracownik</code>)
+              <select
+                style={s.input}
+                value={String(krZleceniePwForm.pracownik_weryfikacja ?? "")}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({
+                    ...f,
+                    pracownik_weryfikacja: ev.target.value,
+                  }))
+                }
+              >
+                <option value="">— brak —</option>
+                {pracownicyPosortowani.map((p) => (
+                  <option key={String(p.nr)} value={String(p.nr)}>
+                    {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={s.label}>
+              Kontakt fakturowy — osoba (PW)
+              <input
+                style={s.input}
+                type="text"
+                value={krZleceniePwForm.osoba_faktury_nazwa}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({
+                    ...f,
+                    osoba_faktury_nazwa: ev.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              E-mail do faktur (PW)
+              <input
+                style={s.input}
+                type="email"
+                autoComplete="email"
+                value={krZleceniePwForm.osoba_faktury_email}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({
+                    ...f,
+                    osoba_faktury_email: ev.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Telefon fakturowy (PW)
+              <input
+                style={s.input}
+                type="text"
+                inputMode="tel"
+                value={krZleceniePwForm.osoba_faktury_telefon}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({
+                    ...f,
+                    osoba_faktury_telefon: ev.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Uwagi
+              <textarea
+                style={{ ...s.input, minHeight: "2.75rem", resize: "vertical" }}
+                value={krZleceniePwForm.uwagi}
+                onChange={(ev) =>
+                  setKrZleceniePwForm((f) => ({ ...f, uwagi: ev.target.value }))
+                }
+                rows={2}
+              />
+            </label>
+            <div style={s.btnRow}>
+              <button type="submit" style={s.btn}>
+                {krZleceniePwEdycjaId != null ? "Zapisz zmiany" : "Dodaj zlecenie"}
+              </button>
+              {krZleceniePwEdycjaId != null ? (
+                <button type="button" style={s.btnGhost} onClick={anulujKrZleceniePwEdycje}>
+                  Anuluj edycję
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </section>
+      ) : null}
+
       {widok === "kr" && widokLogDlaKr ? (
         <section style={s.krTopWrap} aria-labelledby="log-naglowek">
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotZLogDoListy}>
-              ← Lista KR
+              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokLogDlaKr)
+                ? "← Pulpit"
+                : "← Lista KR"}
             </button>
           </div>
           <h2 id="log-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
@@ -2094,7 +4616,10 @@ export default function App() {
             <strong style={{ color: "#e5e5e5" }}>Odpowiedzialny</strong> — osoba z bazy ID, której
             zadanie jest adresowane i która odpowiada za wykonanie.{" "}
             <strong style={{ color: "#a7f3d0" }}>Status zdarzenia</strong>: w trakcie, ukończone,
-            oczekuje. <em>Data zdarzenia</em> — tylko dzień; puste przy zapisie = dzisiaj.
+            oczekuje. <em>Data zdarzenia</em> — tylko dzień; puste przy zapisie = dzisiaj.{" "}
+            <strong style={{ color: "#fca5a5" }}>Czerwień</strong> — przy statusie innym niż
+            „ukończone”: brak <strong style={{ color: "#e5e5e5" }}>wymaganego działania</strong> lub brak{" "}
+            <strong style={{ color: "#e5e5e5" }}>osoby odpowiedzialnej</strong>.
           </p>
 
           {dziennikFetchError ? (
@@ -2119,6 +4644,7 @@ export default function App() {
                   <th style={s.th}>Zgłaszający</th>
                   <th style={s.th}>Wymagane działanie</th>
                   <th style={s.th}>Odpowiedzialny</th>
+                  <th style={s.th}> </th>
                 </tr>
               </thead>
               <tbody>
@@ -2139,12 +4665,33 @@ export default function App() {
                     <td style={s.td}>
                       {podpisOsobyProwadzacej(row.osoba_zglaszajaca, mapaProwadzacychId) ?? "—"}
                     </td>
-                    <td style={s.td}>{row.wymagane_dzialanie?.trim() ? row.wymagane_dzialanie : "—"}</td>
-                    <td style={s.td}>
+                    <td
+                      style={{
+                        ...s.td,
+                        ...stylKomorkiTabeliUwagi(logWidokPodswietlGdyJestWymaganeDzialanie(row)),
+                      }}
+                    >
+                      {row.wymagane_dzialanie?.trim() ? row.wymagane_dzialanie : "—"}
+                    </td>
+                    <td
+                      style={{
+                        ...s.td,
+                        ...stylKomorkiTabeliUwagi(logWidokPodswietlGdyJestWymaganeDzialanie(row)),
+                      }}
+                    >
                       {podpisOsobyProwadzacej(
                         row.osoba_odpowiedzialna_za_zadanie,
                         mapaProwadzacychId
                       ) ?? "—"}
+                    </td>
+                    <td style={s.td}>
+                      <button
+                        type="button"
+                        style={{ ...s.btnGhost, padding: "0.22rem 0.5rem", fontSize: "0.74rem" }}
+                        onClick={() => wczytajLogDoEdycji(row)}
+                      >
+                        Edytuj
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -2165,7 +4712,7 @@ export default function App() {
               marginBottom: "0.5rem",
             }}
           >
-            Nowe zdarzenie
+            {logEdycjaId != null ? "Edycja zdarzenia" : "Nowe zdarzenie"}
           </h3>
           <form
             style={{
@@ -2239,7 +4786,12 @@ export default function App() {
             <label style={s.label}>
               Wymagane działanie (opis zadania)
               <textarea
-                style={{ ...s.input, minHeight: "3rem", resize: "vertical" }}
+                style={{
+                  ...s.input,
+                  minHeight: "3rem",
+                  resize: "vertical",
+                  ...stylPolaUwagiPulpitu(logFormPodswWymDzialIPerson),
+                }}
                 value={logForm.wymagane_dzialanie}
                 onChange={(ev) =>
                   setLogForm((f) => ({ ...f, wymagane_dzialanie: ev.target.value }))
@@ -2250,7 +4802,7 @@ export default function App() {
             <label style={s.label}>
               Osoba odpowiedzialna za zadanie — z bazy <code style={s.code}>pracownik</code>
               <select
-                style={s.input}
+                style={{ ...s.input, ...stylPolaUwagiPulpitu(logFormPodswWymDzialIPerson) }}
                 value={logForm.osoba_odpowiedzialna_za_zadanie}
                 onChange={(ev) =>
                   setLogForm((f) => ({
@@ -2274,29 +4826,544 @@ export default function App() {
             ) : null}
             <div style={s.btnRow}>
               <button type="submit" style={s.btn}>
-                Dodaj wpis
+                {logEdycjaId != null ? "Zapisz zmiany" : "Dodaj wpis"}
               </button>
+              {logEdycjaId != null ? (
+                <button type="button" style={s.btnGhost} onClick={anulujEdycjeLog}>
+                  Anuluj edycję
+                </button>
+              ) : null}
             </div>
           </form>
         </section>
       ) : null}
 
-      {widok === "kr" && widokInfoDlaKr ? (
+      {widok === "kr" &&
+      widokPulpitDlaKr &&
+      !widokKmDlaKr &&
+      !widokLogDlaKr &&
+      !widokPwDlaKr &&
+      !widokInfoDlaKr &&
+      !wybranyKrKlucz ? (
+        <section style={s.krTopWrap} aria-labelledby="pulpit-naglowek">
+          <div style={{ marginBottom: "0.65rem" }}>
+            <button type="button" style={s.btnGhost} onClick={powrotZPulpituDoListy}>
+              ← Lista KR
+            </button>
+          </div>
+          <h2 id="pulpit-naglowek" style={{ ...s.krTopTitle, fontSize: "0.9rem" }}>
+            Pulpit projektu — KR {widokPulpitDlaKr}
+          </h2>
+          <p style={{ ...s.muted, marginBottom: "0.5rem", fontSize: "0.74rem", lineHeight: 1.45 }}>
+            Oś czasu: <strong>najpierw data</strong>, potem ikonka (
+            <strong style={{ color: "#f87171" }}>KM</strong>,{" "}
+            <strong style={{ color: "#fbbf24" }}>PW</strong>,{" "}
+            <strong style={{ color: "#38bdf8" }}>LOG</strong>, zielony — start), potem skrót.{" "}
+            <strong style={{ color: "#4ade80" }}>Zielona linia</strong> — dziś. Poniżej: dane projektu i skrót kontaktów; edycja całego KR — przyciski pod nagłówkiem, pojedynczej pozycji — przycisk „Edytuj” przy wierszu osi.
+          </p>
+          {!rekordKrPulpit ? (
+            <div style={s.errBox} role="alert">
+              Brak projektu na aktualnej liście — odśwież stronę lub wróć.
+              <div style={{ marginTop: "0.75rem" }}>
+                <button type="button" style={s.btnGhost} onClick={powrotZPulpituDoListy}>
+                  Wróć do listy
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {(() => {
+                const r = rekordKrPulpit;
+                const siatka = {
+                  display: "grid",
+                  gridTemplateColumns: "minmax(5.5rem, auto) 1fr",
+                  gap: "0.22rem 0.65rem",
+                  alignItems: "start",
+                  fontSize: "0.72rem",
+                  color: "#d4d4d4",
+                };
+                const dd = { margin: 0, wordBreak: "break-word" };
+                const ok_od = dataDoInputa(r.okres_projektu_od);
+                const ok_do = dataDoInputa(r.okres_projektu_do);
+                const okA = ok_od && /^\d{4}-\d{2}-\d{2}$/.test(ok_od) ? dataPLZFormat(ok_od) : null;
+                const okB = ok_do && /^\d{4}-\d{2}-\d{2}$/.test(ok_do) ? dataPLZFormat(ok_do) : null;
+                const okresWar =
+                  okA || okB ? `${okA || "—"} → ${okB || "—"}` : null;
+                const krKartaUwaga = pulpitKrRekordWymagaUwagi(r);
+                return (
+                  <div
+                    style={{
+                      marginBottom: "0.55rem",
+                      padding: "0.55rem 0.75rem",
+                      borderRadius: "8px",
+                      border: krKartaUwaga ? "1px solid rgba(248,113,113,0.45)" : "1px solid #2a2a2a",
+                      borderLeft: krKartaUwaga ? "4px solid #f87171" : undefined,
+                      background: krKartaUwaga ? "rgba(248,113,113,0.08)" : "#121212",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "0.65rem",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        color: krKartaUwaga ? "#fca5a5" : "#737373",
+                        marginBottom: "0.35rem",
+                      }}
+                    >
+                      Dane projektu
+                      {krKartaUwaga ? (
+                        <span style={{ marginLeft: "0.5rem", color: "#f87171", fontWeight: 700 }}>
+                          — uwaga: status KR
+                        </span>
+                      ) : null}
+                    </div>
+                    <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#fafafa", marginBottom: "0.45rem" }}>
+                      {tekstTrim(r.nazwa_obiektu) || "—"}
+                    </div>
+                    <dl style={{ ...siatka, margin: 0 }}>
+                      {tekstTrim(r.rodzaj_pracy) ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Rodzaj</dt>
+                          <dd style={dd}>{tekstTrim(r.rodzaj_pracy)}</dd>
+                        </>
+                      ) : null}
+                      {tekstTrim(r.dzial) ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Dział</dt>
+                          <dd style={{ ...dd, ...s.dzialWartosc }}>{tekstTrim(r.dzial)}</dd>
+                        </>
+                      ) : null}
+                      {tekstTrim(r.status) ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Status</dt>
+                          <dd style={{ ...dd, ...s.statusKr }}>{tekstTrim(r.status)}</dd>
+                        </>
+                      ) : null}
+                      {r.data_rozpoczecia ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Start</dt>
+                          <dd style={dd}>{etykietaDatyStartu(r.data_rozpoczecia)}</dd>
+                        </>
+                      ) : null}
+                      {podpisOsobyProwadzacej(r.osoba_prowadzaca, mapaProwadzacychId) ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Prowadzący</dt>
+                          <dd style={dd}>{podpisOsobyProwadzacej(r.osoba_prowadzaca, mapaProwadzacychId)}</dd>
+                        </>
+                      ) : null}
+                      {tekstTrim(r.zleceniodawca) ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Zleceniodawca</dt>
+                          <dd style={dd}>{tekstTrim(r.zleceniodawca)}</dd>
+                        </>
+                      ) : null}
+                      {tekstTrim(r.osoba_odpowiedzialna_zleceniodawcy) ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Kontakt ZL</dt>
+                          <dd style={dd}>{tekstTrim(r.osoba_odpowiedzialna_zleceniodawcy)}</dd>
+                        </>
+                      ) : null}
+                      {okresWar ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Okres</dt>
+                          <dd style={dd}>{okresWar}</dd>
+                        </>
+                      ) : null}
+                      {tekstTrim(r.link_umowy) ? (
+                        <>
+                          <dt style={{ ...s.muted, margin: 0 }}>Umowa</dt>
+                          <dd style={dd}>
+                            <a
+                              href={hrefLinkuZewnetrznego(r.link_umowy)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: "#7dd3fc" }}
+                            >
+                              link
+                            </a>
+                          </dd>
+                        </>
+                      ) : null}
+                    </dl>
+                  </div>
+                );
+              })()}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.35rem",
+                  marginBottom: "0.65rem",
+                }}
+              >
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                  onClick={() => otworzKmDlaKr(rekordKrPulpit)}
+                >
+                  KM
+                </button>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                  onClick={() => otworzPwDlaKr(rekordKrPulpit)}
+                >
+                  PW
+                </button>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                  onClick={() => otworzLogDlaKr(rekordKrPulpit)}
+                >
+                  LOG
+                </button>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                  onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}
+                >
+                  Edytuj KR
+                </button>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                  onClick={() => otworzInfoDlaKr(rekordKrPulpit)}
+                >
+                  INFO
+                </button>
+              </div>
+              {(() => {
+                const n = pulpitOśKarty.filter((c) => c.wymagaUwagi).length;
+                if (n === 0) return null;
+                return (
+                  <div
+                    role="status"
+                    style={{
+                      marginBottom: "0.55rem",
+                      padding: "0.45rem 0.65rem",
+                      borderRadius: "8px",
+                      border: "1px solid rgba(248,113,113,0.45)",
+                      background: "rgba(248,113,113,0.1)",
+                      fontSize: "0.74rem",
+                      lineHeight: 1.45,
+                      color: "#fecaca",
+                    }}
+                  >
+                    <strong style={{ color: "#f87171" }}>Wymaga uwagi</strong> — {n}{" "}
+                    {n === 1 ? "pozycja" : "pozycje"} na osi. Reguły: zagrożenie lub przeterminowany plan KM (etap nie
+                    zamknięty), LOG w statusie „w trakcie” lub „oczekuje”, PW po terminie bez odbioru, status KR
+                    „oczekuje na zamawiającego”.
+                  </div>
+                );
+              })()}
+              <div
+                style={{
+                  marginBottom: "0.65rem",
+                  padding: "0.5rem 0.7rem",
+                  borderRadius: "8px",
+                  border: "1px solid #333",
+                  background: "#141414",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "0.65rem",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    color: "#737373",
+                    marginBottom: "0.35rem",
+                  }}
+                >
+                  Telefony i e-maile ze zleceń PW
+                </div>
+                {pulpitSkrotKontaktow.telefony.length === 0 &&
+                pulpitSkrotKontaktow.emaile.length === 0 ? (
+                  <p style={{ ...s.muted, margin: 0, fontSize: "0.72rem" }}>
+                    Brak danych kontaktowych w zleceniach — uzupełnij je na ekranie PW.
+                  </p>
+                ) : (
+                  <div style={{ fontSize: "0.76rem", color: "#e5e5e5", lineHeight: 1.4 }}>
+                    {pulpitSkrotKontaktow.telefony.length ? (
+                      <div>
+                        <span style={s.muted}>Tel.: </span>
+                        {pulpitSkrotKontaktow.telefony.join(" · ")}
+                      </div>
+                    ) : null}
+                    {pulpitSkrotKontaktow.emaile.length ? (
+                      <div>
+                        <span style={s.muted}>E-mail: </span>
+                        {pulpitSkrotKontaktow.emaile.join(" · ")}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+              {krZleceniaPwFetchError || dziennikFetchError ? (
+                <div style={{ ...s.errBox, marginBottom: "0.65rem" }} role="alert">
+                  {krZleceniaPwFetchError ? (
+                    <>
+                      Zlecenia PW: {krZleceniaPwFetchError}
+                      <br />
+                    </>
+                  ) : null}
+                  {dziennikFetchError ? <>Dziennik: {dziennikFetchError}</> : null}
+                </div>
+              ) : null}
+              {pulpitOśKarty.length === 0 ? (
+                <p style={{ ...s.muted, fontSize: "0.76rem", marginBottom: "0.35rem" }}>
+                  Brak pozycji na osi — dodaj wpisy KM, PW lub LOG dla tego projektu.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                    marginBottom: "0.45rem",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                      fontSize: "0.7rem",
+                      color: "#a3a3a3",
+                      margin: 0,
+                    }}
+                  >
+                    <span style={{ whiteSpace: "nowrap" }}>Sortuj według daty, potem typu</span>
+                    <select
+                      value={pulpitSortDaty}
+                      onChange={(e) => setPulpitSortDaty(e.target.value === "desc" ? "desc" : "asc")}
+                      style={{
+                        fontSize: "0.7rem",
+                        padding: "0.15rem 0.35rem",
+                        borderRadius: "6px",
+                        border: "1px solid #404040",
+                        background: "#1a1a1a",
+                        color: "#e8e8e8",
+                        maxWidth: "100%",
+                      }}
+                    >
+                      <option value="asc">Data rosnąco</option>
+                      <option value="desc">Data malejąco</option>
+                    </select>
+                  </label>
+                </div>
+              )}
+              <ul
+                style={{
+                  listStyle: "none",
+                  margin: 0,
+                  padding: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.4rem",
+                }}
+              >
+                {pulpitWierszeZTeraz.map((w, wi) => {
+                  if (w.typ === "teraz") {
+                    const dziś = dzisiajDataYYYYMMDD();
+                    return (
+                      <li
+                        key={`pulpit-${w.klucz}-${wi}`}
+                        aria-label={`Dziś — ${dataPLZFormat(dziś)} — czas teraźniejszy na osi`}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          minWidth: 0,
+                          padding: "0.4rem 0",
+                          margin: "0.1rem 0",
+                          listStyle: "none",
+                          borderTop: "2px solid #4ade80",
+                          borderBottom: "2px solid #4ade80",
+                          background: "rgba(74, 222, 128, 0.1)",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        <span
+                          style={{
+                            flex: "0 0 4.85em",
+                            color: "#4ade80",
+                            fontVariantNumeric: "tabular-nums",
+                            whiteSpace: "nowrap",
+                            fontSize: "0.7rem",
+                            fontWeight: 600,
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {dataPLZFormat(dziś)}
+                        </span>
+                        <span
+                          role="img"
+                          aria-hidden
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: "1.35rem",
+                            height: "1.35rem",
+                            flexShrink: 0,
+                            color: "#4ade80",
+                          }}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" style={{ display: "block" }}>
+                            <circle cx="12" cy="12" r="4" fill="currentColor" />
+                            <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
+                          </svg>
+                        </span>
+                        <div
+                          style={{
+                            flex: "1 1 auto",
+                            minWidth: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.45rem",
+                            fontSize: "0.72rem",
+                            fontWeight: 600,
+                            color: "#86efac",
+                          }}
+                        >
+                          <span
+                            style={{
+                              flex: "1 1 auto",
+                              height: "2px",
+                              background: "linear-gradient(90deg, transparent, #4ade80 12%, #4ade80 88%, transparent)",
+                              minWidth: "1rem",
+                            }}
+                          />
+                          <span style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>Teraz</span>
+                          <span
+                            style={{
+                              flex: "1 1 auto",
+                              height: "2px",
+                              background: "linear-gradient(90deg, transparent, #4ade80 12%, #4ade80 88%, transparent)",
+                              minWidth: "1rem",
+                            }}
+                          />
+                        </div>
+                      </li>
+                    );
+                  }
+                  const karta = w.karta;
+                  const idx = w.idx;
+                  const bodyLines = Array.isArray(karta.bodyLines) ? karta.bodyLines : [];
+                  const bodyJednaLinia = bodyLines.join(" · ");
+                  const st = tekstTrim(karta.subtitle);
+                  const opisCzesci = [karta.title];
+                  if (st) opisCzesci.push(`(${st})`);
+                  if (bodyJednaLinia) opisCzesci.push(bodyJednaLinia);
+                  const opisPelny = opisCzesci.join(" · ");
+                  const uwaga = karta.wymagaUwagi === true;
+                  return (
+                    <li
+                      key={`pulpit-${karta.kind}-${karta.tieBreak}-${idx}`}
+                      aria-label={uwaga ? `${opisPelny} — wymaga uwagi` : opisPelny}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "0.4rem",
+                        minWidth: 0,
+                        padding: "0.35rem 0",
+                        paddingLeft: uwaga ? "0.4rem" : 0,
+                        marginLeft: uwaga ? "-0.15rem" : 0,
+                        borderLeft: uwaga ? "3px solid #f87171" : undefined,
+                        background: uwaga ? "rgba(248,113,113,0.07)" : undefined,
+                        borderBottom: "1px solid #1f1f1f",
+                        listStyle: "none",
+                        borderRadius: uwaga ? "4px" : 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          flex: "0 0 4.85em",
+                          color: uwaga ? "#fca5a5" : "#9ca3af",
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          fontSize: "0.7rem",
+                          lineHeight: 1.35,
+                          paddingTop: "0.12rem",
+                        }}
+                        title={karta.sortKey ? karta.sortKey : undefined}
+                      >
+                        {karta.sortKey ? dataPLZFormat(karta.sortKey) : "—"}
+                      </span>
+                      {pulpitIkonTypu(karta.kind)}
+                      <div
+                        title={opisPelny}
+                        style={{
+                          flex: "1 1 auto",
+                          minWidth: 0,
+                          fontSize: "0.72rem",
+                          lineHeight: 1.35,
+                          color: uwaga ? "#fecaca" : "#d4d4d4",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          paddingTop: "0.08rem",
+                          fontWeight: uwaga ? 600 : 400,
+                        }}
+                      >
+                        {uwaga ? (
+                          <span style={{ color: "#f87171", fontWeight: 700, marginRight: "0.2rem" }}>!</span>
+                        ) : null}
+                        {opisPelny}
+                      </div>
+                      <button
+                        type="button"
+                        title="Otwórz edycję tej pozycji"
+                        style={{
+                          ...s.btnGhost,
+                          flex: "0 0 auto",
+                          alignSelf: "flex-start",
+                          padding: "0.18rem 0.42rem",
+                          fontSize: "0.62rem",
+                          lineHeight: 1.2,
+                        }}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          pulpitEdytujKarte(karta);
+                        }}
+                      >
+                        Edytuj
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </section>
+      ) : null}
+
+      {widok === "kr" &&
+      widokInfoDlaKr &&
+      !widokKmDlaKr &&
+      !widokLogDlaKr &&
+      !widokPwDlaKr &&
+      !wybranyKrKlucz ? (
         <section style={s.krTopWrap} aria-labelledby="info-naglowek">
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotZInfoDoListy}>
-              ← Lista KR
+              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokInfoDlaKr)
+                ? "← Pulpit"
+                : "← Lista KR"}
             </button>
           </div>
           <h2 id="info-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
             INFO — KR {widokInfoDlaKr}
           </h2>
           <p style={{ ...s.muted, marginBottom: "1rem", fontSize: "0.82rem" }}>
-            Podgląd tylko do odczytu: <code style={s.code}>kr</code>,{" "}
-            <code style={s.code}>kamienie_milowe</code> i{" "}
-            <code style={s.code}>dziennik_zdarzen</code>. Aby zmieniać dane, użyj na liście przycisków{" "}
-            <strong style={{ color: "#e5e5e5" }}>KR</strong>, <strong style={{ color: "#e5e5e5" }}>KM</strong>{" "}
-            lub <strong style={{ color: "#e5e5e5" }}>LOG</strong>.
+            Podgląd tylko do odczytu: <code style={s.code}>kr</code>, zlecenia{" "}
+            <strong style={{ color: "#e5e5e5" }}>PW</strong>,{" "}
+            <code style={s.code}>kamienie_milowe</code>,{" "}
+            <code style={s.code}>dziennik_zdarzen</code>. Edycja — przyciski{" "}
+            <strong style={{ color: "#e5e5e5" }}>KM</strong>, <strong style={{ color: "#e5e5e5" }}>PW</strong>,{" "}
+            <strong style={{ color: "#e5e5e5" }}>LOG</strong>, <strong style={{ color: "#e5e5e5" }}>Edytuj KR</strong> na pulpicie
+            projektu.
           </p>
           {!rekordKrInfo ? (
             <div style={s.errBox} role="alert">
@@ -2304,7 +5371,9 @@ export default function App() {
               liście — odśwież stronę lub wróć do listy.
               <div style={{ marginTop: "0.75rem" }}>
                 <button type="button" style={s.btnGhost} onClick={powrotZInfoDoListy}>
-                  Wróć do listy
+                  {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokInfoDlaKr)
+                    ? "Wróć do pulpitu"
+                    : "Wróć do listy"}
                 </button>
               </div>
             </div>
@@ -2335,6 +5404,10 @@ export default function App() {
                         <tr>
                           <th style={{ ...s.th, textAlign: "left" }}>Nazwa obiektu</th>
                           <td style={s.td}>{item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "—"}</td>
+                        </tr>
+                        <tr>
+                          <th style={{ ...s.th, textAlign: "left" }}>Rodzaj pracy</th>
+                          <td style={s.td}>{item.rodzaj_pracy?.trim() ? item.rodzaj_pracy : "—"}</td>
                         </tr>
                         <tr>
                           <th style={{ ...s.th, textAlign: "left", color: "#7dd3fc" }}>Dział</th>
@@ -2442,6 +5515,105 @@ export default function App() {
                       margin: "1.25rem 0 0.5rem",
                     }}
                   >
+                    Zlecenia PW (podwykonawcy)
+                  </h3>
+                  {krZleceniaPwFetchError ? (
+                    <p style={{ ...s.muted, color: "#fca5a5" }}>{krZleceniaPwFetchError}</p>
+                  ) : krZleceniaPwList.length === 0 ? (
+                    <p style={s.muted}>Brak zleceń PW dla tego KR.</p>
+                  ) : (
+                    <div style={{ ...s.tableWrap, marginBottom: "1rem" }}>
+                      <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                        <thead>
+                          <tr>
+                            <th style={s.th}>Podwykonawca</th>
+                            <th style={s.th}>Nr zlecenia</th>
+                            <th style={s.th}>Zakres</th>
+                            <th style={s.th}>Data zlecenia</th>
+                            <th style={s.th}>Termin zlecenia</th>
+                            <th style={s.th}>Data oddania</th>
+                            <th style={s.th}>Netto</th>
+                            <th style={s.th}>Status</th>
+                            <th style={s.th}>Spr.</th>
+                            <th style={s.th}>Odb.</th>
+                            <th style={s.th}>Weryfikacja (nasz)</th>
+                            <th style={s.th}>Faktury (PW)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {krZleceniaPwList.map((z) => {
+                            const zakres = kmTekstDoKomorki(z.opis_zakresu);
+                            const fakt =
+                              [z.osoba_faktury_nazwa, z.osoba_faktury_email, z.osoba_faktury_telefon]
+                                .filter((x) => x != null && String(x).trim() !== "")
+                                .join(" · ") || "—";
+                            const firma =
+                              z.podwykonawca &&
+                              typeof z.podwykonawca === "object" &&
+                              !Array.isArray(z.podwykonawca)
+                                ? z.podwykonawca.nazwa_firmy
+                                : null;
+                            return (
+                              <tr key={z.id}>
+                                <td style={s.td}>
+                                  <strong style={{ color: "#f5f5f5" }}>
+                                    {firma?.trim() ? firma : "—"}
+                                  </strong>
+                                </td>
+                                <td style={s.td}>{z.numer_zlecenia?.trim() ? z.numer_zlecenia : "—"}</td>
+                                <td style={s.td} title={zakres.title || undefined}>
+                                  {zakres.text}
+                                </td>
+                                <td style={s.td}>
+                                  {z.data_zlecenia ? dataDoInputa(z.data_zlecenia) : "—"}
+                                </td>
+                                <td
+                                  style={{
+                                    ...s.td,
+                                    ...stylKomorkiTabeliUwagi(pulpitPwWymagaUwagi(z, dziśUwagiPulpitu)),
+                                  }}
+                                >
+                                  {z.termin_zlecenia ? dataDoInputa(z.termin_zlecenia) : "—"}
+                                </td>
+                                <td style={s.td}>
+                                  {z.data_oddania ? dataDoInputa(z.data_oddania) : "—"}
+                                </td>
+                                <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                                  {krZleceniePwKwotaEtykieta(z.cena_netto)}
+                                </td>
+                                <td style={s.td}>{z.status?.trim() ? z.status : "—"}</td>
+                                <td style={s.td}>{z.czy_sprawdzone === true ? "tak" : "nie"}</td>
+                                <td
+                                  style={{
+                                    ...s.td,
+                                    ...stylKomorkiTabeliUwagi(pulpitPwWymagaUwagi(z, dziśUwagiPulpitu)),
+                                  }}
+                                >
+                                  {z.czy_odebrane === true ? "tak" : "nie"}
+                                </td>
+                                <td style={s.td}>
+                                  {podpisOsobyProwadzacej(z.pracownik_weryfikacja, mapaProwadzacychId) ??
+                                    "—"}
+                                </td>
+                                <td style={{ ...s.td, maxWidth: "11rem" }} title={fakt !== "—" ? fakt : undefined}>
+                                  {fakt === "—" ? "—" : fakt.length > 36 ? `${fakt.slice(0, 34)}…` : fakt}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <h3
+                    style={{
+                      fontSize: "0.95rem",
+                      fontWeight: 600,
+                      color: "#fff",
+                      margin: "1.25rem 0 0.5rem",
+                    }}
+                  >
                     Kamienie milowe
                   </h3>
                   {listaKmDlaInfo.length === 0 ? (
@@ -2450,22 +5622,38 @@ export default function App() {
                     <div style={s.tableWrap}>
                       <table style={s.kmTable}>
                         <colgroup>
-                          <col style={{ width: "10%" }} />
                           <col style={{ width: "9%" }} />
                           <col style={{ width: "8%" }} />
+                          <col style={{ width: "7%" }} />
+                          <col style={{ width: "5%" }} />
                           <col style={{ width: "8%" }} />
-                          <col style={{ width: "12%" }} />
-                          <col style={{ width: "7%" }} />
-                          <col style={{ width: "7%" }} />
-                          <col style={{ width: "19%" }} />
-                          <col style={{ width: "20%" }} />
+                          <col style={{ width: "11%" }} />
+                          <col style={{ width: "6%" }} />
+                          <col style={{ width: "6%" }} />
+                          <col style={{ width: "18%" }} />
+                          <col style={{ width: "18%" }} />
                         </colgroup>
                         <thead>
                           <tr>
                             <th style={s.kmTh}>Etap</th>
                             <th style={s.kmTh}>Status</th>
+                            <th style={s.kmTh}>
+                              <span>Odniesienie</span>
+                              <span
+                                style={{
+                                  display: "block",
+                                  fontWeight: 400,
+                                  fontSize: "0.6rem",
+                                  color: "#737373",
+                                  marginTop: "0.2rem",
+                                  lineHeight: 1.2,
+                                }}
+                              >
+                                linia / zlecenie
+                              </span>
+                            </th>
+                            <th style={s.kmTh}>+ mc</th>
                             <th style={s.kmTh}>Plan</th>
-                            <th style={s.kmTh}>Real</th>
                             <th style={s.kmTh}>Odpow.</th>
                             <th style={s.kmTh}>Osiąg.</th>
                             <th style={s.kmTh}>Zagr.</th>
@@ -2484,14 +5672,33 @@ export default function App() {
                                     {row.etap ?? "—"}
                                   </strong>
                                 </td>
-                                <td style={{ ...s.kmTd, ...s.statusKr, fontSize: "0.68rem" }}>
+                                <td
+                                  style={{
+                                    ...s.kmTd,
+                                    ...s.statusKr,
+                                    fontSize: "0.68rem",
+                                    ...stylKomorkiTabeliUwagi(
+                                      pulpitKmPlanPrzeterminowany(row, dziśUwagiPulpitu),
+                                    ),
+                                  }}
+                                >
                                   {row.status ?? "—"}
                                 </td>
+                                <td style={s.kmTd}>{kmKomorkaOdniesienia(row)}</td>
                                 <td style={s.kmTd}>
-                                  {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"}
+                                  {row.offset_miesiecy != null && row.offset_miesiecy !== ""
+                                    ? String(row.offset_miesiecy)
+                                    : "—"}
                                 </td>
-                                <td style={s.kmTd}>
-                                  {row.data_realna ? dataDoInputa(row.data_realna) : "—"}
+                                <td
+                                  style={{
+                                    ...s.kmTd,
+                                    ...stylKomorkiTabeliUwagi(
+                                      pulpitKmPlanPrzeterminowany(row, dziśUwagiPulpitu),
+                                    ),
+                                  }}
+                                >
+                                  {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"}
                                 </td>
                                 <td style={s.kmTd}>
                                   {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ??
@@ -2504,7 +5711,14 @@ export default function App() {
                                       ? "nie"
                                       : "—"}
                                 </td>
-                                <td style={s.kmTd}>
+                                <td
+                                  style={{
+                                    ...s.kmTd,
+                                    ...stylKomorkiTabeliUwagi(
+                                      row.zagrozenie === true || row.zagrozenie === "tak",
+                                    ),
+                                  }}
+                                >
                                   {row.zagrozenie === true
                                     ? "tak"
                                     : row.zagrozenie === false
@@ -2514,7 +5728,13 @@ export default function App() {
                                 <td style={s.kmTd} title={uw.title || undefined}>
                                   {uw.text}
                                 </td>
-                                <td style={s.kmTd} title={oz.title || undefined}>
+                                <td
+                                  style={{
+                                    ...s.kmTd,
+                                    ...stylKomorkiTabeliUwagi(!!tekstTrim(row.zagrozenie_opis)),
+                                  }}
+                                  title={oz.title || undefined}
+                                >
                                   {oz.text}
                                 </td>
                               </tr>
@@ -2576,10 +5796,20 @@ export default function App() {
                                 {podpisOsobyProwadzacej(row.osoba_zglaszajaca, mapaProwadzacychId) ??
                                   "—"}
                               </td>
-                              <td style={s.td}>
+                              <td
+                                style={{
+                                  ...s.td,
+                                  ...stylKomorkiTabeliUwagi(logWidokPodswietlGdyJestWymaganeDzialanie(row)),
+                                }}
+                              >
                                 {row.wymagane_dzialanie?.trim() ? row.wymagane_dzialanie : "—"}
                               </td>
-                              <td style={s.td}>
+                              <td
+                                style={{
+                                  ...s.td,
+                                  ...stylKomorkiTabeliUwagi(logWidokPodswietlGdyJestWymaganeDzialanie(row)),
+                                }}
+                              >
                                 {podpisOsobyProwadzacej(
                                   row.osoba_odpowiedzialna_za_zadanie,
                                   mapaProwadzacychId
@@ -2602,7 +5832,9 @@ export default function App() {
         <>
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotDoListyKr}>
-              ← Lista KR
+              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(wybranyKrKlucz)
+                ? "← Pulpit"
+                : "← Lista KR"}
             </button>
           </div>
           {!wybranyRekordKr ? (
@@ -2611,7 +5843,9 @@ export default function App() {
               <strong style={{ color: "#fff" }}>{wybranyKrKlucz}</strong> w aktualnej liście.
               <div style={{ marginTop: "0.75rem" }}>
                 <button type="button" style={s.btnGhost} onClick={powrotDoListyKr}>
-                  Wróć do listy
+                  {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(wybranyKrKlucz)
+                    ? "Wróć do pulpitu"
+                    : "Wróć do listy"}
                 </button>
               </div>
             </div>
@@ -2630,11 +5864,22 @@ export default function App() {
                     <span>
                       <strong>{item.kr}</strong>
                       {!isEditing && item.nazwa_obiektu ? ` — ${item.nazwa_obiektu}` : ""}
+                      {!isEditing && item.rodzaj_pracy?.trim() ? (
+                        <span style={s.muted}> · {item.rodzaj_pracy.trim()}</span>
+                      ) : null}
                       {!isEditing && item.dzial ? (
                         <span style={s.dzialWartosc}> · dział: {item.dzial}</span>
                       ) : null}
                       {!isEditing && item.status ? (
-                        <span style={s.statusKr}> · {item.status}</span>
+                        <span
+                          style={{
+                            ...s.statusKr,
+                            ...stylEtykietyUwagiPulpitu(pulpitKrRekordWymagaUwagi(item)),
+                          }}
+                        >
+                          {" "}
+                          · {item.status}
+                        </span>
                       ) : null}
                       {!isEditing &&
                       podpisOsobyProwadzacej(item.osoba_prowadzaca, mapaProwadzacychId) ? (
@@ -2754,6 +5999,18 @@ export default function App() {
                             onChange={(ev) =>
                               setEditForm((f) => ({ ...f, nazwa_obiektu: ev.target.value }))
                             }
+                          />
+                        </label>
+                        <label style={s.label}>
+                          Rodzaj pracy (opcjonalnie)
+                          <input
+                            style={s.input}
+                            type="text"
+                            value={editForm.rodzaj_pracy}
+                            onChange={(ev) =>
+                              setEditForm((f) => ({ ...f, rodzaj_pracy: ev.target.value }))
+                            }
+                            placeholder="np. nadzór, ekspertyza, organizacja"
                           />
                         </label>
                         <div style={s.label}>
@@ -2883,7 +6140,10 @@ export default function App() {
                         <label style={s.label}>
                           Status projektu
                           <select
-                            style={s.input}
+                            style={{
+                              ...s.input,
+                              ...stylPolaUwagiPulpitu(krEdycjaStatusWymagaUwagi),
+                            }}
                             value={editForm.status}
                             onChange={(ev) =>
                               setEditForm((f) => ({ ...f, status: ev.target.value }))
@@ -2983,7 +6243,7 @@ export default function App() {
 
                     {isEditing ? <hr style={s.divider} /> : null}
 
-                    <h2 style={{ ...s.h2, marginTop: 0 }}>Etapy projektu</h2>
+                    <h2 style={{ ...s.h2, marginTop: isEditing ? "0.5rem" : 0 }}>Etapy projektu</h2>
 
                     {listaEtapow.length === 0 ? (
                       <p style={s.muted}>Brak etapów</p>
@@ -2995,8 +6255,27 @@ export default function App() {
                             {et.status ? (
                               <span style={s.muted}> · status: {et.status}</span>
                             ) : null}
+                            {et.typ_odniesienia || et.data_odniesienia ? (
+                              <span style={s.muted}>
+                                {" "}
+                                · odn.
+                                {et.typ_odniesienia
+                                  ? ` (${kmEtykietaTypuOdniesienia(et.typ_odniesienia)})`
+                                  : ""}
+                                {et.data_odniesienia
+                                  ? `: ${dataDoInputa(et.data_odniesienia)}`
+                                  : ""}
+                              </span>
+                            ) : null}
+                            {et.offset_miesiecy != null && et.offset_miesiecy !== "" ? (
+                              <span style={s.muted}> · +{et.offset_miesiecy} mc</span>
+                            ) : null}
                             {et.data_planowana ? (
-                              <span style={s.muted}> · plan: {et.data_planowana}</span>
+                              <span style={s.muted}>
+                                {" "}
+                                · plan:{" "}
+                                {dataDoInputa(et.data_planowana)}
+                              </span>
                             ) : null}
                           </li>
                         ))}
@@ -3010,7 +6289,13 @@ export default function App() {
         </>
       ) : null}
 
-      {widok === "kr" && !wybranyKrKlucz && !widokKmDlaKr && !widokLogDlaKr && !widokInfoDlaKr &&
+      {widok === "kr" &&
+      !wybranyKrKlucz &&
+      !widokKmDlaKr &&
+      !widokLogDlaKr &&
+      !widokInfoDlaKr &&
+      !widokPwDlaKr &&
+      !widokPulpitDlaKr &&
       krList.length > 0 ? (
         <section style={s.krTopWrap} aria-labelledby="kr-introduced-heading">
           <h2 id="kr-introduced-heading" style={s.krTopTitle}>
@@ -3018,16 +6303,12 @@ export default function App() {
           </h2>
           <p style={{ ...s.muted, marginTop: 0, marginBottom: "0.65rem", fontSize: "0.88rem" }}>
             Kliknij nagłówek <strong style={{ color: "#7dd3fc" }}>Dział</strong> lub{" "}
-            <strong style={{ color: "#a7f3d0" }}>Status</strong>, by zmienić kolejność (drugi klik —
-            odwrotnie). Bez sortowania — jak w bazie (numer KR).{" "}
-            <strong style={{ color: "#e5e5e5" }}>KM</strong> — kamienie milowe (tabela{" "}
-            <code style={s.code}>kamienie_milowe</code>).{" "}
-            <strong style={{ color: "#e5e5e5" }}>LOG</strong> — dziennik zdarzeń (
-            <code style={s.code}>dziennik_zdarzen</code>).{" "}
-            <strong style={{ color: "#e5e5e5" }}>INFO</strong> — podgląd KR + KM + LOG bez edycji.{" "}
-            <strong style={{ color: "#e5e5e5" }}>KR</strong> — edycja{" "}
-            <code style={s.code}>kr</code> i podgląd etapów w karcie. Nowy rekord dodasz formularzem
-            poniżej tabeli.
+            <strong style={{ color: "#a7f3d0" }}>Status</strong>, by zmienić kolejność (drugi klik — odwrotnie). Bez
+            sortowania — jak w bazie (numer KR).             Przy projekcie użyj <strong style={{ color: "#fda4af" }}>Pulpit</strong>
+            — tam dane KR, oś czasu (KM / PW / LOG) i przyciski edycji.{" "}
+            <strong style={{ color: "#f87171" }}>Różowe tło</strong> wiersza — status „oczekuje na zamawiającego” lub
+            kamień milowy z ryzykiem / przeterminowanym planem (reszta uwag tylko na pulpicie). Nowy rekord — poniżej
+            tabeli.
           </p>
           <div style={s.tableWrap}>
             <table style={s.table}>
@@ -3035,6 +6316,7 @@ export default function App() {
                 <tr>
                   <th style={s.th}>KR</th>
                   <th style={s.th}>Nazwa obiektu</th>
+                  <th style={s.th}>Rodzaj pracy</th>
                   <th style={{ ...s.th, color: "#7dd3fc" }}>
                     <button
                       type="button"
@@ -3069,12 +6351,35 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {krListPosortowana.map((item) => (
-                  <tr key={item.kr}>
+                {krListPosortowana.map((item) => {
+                  const wierszUwaga = kodyKrZWyroznieniemUwagi.has(String(item.kr).trim());
+                  return (
+                  <tr
+                    key={item.kr}
+                    style={
+                      wierszUwaga
+                        ? { background: "rgba(248,113,113,0.07)" }
+                        : undefined
+                    }
+                  >
                     <td style={s.td}>
-                      <strong style={{ color: "#fff" }}>{item.kr}</strong>
+                      <strong style={{ color: wierszUwaga ? "#fecaca" : "#fff" }}>{item.kr}</strong>
+                      {wierszUwaga ? (
+                        <span
+                          title="Status KR lub kamień milowy wymaga uwagi — szczegóły na pulpicie"
+                          style={{
+                            marginLeft: "0.35rem",
+                            color: "#f87171",
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                          }}
+                        >
+                          !
+                        </span>
+                      ) : null}
                     </td>
                     <td style={s.td}>{item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "—"}</td>
+                    <td style={s.td}>{item.rodzaj_pracy?.trim() ? item.rodzaj_pracy : "—"}</td>
                     <td style={{ ...s.td, ...s.dzialWartosc }}>
                       {item.dzial?.trim() ? item.dzial : "—"}
                     </td>
@@ -3082,60 +6387,35 @@ export default function App() {
                       {item.status?.trim() ? item.status : "—"}
                     </td>
                     <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
-                      <span style={{ display: "inline-flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          style={{
-                            ...s.btnGhost,
-                            padding: "0.35rem 0.7rem",
-                            fontSize: "0.8rem",
-                          }}
-                          onClick={() => otworzInfoDlaKr(item)}
-                        >
-                          INFO
-                        </button>
-                        <button
-                          type="button"
-                          style={{
-                            ...s.btnGhost,
-                            padding: "0.35rem 0.7rem",
-                            fontSize: "0.8rem",
-                          }}
-                          onClick={() => otworzKmDlaKr(item)}
-                        >
-                          KM
-                        </button>
-                        <button
-                          type="button"
-                          style={{
-                            ...s.btnGhost,
-                            padding: "0.35rem 0.7rem",
-                            fontSize: "0.8rem",
-                          }}
-                          onClick={() => otworzLogDlaKr(item)}
-                        >
-                          LOG
-                        </button>
-                        <button
-                          type="button"
-                          style={{
-                            ...s.btnGhost,
-                            padding: "0.35rem 0.7rem",
-                            fontSize: "0.8rem",
-                          }}
-                          onClick={() => otworzEdycjeKrZTabeli(item)}
-                        >
-                          KR
-                        </button>
-                      </span>
+                      <button
+                        type="button"
+                        style={{
+                          ...s.btnGhost,
+                          padding: "0.4rem 0.85rem",
+                          fontSize: "0.82rem",
+                          fontWeight: 600,
+                          color: "#fecdd3",
+                          borderColor: "rgba(253,164,175,0.55)",
+                        }}
+                        onClick={() => otworzPulpitDlaKr(item)}
+                      >
+                        Pulpit
+                      </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </section>
-      ) : widok === "kr" && !wybranyKrKlucz && !widokKmDlaKr && !widokLogDlaKr && !widokInfoDlaKr &&
+      ) : widok === "kr" &&
+      !wybranyKrKlucz &&
+      !widokKmDlaKr &&
+      !widokLogDlaKr &&
+      !widokInfoDlaKr &&
+      !widokPwDlaKr &&
+      !widokPulpitDlaKr &&
       !krFetchError ? (
         <p style={{ ...s.muted, marginTop: "-0.5rem", marginBottom: "1.5rem" }}>
           {initialFetchDone
@@ -3144,7 +6424,13 @@ export default function App() {
         </p>
       ) : null}
 
-      {widok === "kr" && !wybranyKrKlucz && !widokKmDlaKr && !widokLogDlaKr && !widokInfoDlaKr ? (
+      {widok === "kr" &&
+      !wybranyKrKlucz &&
+      !widokKmDlaKr &&
+      !widokLogDlaKr &&
+      !widokInfoDlaKr &&
+      !widokPwDlaKr &&
+      !widokPulpitDlaKr ? (
         <>
       <h2 style={s.h2}>Dodaj nowy KR</h2>
       <form style={s.form} onSubmit={addKR}>
@@ -3162,6 +6448,13 @@ export default function App() {
           placeholder="Nazwa obiektu"
           value={newNazwaObiektu}
           onChange={(ev) => setNewNazwaObiektu(ev.target.value)}
+        />
+        <input
+          style={s.input}
+          type="text"
+          placeholder="Rodzaj pracy (opcjonalnie)"
+          value={newRodzajPracy}
+          onChange={(ev) => setNewRodzajPracy(ev.target.value)}
         />
         <input
           style={s.input}
