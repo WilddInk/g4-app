@@ -693,6 +693,19 @@ const LOG_STATUS_ZDARZENIA_W_BAZIE = ["w trakcie", "ukończone", "oczekuje"];
 /** Status zadania ogólnego (tabela zadania) — te same etykiety co w LOG. */
 const ZADANIE_STATUS_W_BAZIE = LOG_STATUS_ZDARZENIA_W_BAZIE;
 
+function zadanieCzyUkonczoneStatus(statusRaw) {
+  const st = String(statusRaw ?? "").trim().toLowerCase();
+  return st === "ukończone" || st === "ukonczone" || st === "zakończone" || st === "zakonczone";
+}
+
+function zadanieKluczKolumnyKanban(statusRaw) {
+  const st = String(statusRaw ?? "").trim().toLowerCase();
+  if (zadanieCzyUkonczoneStatus(st)) return "ukonczone";
+  if (st === "w trakcie") return "w_trakcie";
+  if (st === "oczekuje") return "oczekuje";
+  return "inne";
+}
+
 /** Typ sprzętu w tabeli `sprzet` (lista + pole własne przy „z bazy”). */
 const SPRZET_TYP_W_BAZIE = ["komputer", "drukarka", "ksero", "inne"];
 
@@ -781,11 +794,12 @@ function logWierszDoFormu(row) {
 
 function zadaniePustyForm() {
   return {
+    kr: "",
     zadanie: "",
     dzial: "",
     osoba_odpowiedzialna: "",
     osoba_zlecajaca: "",
-    status: "",
+    status: "oczekuje",
     data_planowana: "",
     data_realna: "",
     zagrozenie: "",
@@ -795,6 +809,7 @@ function zadaniePustyForm() {
 
 function zadanieWierszDoFormu(row) {
   return {
+    kr: row.kr != null && String(row.kr).trim() !== "" ? String(row.kr).trim() : "",
     zadanie: row.zadanie != null ? String(row.zadanie) : "",
     dzial: row.dzial != null ? String(row.dzial) : "",
     osoba_odpowiedzialna:
@@ -1069,6 +1084,11 @@ const KR_PROJEKT_MENU = [
     help: "Zgłoszenia do księgowości: komu zapłacić, konto, brutto, link do faktury. FS sprzedaż — przy etapach i INV.",
   },
   {
+    id: "zadania_kr",
+    label: "Zadania",
+    help: "Zadania ogólne przypisane do tego KR — ten sam moduł co Zadania ogólne w menu, z ustalonym projektem.",
+  },
+  {
     id: "etapy",
     label: "Etapy",
     help: "Lista etapów prac i terminów tylko dla tego projektu — tu je wpisujesz i poprawiasz.",
@@ -1180,6 +1200,11 @@ export default function App() {
   const [zadaniaFetchError, setZadaniaFetchError] = useState(null);
   const [zadanieEdycjaId, setZadanieEdycjaId] = useState(null);
   const [zadanieForm, setZadanieForm] = useState(() => zadaniePustyForm());
+  const [zadaniaWidok, setZadaniaWidok] = useState("tabela");
+  const [zadaniaFiltrPracNr, setZadaniaFiltrPracNr] = useState("");
+  const [zadaniaFiltrTylkoOdpowiedzialny, setZadaniaFiltrTylkoOdpowiedzialny] = useState(false);
+  /** "" = wszystkie, "__bez_kr__" = tylko ogólne (bez projektu), inaczej kod KR */
+  const [zadaniaFiltrKr, setZadaniaFiltrKr] = useState("");
 
   const [podwykonawcyList, setPodwykonawcyList] = useState([]);
   const [podwykonawcyFetchError, setPodwykonawcyFetchError] = useState(null);
@@ -1783,6 +1808,7 @@ export default function App() {
     setZadanieForm(zadaniePustyForm());
     setPwEdycjaId(null);
     setPwForm(podwykonawcaPustyForm());
+    setKrProjektSekcja("przeglad");
     setWidok("zadania");
     void fetchZadania();
     void fetchPracownicy();
@@ -1948,10 +1974,15 @@ export default function App() {
 
   function anulujZadanieEdycje() {
     setZadanieEdycjaId(null);
-    setZadanieForm(zadaniePustyForm());
+    if (krProjektSekcja === "zadania_kr" && wybranyKrKlucz != null) {
+      const k = String(wybranyKrKlucz).trim();
+      setZadanieForm({ ...zadaniePustyForm(), kr: k });
+    } else {
+      setZadanieForm(zadaniePustyForm());
+    }
   }
 
-  async function zapiszZadanie(e) {
+  async function zapiszZadanie(e, opts) {
     e.preventDefault();
     const zTxt = String(zadanieForm.zadanie ?? "").trim();
     if (!zTxt) {
@@ -1962,7 +1993,12 @@ export default function App() {
     const st = String(zadanieForm.status ?? "").trim();
     const statusDoBazy = st === "" ? null : st;
 
+    const krForced =
+      opts?.krWymuszony != null && String(opts.krWymuszony).trim() !== ""
+        ? String(opts.krWymuszony).trim()
+        : null;
     const payload = {
+      kr: krForced ?? (String(zadanieForm.kr ?? "").trim() || null),
       zadanie: zTxt,
       dzial: String(zadanieForm.dzial ?? "").trim() || null,
       osoba_odpowiedzialna: String(zadanieForm.osoba_odpowiedzialna ?? "").trim() || null,
@@ -1987,7 +2023,7 @@ export default function App() {
           "Zapis zadania: " +
             error.message +
             (String(error.message).includes("column") || String(error.message).includes("schema")
-              ? "\n\nSprawdź strukturę tabeli zadania w bazie."
+              ? "\n\nSprawdź strukturę tabeli zadania w bazie. Kolumna kr: g4-app/supabase/zadania-kolumna-kr.sql"
               : "") +
             "\n\nUruchom sekcję zadania w g4-app/supabase/rls-policies-anon.sql (RLS + GRANT)."
         );
@@ -2001,6 +2037,9 @@ export default function App() {
         alert(
           "Dodawanie zadania: " +
             error.message +
+            (String(error.message).toLowerCase().includes("kr")
+              ? "\n\nUruchom g4-app/supabase/zadania-kolumna-kr.sql w SQL Editor."
+              : "") +
             "\n\nUruchom sekcję zadania w g4-app/supabase/rls-policies-anon.sql."
         );
         return;
@@ -2008,7 +2047,37 @@ export default function App() {
     }
 
     setZadanieEdycjaId(null);
-    setZadanieForm(zadaniePustyForm());
+    const kReset =
+      opts?.krWymuszony != null && String(opts.krWymuszony).trim() !== ""
+        ? String(opts.krWymuszony).trim()
+        : "";
+    if (kReset) {
+      setZadanieForm({ ...zadaniePustyForm(), kr: kReset });
+    } else {
+      setZadanieForm(zadaniePustyForm());
+    }
+    await fetchZadania();
+  }
+
+  async function ustawStatusZadaniaSzybko(rowId, nowyStatus) {
+    const st = String(nowyStatus ?? "").trim();
+    if (!st || !ZADANIE_STATUS_W_BAZIE.includes(st)) return;
+    const row = zadaniaList.find((z) => z.id === rowId);
+    const patch = { status: st };
+    if (zadanieCzyUkonczoneStatus(st)) {
+      const maReal =
+        row != null &&
+        row.data_realna != null &&
+        String(row.data_realna).trim() !== "" &&
+        dataDoInputa(row.data_realna) !== "";
+      if (!maReal) patch.data_realna = dzisiajDataYYYYMMDD();
+    }
+    const { error } = await supabase.from("zadania").update(patch).eq("id", rowId);
+    if (error) {
+      console.error(error);
+      alert("Zmiana statusu: " + error.message);
+      return;
+    }
     await fetchZadania();
   }
 
@@ -2954,7 +3023,7 @@ export default function App() {
   }
 
   /** Nawigacja zakładkami karty projektu — łączy stany podwidoków z istniejącą logiką. */
-  function przejdzDoSekcjiKr(item, sekcjaId) {
+  function przejdzDoSekcjiKr(item, sekcjaId, opts) {
     if (!item) return;
     setKrProjektSekcja(sekcjaId);
     if (sekcjaId === "przeglad") {
@@ -2968,6 +3037,10 @@ export default function App() {
     }
     if (sekcjaId === "etapy") {
       otworzKmDlaKr(item, { hub: true });
+      if (opts?.otworzKm != null && opts.otworzKm.id != null) {
+        const kmRow = opts.otworzKm;
+        window.setTimeout(() => wczytajKmDoEdycji(kmRow), 0);
+      }
       return;
     }
     if (sekcjaId === "zgloszenia") {
@@ -3004,6 +3077,7 @@ export default function App() {
     const k = String(item.kr).trim();
     const sekcjeTylkoKarta = new Set([
       "faktury",
+      "zadania_kr",
       "umowa",
       "terminy",
       "ryzyka",
@@ -3020,6 +3094,17 @@ export default function App() {
       void fetchDziennikForKr(k);
       void fetchKrZleceniaPwForKr(k);
       if (sekcjaId === "faktury") void fetchKrFakturyDoZaplatyForKr(k);
+      if (sekcjaId === "zadania_kr") {
+        void fetchZadania();
+        void fetchPracownicy();
+        if (opts?.otworzZadanie != null && opts.otworzZadanie.id != null) {
+          setZadanieEdycjaId(opts.otworzZadanie.id);
+          setZadanieForm(zadanieWierszDoFormu(opts.otworzZadanie));
+        } else {
+          setZadanieEdycjaId(null);
+          setZadanieForm({ ...zadaniePustyForm(), kr: k });
+        }
+      }
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -3029,6 +3114,48 @@ export default function App() {
     setWidokPulpitDlaKr(null);
     void fetchDziennikForKr(String(item.kr).trim());
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** Klik w alert operacyjny → odpowiednia sekcja karty KR (lub moduł Zadania). */
+  function przejdzZAlertuOperacyjnego(target) {
+    if (target == null || target.kind == null) return;
+    setEditingKrKey(null);
+
+    if (target.kind === "zadanie") {
+      const row = target.row;
+      const krZ = row?.kr != null && String(row.kr).trim() !== "" ? String(row.kr).trim() : "";
+      if (krZ) {
+        setWidok("kr");
+        const r2 = krList.find((x) => String(x.kr).trim() === krZ);
+        if (r2) przejdzDoSekcjiKr(r2, "zadania_kr", { otworzZadanie: row });
+        else alert("Nie znaleziono projektu w liście KR — odśwież dane.");
+      } else {
+        przejdzDoZadania();
+        window.setTimeout(() => {
+          if (row?.id != null) wczytajZadanieDoEdycji(row);
+        }, 0);
+      }
+      return;
+    }
+
+    setWidok("kr");
+    if (target.kind === "kr_status") {
+      const r = krList.find((x) => String(x.kr).trim() === String(target.kr).trim());
+      if (r) przejdzDoSekcjiKr(r, "ryzyka");
+      else alert("Nie znaleziono projektu w liście KR — odśwież dane.");
+      return;
+    }
+    if (target.kind === "km_etap") {
+      const r = krList.find((x) => String(x.kr).trim() === String(target.kr).trim());
+      if (r) przejdzDoSekcjiKr(r, "etapy", { otworzKm: target.kmRow });
+      else alert("Nie znaleziono projektu w liście KR — odśwież dane.");
+      return;
+    }
+    if (target.kind === "pw_zlecenie") {
+      const r = krList.find((x) => String(x.kr).trim() === String(target.kr).trim());
+      if (r) przejdzDoSekcjiKr(r, "zlecenia");
+      else alert("Nie znaleziono projektu w liście KR — odśwież dane.");
+    }
   }
 
   async function zapiszLogWpis(e) {
@@ -3898,11 +4025,47 @@ export default function App() {
   }, [krList, kodyKrZWyroznieniemUwagi]);
 
   const liczbaZadanWToku = useMemo(() => {
-    return zadaniaList.filter((z) => {
-      const st = String(z.status ?? "").toLowerCase();
-      return st && st !== "zakończone" && st !== "zakonczone" && st !== "wykonane";
-    }).length;
+    return zadaniaList.filter((z) => !zadanieCzyUkonczoneStatus(z.status)).length;
   }, [zadaniaList]);
+
+  const zadaniaPrzefiltrowane = useMemo(() => {
+    let list = zadaniaList;
+    const fk = String(zadaniaFiltrKr ?? "").trim();
+    if (fk === "__bez_kr__") {
+      list = list.filter((z) => !tekstTrim(z.kr));
+    } else if (fk !== "") {
+      list = list.filter((z) => String(z.kr ?? "").trim() === fk);
+    }
+    const fnr = String(zadaniaFiltrPracNr ?? "").trim();
+    if (!fnr) return list;
+    return list.filter((z) => {
+      const o = String(z.osoba_odpowiedzialna ?? "").trim();
+      const zl = String(z.osoba_zlecajaca ?? "").trim();
+      if (zadaniaFiltrTylkoOdpowiedzialny) return o === fnr;
+      return o === fnr || zl === fnr;
+    });
+  }, [zadaniaList, zadaniaFiltrPracNr, zadaniaFiltrTylkoOdpowiedzialny, zadaniaFiltrKr]);
+
+  const zadaniaKanbanBuckets = useMemo(() => {
+    const buckets = { oczekuje: [], w_trakcie: [], ukonczone: [], inne: [] };
+    for (const row of zadaniaPrzefiltrowane) {
+      buckets[zadanieKluczKolumnyKanban(row.status)].push(row);
+    }
+    const sortWiersze = (rows) =>
+      [...rows].sort((a, b) => {
+        const ka = String(a.kr ?? "").trim();
+        const kb = String(b.kr ?? "").trim();
+        if (ka === "" && kb !== "") return 1;
+        if (ka !== "" && kb === "") return -1;
+        const c = ka.localeCompare(kb, "pl", { numeric: true, sensitivity: "base" });
+        if (c !== 0) return c;
+        return (Number(b.id) || 0) - (Number(a.id) || 0);
+      });
+    for (const k of Object.keys(buckets)) {
+      buckets[k] = sortWiersze(buckets[k]);
+    }
+    return buckets;
+  }, [zadaniaPrzefiltrowane]);
 
   const liczbaOpoznionychEtapow = useMemo(() => {
     let n = 0;
@@ -3933,6 +4096,7 @@ export default function App() {
         out.push({
           severity: "wazny",
           text: `KR ${row.kr}: status „oczekuje na zamawiającego” — decyzja zleceniodawcy.`,
+          target: { kind: "kr_status", kr: row.kr },
         });
       }
     }
@@ -3941,6 +4105,7 @@ export default function App() {
         out.push({
           severity: "krytyczny",
           text: `Etap „${e.etap ?? "—"}” (KR ${e.kr}): plan po terminie.`,
+          target: { kind: "km_etap", kr: e.kr, kmRow: e },
         });
       } else if (
         e.zagrozenie === "tak" ||
@@ -3950,6 +4115,7 @@ export default function App() {
         out.push({
           severity: "wazny",
           text: `Ryzyko na etapie „${e.etap ?? "—"}” (KR ${e.kr}).`,
+          target: { kind: "km_etap", kr: e.kr, kmRow: e },
         });
       }
     }
@@ -3958,6 +4124,7 @@ export default function App() {
         out.push({
           severity: "krytyczny",
           text: `PW / KR ${z.kr}: termin minął, brak odbioru.`,
+          target: { kind: "pw_zlecenie", kr: z.kr },
         });
       }
     }
@@ -3967,11 +4134,16 @@ export default function App() {
         plan &&
         plan < dziśDash &&
         !tekstTrim(row.data_realna) &&
-        String(row.status ?? "").toLowerCase() !== "zakończone"
+        !zadanieCzyUkonczoneStatus(row.status)
       ) {
+        const krTxt = tekstTrim(row.kr);
+        const zadLabel = tekstTrim(row.zadanie) || row.id;
         out.push({
           severity: "wazny",
-          text: `Zadanie ogólne przeterminowane: ${tekstTrim(row.zadanie) || row.id}.`,
+          text: krTxt
+            ? `Zadanie przeterminowane (${row.kr}): ${zadLabel}.`
+            : `Zadanie ogólne przeterminowane: ${zadLabel}.`,
+          target: { kind: "zadanie", row },
         });
       }
     }
@@ -4098,6 +4270,27 @@ export default function App() {
             {item.okres_projektu_do ? dataDoInputa(item.okres_projektu_do) : "—"}
           </div>
         ) : null}
+        <div style={{ marginTop: "0.9rem", paddingTop: "0.85rem", borderTop: "1px solid rgba(148,163,184,0.15)" }}>
+          <div style={{ ...op.muted, fontSize: "0.78rem", marginBottom: "0.5rem", lineHeight: 1.45 }}>
+            <strong style={{ color: "#fde68a" }}>Faktury kosztowe (zgłoszenie do opłacenia)</strong> — osobna zakładka:
+            komu przelew, konto, kwota brutto. To <strong>nie</strong> jest blok „Koszty (placeholder)” na pulpicie
+            (INV).
+          </div>
+          <button
+            type="button"
+            style={{
+              ...s.btnGhost,
+              padding: "0.35rem 0.75rem",
+              fontSize: "0.8rem",
+              borderColor: "rgba(250,204,21,0.5)",
+              color: "#fef9c3",
+              fontWeight: 600,
+            }}
+            onClick={() => przejdzDoSekcjiKr(item, "faktury")}
+          >
+            Przejdź do zgłoszenia faktury do opłacenia
+          </button>
+        </div>
         <p style={{ ...op.muted, margin: "0.85rem 0 0", fontSize: "0.78rem" }}>
           BRUDNOPIS: docelowo <strong>osobna tabela</strong> (np. wiele linków / wersji umowy do wklejenia, aneksy) —
           na razie jedno pole <code style={s.code}>link_umowy</code> w rekordzie KR („Edytuj KR”). Warunki i uwagi —
@@ -4246,6 +4439,9 @@ export default function App() {
             <button type="button" style={s.btnGhost} onClick={() => przejdzDoSekcjiKr(item, "faktury")}>
               Faktury kosztowe (rama)
             </button>
+            <button type="button" style={s.btnGhost} onClick={() => przejdzDoSekcjiKr(item, "zadania_kr")}>
+              Zadania przy tym KR
+            </button>
           </div>
 
           <OpFutureModule title="Budżet / finanse (koncepcja przy tej KR)">
@@ -4280,6 +4476,324 @@ export default function App() {
           Moduł gotowy do wdrożenia — aneksy, dodatkowe uzgodnienia i rozliczenie rozszerzeń w ramach tego KR.
           Obecnie brak osobnej tabeli w bazie; UI przygotowane pod przyszłe pola.
         </OpFutureModule>
+      );
+    }
+
+    if (sekcja === "zadania_kr") {
+      const krK = String(item.kr ?? "").trim();
+      const listaZadaniaKr = zadaniaList.filter((z) => String(z.kr ?? "").trim() === krK);
+      return (
+        <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
+          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Zadania przy projekcie KR {krK}</h3>
+          <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
+            To są te same <strong>zadania ogólne</strong> co w module <strong>Zadania ogólne</strong> — z polem{" "}
+            <code style={s.code}>kr</code> ustawionym na ten projekt. Pełny widok (Kanban, filtry): przejdź do
+            modułu.
+          </p>
+          <div style={{ ...s.btnRow, marginBottom: "1rem" }}>
+            <button
+              type="button"
+              style={s.btnGhost}
+              onClick={() => {
+                przejdzDoZadania();
+                setZadaniaFiltrKr(krK);
+                setZadaniaFiltrPracNr("");
+                setZadaniaFiltrTylkoOdpowiedzialny(false);
+              }}
+            >
+              Otwórz moduł Zadania (filtr: ten KR)
+            </button>
+          </div>
+          {zadaniaFetchError ? (
+            <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
+              <strong>Nie wczytano listy zadań.</strong> {zadaniaFetchError}
+            </div>
+          ) : null}
+          {listaZadaniaKr.length === 0 ? (
+            <p style={{ ...op.muted, marginBottom: "1rem" }}>Brak zadań przypisanych do tego KR — dodaj pierwsze poniżej.</p>
+          ) : (
+            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.9rem", lineHeight: 1.45 }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Zadanie</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Kategoria</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#7dd3fc" }}>Dział</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Odpow.</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Zlecający</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#a7f3d0" }}>Status</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Plan</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Real</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {listaZadaniaKr.map((row) => {
+                    const zt = kmTekstDoKomorki(row.zadanie);
+                    const kat = zadaniaEtykietaKategorii(row);
+                    const stRow = String(row.status ?? "").trim();
+                    const plan = dataDoSortuYYYYMMDD(row.data_planowana);
+                    const przeterm =
+                      plan &&
+                      plan < d0 &&
+                      !tekstTrim(row.data_realna) &&
+                      !zadanieCzyUkonczoneStatus(row.status);
+                    return (
+                      <tr
+                        key={row.id}
+                        style={
+                          przeterm
+                            ? { background: "rgba(248,113,113,0.07)", boxShadow: "inset 3px 0 0 #f87171" }
+                            : undefined
+                        }
+                      >
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }} title={zt.title}>
+                          <strong style={{ color: "#f5f5f5" }}>{zt.text}</strong>
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
+                          <span
+                            style={{
+                              ...op.badge("rgba(99,102,241,0.22)", "#c7d2fe"),
+                              fontSize: "0.75rem",
+                              padding: "0.3rem 0.55rem",
+                              whiteSpace: "normal",
+                              wordBreak: "break-word",
+                              maxWidth: "12rem",
+                            }}
+                          >
+                            {kat}
+                          </span>
+                        </td>
+                        <td style={{ ...s.td, ...s.dzialWartosc, padding: "0.55rem 0.7rem" }}>
+                          {row.dzial?.trim() ? row.dzial : "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
+                          {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
+                          {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
+                          <select
+                            style={{ ...s.input, padding: "0.45rem 0.5rem", fontSize: "0.88rem", minWidth: "10rem" }}
+                            value={ZADANIE_STATUS_W_BAZIE.includes(stRow) ? stRow : ""}
+                            onChange={(ev) => {
+                              const v = ev.target.value;
+                              if (v) void ustawStatusZadaniaSzybko(row.id, v);
+                            }}
+                          >
+                            <option value="">— {stRow && !ZADANIE_STATUS_W_BAZIE.includes(stRow) ? stRow : "brak"} —</option>
+                            {ZADANIE_STATUS_W_BAZIE.map((st) => (
+                              <option key={st} value={st}>
+                                {st}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
+                          {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
+                          {row.data_realna ? dataDoInputa(row.data_realna) : "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem", textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.3rem 0.5rem", fontSize: "0.8rem" }}
+                            onClick={() => wczytajZadanieDoEdycji(row)}
+                          >
+                            Edytuj
+                          </button>{" "}
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.3rem 0.5rem", fontSize: "0.8rem" }}
+                            onClick={() => usunZadanie(row.id)}
+                          >
+                            Usuń
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e2e8f0", margin: "0 0 0.65rem" }}>
+            {zadanieEdycjaId != null ? "Edycja zadania" : "Nowe zadanie"} (KR {krK})
+          </h4>
+          <p style={{ ...op.muted, margin: "0 0 0.75rem", fontSize: "0.78rem" }}>
+            Projekt jest <strong>ustawiony automatycznie</strong> — nie trzeba wybierać KR na liście.
+          </p>
+          <form
+            style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1rem" }}
+            onSubmit={(e) => void zapiszZadanie(e, { krWymuszony: krK })}
+          >
+            <label style={s.label}>
+              Zadanie (wymagane)
+              <input
+                style={s.input}
+                type="text"
+                value={zadanieForm.zadanie}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, zadanie: ev.target.value }))}
+                required
+              />
+            </label>
+            <label style={s.label}>
+              Dział
+              <input
+                style={s.input}
+                type="text"
+                value={zadanieForm.dzial}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, dzial: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Osoba odpowiedzialna — <code style={s.code}>pracownik.nr</code>
+              <select
+                style={s.input}
+                value={String(zadanieForm.osoba_odpowiedzialna ?? "")}
+                onChange={(ev) =>
+                  setZadanieForm((f) => ({ ...f, osoba_odpowiedzialna: ev.target.value }))
+                }
+              >
+                <option value="">— brak —</option>
+                {(() => {
+                  const cur = String(zadanieForm.osoba_odpowiedzialna ?? "").trim();
+                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                  const orphan = cur !== "" && !nrs.has(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>{cur} (nie w liście ID)</option>
+                      ) : null}
+                      {pracownicyPosortowani.map((p) => (
+                        <option key={String(p.nr)} value={String(p.nr)}>
+                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Osoba zlecająca — <code style={s.code}>pracownik.nr</code>
+              <select
+                style={s.input}
+                value={String(zadanieForm.osoba_zlecajaca ?? "")}
+                onChange={(ev) =>
+                  setZadanieForm((f) => ({ ...f, osoba_zlecajaca: ev.target.value }))
+                }
+              >
+                <option value="">— brak —</option>
+                {(() => {
+                  const cur = String(zadanieForm.osoba_zlecajaca ?? "").trim();
+                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                  const orphan = cur !== "" && !nrs.has(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>{cur} (nie w liście ID)</option>
+                      ) : null}
+                      {pracownicyPosortowani.map((p) => (
+                        <option key={String(p.nr)} value={String(p.nr)}>
+                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Status
+              <select
+                style={s.input}
+                value={zadanieForm.status}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, status: ev.target.value }))}
+              >
+                <option value="">— brak —</option>
+                {(() => {
+                  const cur = String(zadanieForm.status ?? "").trim();
+                  const znane = new Set(ZADANIE_STATUS_W_BAZIE);
+                  const orphan = cur !== "" && !znane.has(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>{cur} (z bazy)</option>
+                      ) : null}
+                      {ZADANIE_STATUS_W_BAZIE.map((st) => (
+                        <option key={st} value={st}>
+                          {st}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Data planowana
+              <input
+                style={s.input}
+                type="date"
+                value={zadanieForm.data_planowana}
+                onChange={(ev) =>
+                  setZadanieForm((f) => ({ ...f, data_planowana: ev.target.value }))
+                }
+              />
+            </label>
+            <label style={s.label}>
+              Data realna
+              <input
+                style={s.input}
+                type="date"
+                value={zadanieForm.data_realna}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, data_realna: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Zagrożenie
+              <select
+                style={s.input}
+                value={zadanieForm.zagrozenie}
+                onChange={(ev) =>
+                  setZadanieForm((f) => ({ ...f, zagrozenie: ev.target.value }))
+                }
+              >
+                <option value="">— nie ustawiono —</option>
+                <option value="tak">tak</option>
+                <option value="nie">nie</option>
+              </select>
+            </label>
+            <label style={s.label}>
+              Opis
+              <textarea
+                style={{ ...s.input, minHeight: "4rem", resize: "vertical" }}
+                value={zadanieForm.opis}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, opis: ev.target.value }))}
+                rows={3}
+              />
+            </label>
+            {pracFetchError ? (
+              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+                Lista ID: {pracFetchError}
+              </p>
+            ) : null}
+            <div style={s.btnRow}>
+              <button type="submit" style={s.btn}>
+                {zadanieEdycjaId != null ? "Zapisz zmiany" : "Dodaj zadanie"}
+              </button>
+              {zadanieEdycjaId != null ? (
+                <button type="button" style={s.btnGhost} onClick={anulujZadanieEdycje}>
+                  Anuluj edycję
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </div>
       );
     }
 
@@ -4614,12 +5128,17 @@ export default function App() {
     if (sekcja === "ryzyka") {
       const lista = [];
       if (pulpitKrRekordWymagaUwagi(item))
-        lista.push({ pr: "Wysoki", txt: "Projekt oczekuje na decyzję zleceniodawcy." });
+        lista.push({
+          pr: "Wysoki",
+          txt: "Projekt oczekuje na decyzję zleceniodawcy.",
+          onNavigate: () => przejdzDoSekcjiKr(item, "przeglad"),
+        });
       for (const e of listaEtapow) {
         if (pulpitKmWymagaUwagi(e, d0))
           lista.push({
             pr: pulpitKmPlanPrzeterminowany(e, d0) ? "Krytyczny" : "Ważny",
             txt: `Etap „${e.etap ?? "—"}” — zagrożenie lub termin.`,
+            onNavigate: () => przejdzDoSekcjiKr(item, "etapy", { otworzKm: e }),
           });
       }
       for (const row of dziennikWpisy) {
@@ -4627,22 +5146,44 @@ export default function App() {
           lista.push({
             pr: "Ważny",
             txt: `Zgłoszenie (${row.typ_zdarzenia ?? "—"}) wymaga domknięcia.`,
+            onNavigate: () => otworzLogDlaKr(item, { hub: true, edytujRow: row }),
           });
       }
       for (const z of krZleceniaPwList) {
         if (pulpitPwWymagaUwagi(z, d0))
-          lista.push({ pr: "Krytyczny", txt: `Zlecenie PW po terminie — ${z.numer_zlecenia ?? "—"}.` });
+          lista.push({
+            pr: "Krytyczny",
+            txt: `Zlecenie PW po terminie — ${z.numer_zlecenia ?? "—"}.`,
+            onNavigate: () => przejdzDoSekcjiKr(item, "zlecenia"),
+          });
       }
       return (
         <>
           <h3 style={{ ...op.sectionTitle }}>Panel ryzyk</h3>
+          <p style={{ ...op.muted, margin: "0 0 0.65rem", fontSize: "0.8rem" }}>
+            Kliknij pozycję — przejdziesz do etapów, zgłoszeń (LOG), zleceń PW lub przeglądu projektu.
+          </p>
           {lista.length === 0 ? (
             <p style={{ ...op.muted, margin: 0 }}>Brak pozycji spełniających reguły ryzyka — utrzymuj tak dalej.</p>
           ) : (
             lista.map((x, i) => (
-              <div key={i} style={op.alertRow(x.pr === "Krytyczny" ? "krytyczny" : "wazny")}>
+              <button
+                key={i}
+                type="button"
+                onClick={x.onNavigate}
+                title="Przejdź do szczegółów"
+                style={{
+                  ...op.alertRow(x.pr === "Krytyczny" ? "krytyczny" : "wazny"),
+                  display: "block",
+                  width: "100%",
+                  cursor: "pointer",
+                  font: "inherit",
+                  textAlign: "left",
+                  boxSizing: "border-box",
+                }}
+              >
                 <strong>{x.pr}</strong> — {x.txt}
-              </div>
+              </button>
             ))
           )}
         </>
@@ -5118,13 +5659,32 @@ export default function App() {
               {listaAlertowOperacyjnych.filter((a) => a.severity === "krytyczny").length === 0 ? (
                 <p style={{ ...op.muted, margin: 0 }}>Brak krytycznych z automatycznej reguły — dobry znak.</p>
               ) : (
-                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fecaca", fontSize: "0.84rem" }}>
+                <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none", color: "#fecaca", fontSize: "0.84rem" }}>
                   {listaAlertowOperacyjnych
                     .filter((a) => a.severity === "krytyczny")
                     .slice(0, 6)
                     .map((a, i) => (
-                      <li key={`k-${i}`} style={{ marginBottom: "0.35rem" }}>
-                        {a.text}
+                      <li key={`k-${i}`} style={{ marginBottom: "0.4rem" }}>
+                        <button
+                          type="button"
+                          onClick={() => przejdzZAlertuOperacyjnego(a.target)}
+                          title="Przejdź do szczegółów"
+                          style={{
+                            margin: 0,
+                            padding: 0,
+                            border: "none",
+                            background: "none",
+                            color: "inherit",
+                            font: "inherit",
+                            textAlign: "left",
+                            cursor: "pointer",
+                            textDecoration: "underline",
+                            textDecorationColor: "rgba(248,113,113,0.45)",
+                            textUnderlineOffset: "0.15em",
+                          }}
+                        >
+                          {a.text}
+                        </button>
                       </li>
                     ))}
                 </ul>
@@ -5174,7 +5734,8 @@ export default function App() {
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Ostrzeżenia operacyjne</h2>
             <p style={{ ...op.muted, marginBottom: "1rem", maxWidth: "44rem" }}>
               Lista zbudowana automatycznie z danych już w systemie (KR, etapy, zlecenia PW, zadania ogólne). Priorytet
-              poniżej to skrót dla kierownictwa — szczegóły w kartach projektów.
+              poniżej to skrót dla kierownictwa — <strong style={{ color: "#e2e8f0" }}>kliknij wiersz</strong>, aby
+              przejść do właściwej sekcji (karta projektu lub moduł Zadania).
             </p>
             <div style={{ marginBottom: "0.75rem" }}>
               <span style={op.badge("rgba(239,68,68,0.25)", "#fecaca")}>Krytyczne</span>{" "}
@@ -5184,14 +5745,31 @@ export default function App() {
             {listaAlertowOperacyjnych.length === 0 ? (
               <p style={{ ...op.muted, margin: 0 }}>Brak wpisów spełniających reguły alertów — gratulacje zespołu.</p>
             ) : (
-              listaAlertowOperacyjnych.map((a, i) => (
-                <div key={`al-${i}`} style={op.alertRow(a.severity)}>
-                  <strong style={{ display: "block", marginBottom: "0.2rem" }}>
-                    {a.severity === "krytyczny" ? "Krytyczne" : a.severity === "wazny" ? "Ważne" : "Informacja"}
-                  </strong>
-                  {a.text}
-                </div>
-              ))
+              listaAlertowOperacyjnych.map((a, i) => {
+                const st = op.alertRow(a.severity);
+                return (
+                  <button
+                    key={`al-${i}`}
+                    type="button"
+                    onClick={() => przejdzZAlertuOperacyjnego(a.target)}
+                    title="Przejdź do szczegółów"
+                    style={{
+                      ...st,
+                      display: "block",
+                      width: "100%",
+                      cursor: "pointer",
+                      font: "inherit",
+                      textAlign: "left",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <strong style={{ display: "block", marginBottom: "0.2rem" }}>
+                      {a.severity === "krytyczny" ? "Krytyczne" : a.severity === "wazny" ? "Ważne" : "Informacja"}
+                    </strong>
+                    {a.text}
+                  </button>
+                );
+              })
             )}
           </div>
           <button type="button" style={{ ...s.btnGhost, marginBottom: "1rem" }} onClick={przejdzDoInfoZagrozen}>
@@ -5522,8 +6100,10 @@ export default function App() {
           <div style={op.heroCard}>
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Zadania ogólne</h2>
             <p style={{ ...op.muted, marginBottom: "0.35rem", maxWidth: "44rem" }}>
-              Poza projektami (KR): flota, IT, sprzęt, biuro, organizacja. Kategoria poniżej to{" "}
-              <strong>heurystyka</strong> z treści i działu (bez nowych kolumn w bazie).
+              Zadania <strong>ogólne</strong> i <strong>przy konkretnym KR</strong> — pole <strong>Projekt (KR)</strong> w
+              formularzu wiąże kartkę Kanban z projektem; puste = zadanie poza KR.{" "}
+              <strong>Przydział:</strong> osoba odpowiedzialna (wykonanie) i opcjonalnie zlecająca. Kategoria w tabeli to{" "}
+              <strong>heurystyka</strong> z treści i działu.
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.15rem" }}>
               {["Samochody", "Komputery", "Sprzęt", "Biuro", "Organizacyjne"].map((kat) => (
@@ -5533,42 +6113,359 @@ export default function App() {
               ))}
             </div>
             <p style={{ ...op.muted, margin: 0, fontSize: "0.76rem" }}>
-              Tabela <code style={s.code}>zadania</code> w Supabase — osoby z zakładki{" "}
-              <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
+              Tabela <code style={s.code}>zadania</code> — kolumna <code style={s.code}>kr</code> (SQL:{" "}
+              <code style={s.code}>zadania-kolumna-kr.sql</code>). Filtr <strong>Projekt (KR)</strong> działa w tabeli i
+              Kanbanie. Osoby z zakładki <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
             </p>
+          </div>
+
+          <div
+            style={{
+              ...op.sectionCard,
+              marginBottom: "1rem",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "0.85rem",
+              alignItems: "flex-end",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+              <span style={{ color: "#cbd5e1", fontSize: "0.82rem", fontWeight: 600 }}>Widok</span>
+              <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  style={{
+                    ...s.btnGhost,
+                    fontSize: "0.88rem",
+                    fontWeight: 600,
+                    padding: "0.48rem 0.85rem",
+                    ...(zadaniaWidok === "tabela"
+                      ? {
+                          borderColor: "rgba(56,189,248,0.55)",
+                          color: "#7dd3fc",
+                          background: "rgba(56,189,248,0.12)",
+                        }
+                      : {}),
+                  }}
+                  onClick={() => setZadaniaWidok("tabela")}
+                >
+                  Tabela
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...s.btnGhost,
+                    fontSize: "0.88rem",
+                    fontWeight: 600,
+                    padding: "0.48rem 0.85rem",
+                    ...(zadaniaWidok === "kanban"
+                      ? {
+                          borderColor: "rgba(56,189,248,0.55)",
+                          color: "#7dd3fc",
+                          background: "rgba(56,189,248,0.12)",
+                        }
+                      : {}),
+                  }}
+                  onClick={() => setZadaniaWidok("kanban")}
+                >
+                  Kanban
+                </button>
+              </div>
+            </div>
+            <label
+              style={{
+                ...s.label,
+                marginBottom: 0,
+                minWidth: "min(18rem, 100%)",
+                fontSize: "0.88rem",
+                color: "#cbd5e1",
+              }}
+            >
+              Pracownik (filtr)
+              <select
+                style={{ ...s.input, fontSize: "0.9rem", padding: "0.55rem 0.7rem" }}
+                value={zadaniaFiltrPracNr}
+                onChange={(ev) => {
+                  setZadaniaFiltrPracNr(ev.target.value);
+                  if (!ev.target.value) setZadaniaFiltrTylkoOdpowiedzialny(false);
+                }}
+              >
+                <option value="">— wszyscy —</option>
+                {pracownicyPosortowani.map((p) => (
+                  <option key={String(p.nr)} value={String(p.nr)}>
+                    {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              style={{
+                ...s.label,
+                marginBottom: 0,
+                minWidth: "min(16rem, 100%)",
+                fontSize: "0.88rem",
+                color: "#cbd5e1",
+              }}
+            >
+              Projekt (filtr KR)
+              <select
+                style={{ ...s.input, fontSize: "0.9rem", padding: "0.55rem 0.7rem" }}
+                value={zadaniaFiltrKr}
+                onChange={(ev) => setZadaniaFiltrKr(ev.target.value)}
+              >
+                <option value="">— wszystkie / dowolny KR —</option>
+                <option value="__bez_kr__">— tylko bez KR (ogólne) —</option>
+                {[...krList]
+                  .sort((a, b) =>
+                    String(a.kr ?? "").localeCompare(String(b.kr ?? ""), "pl", {
+                      numeric: true,
+                      sensitivity: "base",
+                    })
+                  )
+                  .map((r) => (
+                    <option key={String(r.kr)} value={String(r.kr).trim()}>
+                      {String(r.kr).trim()}
+                      {r.nazwa_obiektu?.trim() ? ` — ${r.nazwa_obiektu.trim()}` : ""}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                cursor: zadaniaFiltrPracNr ? "pointer" : "default",
+                color: zadaniaFiltrPracNr ? "#f1f5f9" : "#94a3b8",
+                fontSize: "0.9rem",
+                fontWeight: 500,
+                marginBottom: "0.15rem",
+                maxWidth: "min(22rem, 100%)",
+                lineHeight: 1.4,
+              }}
+            >
+              <input
+                type="checkbox"
+                style={{ width: "1.05rem", height: "1.05rem", flexShrink: 0, accentColor: "#38bdf8" }}
+                checked={zadaniaFiltrTylkoOdpowiedzialny}
+                disabled={!zadaniaFiltrPracNr}
+                onChange={(ev) => setZadaniaFiltrTylkoOdpowiedzialny(ev.target.checked)}
+              />
+              Tylko jako osoba odpowiedzialna
+            </label>
+            {zadaniaFiltrPracNr || zadaniaFiltrKr ? (
+              <span style={{ color: "#94a3b8", fontSize: "0.86rem", alignSelf: "center" }}>
+                Wynik: {zadaniaPrzefiltrowane.length}
+                {zadaniaFiltrKr === "__bez_kr__"
+                  ? " (bez KR)"
+                  : zadaniaFiltrKr
+                    ? ` (KR ${zadaniaFiltrKr})`
+                    : ""}
+                {zadaniaFiltrPracNr
+                  ? zadaniaFiltrTylkoOdpowiedzialny
+                    ? " · tylko wykonawca"
+                    : " · wykonawca lub zlecający"
+                  : ""}
+              </span>
+            ) : null}
           </div>
 
           {zadaniaFetchError ? null : zadaniaList.length === 0 ? (
             <p style={s.muted}>Brak zadań — dodaj pierwsze formularzem poniżej.</p>
+          ) : zadaniaPrzefiltrowane.length === 0 ? (
+            <p style={s.muted}>
+              Brak zadań dla wybranego filtra — zmień pracownika, projekt KR lub odznacz „tylko odpowiedzialny”.
+            </p>
+          ) : zadaniaWidok === "kanban" ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "0.75rem",
+                marginBottom: "1rem",
+              }}
+            >
+              {[
+                { key: "oczekuje", label: "Oczekuje", sub: "kolejka / backlog" },
+                { key: "w_trakcie", label: "W trakcie", sub: "robocze" },
+                { key: "ukonczone", label: "Ukończone", sub: "zamknięte" },
+                { key: "inne", label: "Inny / brak statusu", sub: "ustaw status w formularzu" },
+              ].map((col) => (
+                <div
+                  key={col.key}
+                  style={{
+                    borderRadius: "14px",
+                    border: "1px solid rgba(148,163,184,0.18)",
+                    background: "rgba(15,23,42,0.65)",
+                    padding: "0.65rem 0.55rem",
+                    minHeight: "8rem",
+                  }}
+                >
+                  <div style={{ marginBottom: "0.55rem", padding: "0 0.25rem" }}>
+                    <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#f1f5f9" }}>{col.label}</div>
+                    <div style={{ ...op.muted, fontSize: "0.68rem" }}>{col.sub}</div>
+                    <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "0.2rem" }}>
+                      {zadaniaKanbanBuckets[col.key].length} kart
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                    {zadaniaKanbanBuckets[col.key].map((row) => {
+                      const zt = kmTekstDoKomorki(row.zadanie);
+                      const cur = String(row.status ?? "").trim();
+                      return (
+                        <div
+                          key={row.id}
+                          style={{
+                            borderRadius: "10px",
+                            border: "1px solid rgba(51,65,85,0.55)",
+                            background: "rgba(30,41,59,0.92)",
+                            padding: "0.5rem 0.55rem",
+                          }}
+                        >
+                          <div
+                            title={zt.title}
+                            style={{
+                              fontSize: "0.8rem",
+                              fontWeight: 600,
+                              color: "#f8fafc",
+                              marginBottom: "0.35rem",
+                              lineHeight: 1.35,
+                            }}
+                          >
+                            {zt.text}
+                          </div>
+                          {tekstTrim(row.kr) ? (
+                            <div style={{ marginBottom: "0.35rem" }}>
+                              <span
+                                style={{
+                                  ...op.badge("rgba(56,189,248,0.2)", "#7dd3fc"),
+                                  fontSize: "0.72rem",
+                                  padding: "0.22rem 0.5rem",
+                                }}
+                              >
+                                KR {String(row.kr).trim()}
+                              </span>
+                            </div>
+                          ) : (
+                            <div style={{ ...op.muted, fontSize: "0.65rem", marginBottom: "0.3rem" }}>
+                              Ogólne (bez KR)
+                            </div>
+                          )}
+                          <div
+                            style={{
+                              fontSize: "0.68rem",
+                              color: "#94a3b8",
+                              marginBottom: "0.35rem",
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            <div>
+                              <strong style={{ color: "#7dd3fc" }}>Odp.:</strong>{" "}
+                              {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
+                            </div>
+                            <div>
+                              <strong style={{ color: "#fcd34d" }}>Zlec.:</strong>{" "}
+                              {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
+                            </div>
+                            {row.data_planowana ? (
+                              <div>Plan: {dataDoInputa(row.data_planowana)}</div>
+                            ) : null}
+                            {row.data_realna ? (
+                              <div style={{ color: "#86efac" }}>
+                                Realizacja: {dataDoInputa(row.data_realna)}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.35rem" }}>
+                            {ZADANIE_STATUS_W_BAZIE.map((st) => (
+                              <button
+                                key={`${row.id}-${st}`}
+                                type="button"
+                                style={{
+                                  ...s.btnGhost,
+                                  padding: "0.15rem 0.35rem",
+                                  fontSize: "0.65rem",
+                                  borderColor:
+                                    cur === st ? "rgba(74,222,128,0.55)" : "rgba(148,163,184,0.25)",
+                                  color: cur === st ? "#bbf7d0" : "#cbd5e1",
+                                }}
+                                onClick={() => void ustawStatusZadaniaSzybko(row.id, st)}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                          </div>
+                          <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.7rem" }}
+                              onClick={() => wczytajZadanieDoEdycji(row)}
+                            >
+                              Edytuj
+                            </button>
+                            <button
+                              type="button"
+                              style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.7rem" }}
+                              onClick={() => usunZadanie(row.id)}
+                            >
+                              Usuń
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <div style={{ ...s.tableWrap, borderRadius: "16px", overflow: "hidden" }}>
-              <table style={{ ...s.table, fontSize: "0.86rem" }}>
+              <table style={{ ...s.table, fontSize: "0.95rem", lineHeight: 1.45 }}>
                 <thead>
                   <tr>
-                    <th style={s.th}>Zadanie</th>
-                    <th style={s.th}>Kategoria</th>
-                    <th style={{ ...s.th, color: "#7dd3fc" }}>Dział</th>
-                    <th style={s.th}>Odpow.</th>
-                    <th style={s.th}>Zlecający</th>
-                    <th style={{ ...s.th, color: "#a7f3d0" }}>Status</th>
-                    <th style={s.th}>Plan</th>
-                    <th style={s.th}>Real</th>
-                    <th style={s.th}>Zagr.</th>
-                    <th style={s.th}>Opis</th>
-                    <th style={s.th} />
+                    {[
+                      { ch: "Zadanie", extra: null },
+                      { ch: "KR", extra: { color: "#93c5fd" } },
+                      { ch: "Kategoria", extra: null },
+                      { ch: "Dział", extra: { color: "#7dd3fc" } },
+                      { ch: "Odpow.", extra: null },
+                      { ch: "Zlecający", extra: null },
+                      { ch: "Status", extra: { color: "#a7f3d0" } },
+                      { ch: "Plan", extra: null },
+                      { ch: "Real", extra: null },
+                      { ch: "Zagr.", extra: null },
+                      { ch: "Opis", extra: null },
+                      { ch: "", extra: null },
+                    ].map((h, i) => (
+                      <th
+                        key={i}
+                        style={{
+                          ...s.th,
+                          fontSize: "0.88rem",
+                          padding: "0.75rem 0.85rem",
+                          whiteSpace: "normal",
+                          lineHeight: 1.35,
+                          verticalAlign: "bottom",
+                          ...(h.extra ?? {}),
+                        }}
+                      >
+                        {h.ch}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {zadaniaList.map((row) => {
+                  {zadaniaPrzefiltrowane.map((row) => {
                     const zt = kmTekstDoKomorki(row.zadanie);
                     const opisKom = kmTekstDoKomorki(row.opis);
                     const kat = zadaniaEtykietaKategorii(row);
                     const plan = dataDoSortuYYYYMMDD(row.data_planowana);
+                    const stRow = String(row.status ?? "").trim();
                     const przeterm =
                       plan &&
                       plan < dzisiajDataYYYYMMDD() &&
                       !tekstTrim(row.data_realna) &&
-                      String(row.status ?? "").toLowerCase() !== "zakończone";
+                      !zadanieCzyUkonczoneStatus(row.status);
                     return (
                       <tr
                         key={row.id}
@@ -5580,47 +6477,94 @@ export default function App() {
                               : undefined
                         }
                       >
-                        <td style={s.td} title={zt.title || undefined}>
-                          <strong style={{ color: "#f5f5f5" }}>{zt.text}</strong>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }} title={zt.title || undefined}>
+                          <strong style={{ color: "#f5f5f5", fontSize: "0.98rem", fontWeight: 600 }}>{zt.text}</strong>
                         </td>
-                        <td style={s.td}>
-                          <span style={op.badge("rgba(99,102,241,0.22)", "#c7d2fe")}>{kat}</span>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", fontFamily: "ui-monospace, monospace" }}>
+                          {tekstTrim(row.kr) ? (
+                            <span style={{ color: "#93c5fd", fontWeight: 600 }}>{String(row.kr).trim()}</span>
+                          ) : (
+                            <span style={{ color: "#64748b" }}>—</span>
+                          )}
                         </td>
-                        <td style={{ ...s.td, ...s.dzialWartosc }}>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
+                          <span
+                            style={{
+                              ...op.badge("rgba(99,102,241,0.22)", "#c7d2fe"),
+                              fontSize: "0.78rem",
+                              padding: "0.35rem 0.65rem",
+                              letterSpacing: "0.02em",
+                              whiteSpace: "normal",
+                              wordBreak: "break-word",
+                              maxWidth: "14rem",
+                            }}
+                          >
+                            {kat}
+                          </span>
+                        </td>
+                        <td style={{ ...s.td, ...s.dzialWartosc, padding: "0.65rem 0.85rem", fontSize: "0.95rem" }}>
                           {row.dzial?.trim() ? row.dzial : "—"}
                         </td>
-                        <td style={s.td}>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
                           {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
                         </td>
-                        <td style={s.td}>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
                           {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
                         </td>
-                        <td style={{ ...s.td, ...s.statusKr, fontSize: "0.8rem" }}>
-                          {row.status?.trim() ? row.status : "—"}
+                        <td style={{ ...s.td, ...s.statusKr, fontSize: "0.92rem", padding: "0.65rem 0.85rem" }}>
+                          <select
+                            style={{
+                              ...s.input,
+                              padding: "0.5rem 0.55rem",
+                              fontSize: "0.9rem",
+                              fontWeight: 500,
+                              minWidth: "11rem",
+                              lineHeight: 1.4,
+                            }}
+                            value={ZADANIE_STATUS_W_BAZIE.includes(stRow) ? stRow : ""}
+                            onChange={(ev) => {
+                              const v = ev.target.value;
+                              if (v) void ustawStatusZadaniaSzybko(row.id, v);
+                            }}
+                          >
+                            <option value="">— {stRow && !ZADANIE_STATUS_W_BAZIE.includes(stRow) ? stRow : "brak"} —</option>
+                            {ZADANIE_STATUS_W_BAZIE.map((st) => (
+                              <option key={st} value={st}>
+                                {st}
+                              </option>
+                            ))}
+                          </select>
                         </td>
-                        <td style={s.td}>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
                           {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"}
                         </td>
-                        <td style={s.td}>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
                           {row.data_realna ? dataDoInputa(row.data_realna) : "—"}
                         </td>
-                        <td style={s.td}>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
                           {row.zagrozenie === true ? "tak" : row.zagrozenie === false ? "nie" : "—"}
                         </td>
-                        <td style={s.td} title={opisKom.title || undefined}>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }} title={opisKom.title || undefined}>
                           {opisKom.text}
                         </td>
-                        <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                        <td
+                          style={{
+                            ...s.td,
+                            padding: "0.65rem 0.85rem",
+                            textAlign: "right",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
                           <button
                             type="button"
-                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                            style={{ ...s.btnGhost, padding: "0.35rem 0.55rem", fontSize: "0.85rem" }}
                             onClick={() => wczytajZadanieDoEdycji(row)}
                           >
                             Edytuj
                           </button>{" "}
                           <button
                             type="button"
-                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                            style={{ ...s.btnGhost, padding: "0.35rem 0.55rem", fontSize: "0.85rem" }}
                             onClick={() => usunZadanie(row.id)}
                           >
                             Usuń
@@ -5648,6 +6592,32 @@ export default function App() {
             style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "2rem" }}
             onSubmit={zapiszZadanie}
           >
+            <label style={s.label}>
+              Projekt (KR) — opcjonalnie
+              <select
+                style={s.input}
+                value={String(zadanieForm.kr ?? "")}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, kr: ev.target.value }))}
+              >
+                <option value="">— brak: zadanie ogólne (nie przy projekcie) —</option>
+                {[...krList]
+                  .sort((a, b) =>
+                    String(a.kr ?? "").localeCompare(String(b.kr ?? ""), "pl", {
+                      numeric: true,
+                      sensitivity: "base",
+                    })
+                  )
+                  .map((r) => (
+                    <option key={String(r.kr)} value={String(r.kr).trim()}>
+                      {String(r.kr).trim()}
+                      {r.nazwa_obiektu?.trim() ? ` — ${r.nazwa_obiektu.trim()}` : ""}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <p style={{ ...s.muted, margin: "-0.35rem 0 0", fontSize: "0.78rem" }}>
+              Przy wybranym KR zadanie widać w filtrze i na kartach Kanban z etykietą projektu.
+            </p>
             <label style={s.label}>
               Zadanie (wymagane)
               <input
@@ -8105,11 +9075,7 @@ export default function App() {
                 : "Wróć do tabeli wszystkich projektów."}
             </HelpLinijka>
           </div>
-          {wybranyRekordKr &&
-          wybranyKrKlucz != null &&
-          String(wybranyKrKlucz).trim() === String(widokPulpitDlaKr ?? "").trim()
-            ? renderKrProjektPills(wybranyRekordKr)
-            : null}
+          {rekordKrPulpit ? renderKrProjektPills(rekordKrPulpit) : null}
           <h2 id="pulpit-naglowek" style={{ ...s.krTopTitle, fontSize: "0.9rem" }}>
             Pulpit projektu — KR {widokPulpitDlaKr}
           </h2>
@@ -8118,10 +9084,12 @@ export default function App() {
             <strong style={{ color: "#f87171" }}>ETAP</strong>,{" "}
             <strong style={{ color: "#fbbf24" }}>PW</strong>,{" "}
             <strong style={{ color: "#38bdf8" }}>LOG</strong>, zielony — start), potem skrót.{" "}
-            <strong style={{ color: "#4ade80" }}>Zielona linia</strong> — dziś. Układ: dane i przyciski ({" "}
-            <strong style={{ color: "#fde68a" }}>UMOWA</strong> → karta KR / zakładka Umowa;{" "}
-            <strong style={{ color: "#c4b5fd" }}>INV</strong> → finanse na tym pulpicie), potem alert, kontakty PW, oś
-            czasu.
+            <strong style={{ color: "#4ade80" }}>Zielona linia</strong> — dziś.{" "}
+            <strong style={{ color: "#fde68a" }}>Zakładki pod tytułem</strong> (m.in.{" "}
+            <strong style={{ color: "#fde68a" }}>Faktury kosztowe</strong>) — ta sama nawigacja co na karcie projektu,
+            także gdy wszedłaś na pulpit skrótem z listy KR. Skróty:{" "}
+            <strong style={{ color: "#fde68a" }}>UMOWA</strong>, <strong style={{ color: "#c4b5fd" }}>INV</strong>{" "}
+            (finanse FS / rama kosztów na tym ekranie).
           </p>
           {!rekordKrPulpit ? (
             <div style={s.errBox} role="alert">
@@ -8293,6 +9261,18 @@ export default function App() {
                   <button
                     type="button"
                     style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                    onClick={() => przejdzDoSekcjiKr(rekordKrPulpit, "zadania_kr")}
+                  >
+                    Zadania
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>
+                    Lista zadań przypisanych do tego KR — Kanban, terminy i wykonanie.
+                  </HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
                     onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}
                   >
                     Edytuj KR
@@ -8352,6 +9332,26 @@ export default function App() {
                   </button>
                   <HelpLinijka wlaczony={trybHelp}>
                     Przewija w dół do faktur dla klienta i ramy kosztów — bez zmiany widoku.
+                  </HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...s.btnGhost,
+                      padding: "0.32rem 0.65rem",
+                      fontSize: "0.78rem",
+                      borderColor: "rgba(250,204,21,0.55)",
+                      color: "#fef08a",
+                      fontWeight: 700,
+                    }}
+                    title="Formularz zgłoszenia kosztu do przelewu (komu, konto, brutto) — zakładka Faktury kosztowe"
+                    onClick={() => przejdzDoSekcjiKr(rekordKrPulpit, "faktury")}
+                  >
+                    Koszt do przelewu
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>
+                    To samo co zakładka „Faktury kosztowe” — zapis do księgowości, nie tylko podgląd na pulpicie.
                   </HelpLinijka>
                 </div>
               </div>
@@ -8493,9 +9493,13 @@ export default function App() {
                     Koszty (rama — ten sam pulpit)
                   </div>
                   <p style={{ ...s.muted, margin: "0 0 0.5rem", fontSize: "0.68rem", lineHeight: 1.45 }}>
-                    Klauzule, paliwo, faktury PW, RBGH / wycena później —{' '}
+                    Klauzule, paliwo, faktury PW, RBGH / wycena później —{" "}
                     <strong style={{ color: "#a7f3d0" }}>bez sprzedaży FS</strong> (ta jest w tabeli powyżej). BRUDNOPIS:
                     podłączenie pod osobną tabelę w bazie.
+                  </p>
+                  <p style={{ ...s.muted, margin: "0 0 0.55rem", fontSize: "0.68rem", lineHeight: 1.45, color: "#fde68a" }}>
+                    <strong>Zgłoszenie kosztu do przelewu</strong> (komu, konto, kwota brutto) — osobna funkcja: przycisk
+                    poniżej, nie w ramce „placeholder”.
                   </p>
                   <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.72rem", color: "#94a3b8" }}>
                     <div
@@ -8529,18 +9533,27 @@ export default function App() {
                       <strong style={{ color: "#d1fae5" }}>Roboczogodziny</strong> — suma h, stawka / wycena (placeholder).
                     </div>
                   </div>
-                  {wybranyKrKlucz != null &&
-                  String(wybranyKrKlucz).trim() === String(rekordKrPulpit.kr).trim() ? (
-                    <div style={{ marginTop: "0.55rem" }}>
-                      <button
-                        type="button"
-                        style={{ ...s.btnGhost, padding: "0.28rem 0.55rem", fontSize: "0.7rem" }}
-                        onClick={() => przejdzDoSekcjiKr(rekordKrPulpit, "faktury")}
-                      >
-                        Pełna zakładka „Faktury kosztowe” w karcie KR
-                      </button>
-                    </div>
-                  ) : null}
+                  <div style={{ marginTop: "0.55rem" }}>
+                    <button
+                      type="button"
+                      style={{
+                        ...s.btnGhost,
+                        padding: "0.32rem 0.65rem",
+                        fontSize: "0.74rem",
+                        borderColor: "rgba(253,224,71,0.45)",
+                        color: "#fef9c3",
+                        fontWeight: 600,
+                      }}
+                      title="Otwiera formularz zgłoszenia do księgowości dla tego projektu"
+                      onClick={() => przejdzDoSekcjiKr(rekordKrPulpit, "faktury")}
+                    >
+                      Nowe zgłoszenie — faktury kosztowe do opłacenia
+                    </button>
+                    <HelpLinijka wlaczony={trybHelp}>
+                      To samo co zakładka „Faktury kosztowe” w górnej nawigacji karty projektu. Działa także po wejściu
+                      na pulpit skrótem z listy KR (bez osobnego „otwarcia karty”).
+                    </HelpLinijka>
+                  </div>
                 </div>
               </div>
               {(() => {
