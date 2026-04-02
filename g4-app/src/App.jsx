@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { supabase } from "./lib/supabase.js";
+import { op, OpKpiCard, OpFutureModule } from "./operationalShell.jsx";
 
 /**
  * `true` — tylko zalogowani widzą dane (ustaw w .env przy deployu: VITE_REQUIRE_AUTH=true).
@@ -264,7 +265,7 @@ const s = {
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
-  /** Tabela kamieni milowych — mniejsza czcionka, więcej kolumn na ekranie. */
+  /** Tabela etapów (kamienie_milowe) — mniejsza czcionka, więcej kolumn na ekranie. */
   kmTable: {
     width: "100%",
     borderCollapse: "collapse",
@@ -298,6 +299,53 @@ const s = {
     whiteSpace: "nowrap",
     width: "4.5rem",
   },
+  /** Oś czasu — karty operacyjne (pulpit). */
+  pulpitLiNowy: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "0.5rem",
+    minWidth: 0,
+    padding: "0.5rem 0",
+    paddingLeft: "0.15rem",
+    marginLeft: 0,
+    borderBottom: "1px solid rgba(148,163,184,0.08)",
+    listStyle: "none",
+    borderRadius: "12px",
+  },
+  pulpitLiUwaga: {
+    paddingLeft: "0.5rem",
+    marginLeft: "-0.1rem",
+    borderLeft: "3px solid #f87171",
+    background: "rgba(248,113,113,0.06)",
+  },
+  pulpitDataCol: {
+    flex: "0 0 5rem",
+    color: "#94a3b8",
+    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
+    fontSize: "0.72rem",
+    lineHeight: 1.35,
+    paddingTop: "0.15rem",
+  },
+  pulpitDataColUwaga: { color: "#fca5a5", fontWeight: 600 },
+  pulpitKartaTekst: {
+    flex: "1 1 auto",
+    minWidth: 0,
+    fontSize: "0.78rem",
+    lineHeight: 1.4,
+    color: "#e2e8f0",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    paddingTop: "0.1rem",
+  },
+  pulpitKartaTekstUwaga: { color: "#fecaca", fontWeight: 600 },
+  pulpitTerazLinia: {
+    flex: "1 1 auto",
+    height: "2px",
+    background: "linear-gradient(90deg, transparent, #4ade80 10%, #4ade80 90%, transparent)",
+    minWidth: "1rem",
+  },
 };
 
 /** Skraca ISO z bazy do YYYY-MM-DD pod input type="date"; puste → "". */
@@ -325,8 +373,8 @@ function tekstTrim(v) {
   return String(v).trim();
 }
 
-/** Kamień milowy uznany za „domknięty” — nie podświetlamy przeterminowania. */
-const KM_STATUS_PULPIT_ZAMKNIETE = new Set(["zrealizowane", "rozliczone", "anulowane"]);
+/** Status etapu uznany za „domknięty” — nie podświetlamy przeterminowania. */
+const ETAP_STATUS_PULPIT_ZAMKNIETE = new Set(["zrealizowane", "rozliczone", "anulowane"]);
 
 /** KR wymaga koordynacji (spotkanie / decyzja zleceniodawcy). */
 function pulpitKrRekordWymagaUwagi(rekord) {
@@ -334,17 +382,17 @@ function pulpitKrRekordWymagaUwagi(rekord) {
   return tekstTrim(rekord.status).toLowerCase() === "oczekuje na zamawiającego";
 }
 
-/** Plan KM minął (dzień), a etap nie jest zamknięty — jak na pulpicie. */
+/** Plan etapu minął (dzień), a etap nie jest zamknięty — jak na pulpicie. */
 function pulpitKmPlanPrzeterminowany(row, dziśYYYYMMDD) {
   const plan = dataDoSortuYYYYMMDD(row.data_planowana);
   if (!plan || !dziśYYYYMMDD) return false;
   if (plan >= dziśYYYYMMDD) return false;
   const st = tekstTrim(row.status).toLowerCase();
-  if (KM_STATUS_PULPIT_ZAMKNIETE.has(st)) return false;
+  if (ETAP_STATUS_PULPIT_ZAMKNIETE.has(st)) return false;
   return true;
 }
 
-/** KM: zagrożenie, opis ryzyka lub plan po terminie przy etapie jeszcze „otwartym”. */
+/** ETAP (wiersz w kamienie_milowe): zagrożenie, opis ryzyka lub plan po terminie przy etapie jeszcze „otwartym”. */
 function pulpitKmWymagaUwagi(row, dziśYYYYMMDD) {
   if (row.zagrozenie === "tak" || row.zagrozenie === true) return true;
   if (tekstTrim(row.zagrozenie_opis)) return true;
@@ -368,6 +416,63 @@ function pulpitPwWymagaUwagi(z, dziśYYYYMMDD) {
   const term = dataDoSortuYYYYMMDD(z.termin_zlecenia);
   if (!term || !dziśYYYYMMDD) return false;
   return term < dziśYYYYMMDD;
+}
+
+/**
+ * BRUDNOPIS / RAMA: obecnie tabela `faktury` traktowana jako **faktury sprzedażowe** (powiązane z etapem przez
+ * `etap_id`). **Faktury kosztowe** (klauzule, paliwo, RBGH, faktury PW…) — osobna przestrzeń w UI + docelowo osobna
+ * tabela lub `faktury.typ` + inne FK — zob. zakładkę „Faktury kosztowe” w karcie KR.
+ */
+function fakturaJestZafakturowana(row) {
+  if (row == null) return false;
+  if (row.zafakturowane === false || row.czy_zafakturowane === false) return false;
+  if (row.anulowana === true || row.anulowane === true) return false;
+  return true;
+}
+
+/**
+ * Odbiór (protokół) dla **faktury sprzedażowej** — kolumny opcjonalne w schemacie.
+ * Priorytet: `protokol_odbioru`, `odebrane_protokolem`, …; brak pola → null („—” w UI).
+ */
+function fakturaOdebranaProtokolem(row) {
+  if (row == null) return null;
+  const v =
+    row.odebrane_protokolem ??
+    row.protokol_odbioru ??
+    row.odbior_protokolem ??
+    row.czy_odebrane_protokolem;
+  if (v === true) return true;
+  if (v === false) return false;
+  const s = tekstTrim(row.status_odbioru).toLowerCase();
+  if (s && (s.includes("protok") || s === "odebrane" || s.includes("odbiór"))) return true;
+  return null;
+}
+
+/**
+ * BRUDNOPIS: jeden etap może mieć wiele FS — nagłówek pokazuje skrót. Później: rozwinięcie listy dokumentów pod etapem,
+ * linki do PDF, walidacja „wszystkie etapy rozliczone”.
+ */
+function fakturySprzedazAgregatDlaEtapu(fList) {
+  const list = fList ?? [];
+  if (list.length === 0) {
+    return { zafakturowane: false, protokol: null, dataPokaz: "" };
+  }
+  const zaf = list.some(fakturaJestZafakturowana);
+  let prot = null;
+  if (list.some((f) => fakturaOdebranaProtokolem(f) === true)) prot = true;
+  else if (list.some((f) => fakturaOdebranaProtokolem(f) === false)) prot = false;
+  const daty = list
+    .map((f) => dataDoSortuYYYYMMDD(f.data_wystawienia ?? f.data_faktury ?? f.data_sprzedazy ?? f.data))
+    .filter(Boolean)
+    .sort();
+  const dataPokaz = daty.length ? daty[daty.length - 1] : "";
+  return { zafakturowane: zaf, protokol: prot, dataPokaz };
+}
+
+function pulpitInvFormatTakNieNieznane(v) {
+  if (v === true) return "tak";
+  if (v === false) return "nie";
+  return "—";
 }
 
 /** Podświetlenie inputu/selecta zgodne z regułami „wymaga uwagi” na pulpicie. */
@@ -400,12 +505,12 @@ function stylEtykietyUwagiPulpitu(czyUwaga) {
   };
 }
 
-const PULPIT_KIND_ORDER = { kr_start: 0, km: 1, pw: 2, log: 3 };
+const PULPIT_KIND_ORDER = { kr_start: 0, etap: 1, pw: 2, log: 3 };
 
 /** Przy tym samym dniu na osi: PW — najpierw data zlecenia, potem termin planowy, na końcu oddanie faktyczne. */
 const PW_PULPIT_ANCHOR_ORDER = { data_zlecenia: 0, termin_zlecenia: 1, data_oddania: 2 };
 
-/** Mała ikonka typu wpisu na osi czasu pulpitu (KM / PW / LOG / start KR). */
+/** Mała ikonka typu wpisu na osi czasu pulpitu (ETAP / PW / LOG / start KR). */
 function pulpitIkonTypu(kind) {
   const box = {
     display: "inline-flex",
@@ -423,9 +528,9 @@ function pulpitIkonTypu(kind) {
     </span>
   );
   switch (kind) {
-    case "km":
+    case "etap":
       return svg(
-        "KM — kamień milowy",
+        "ETAP — wiersz etapu",
         "#f87171",
         "M6 3v18h2V9l11-3V6L8 8V3H6z",
       );
@@ -457,6 +562,54 @@ function dzisiajDataYYYYMMDD() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** Wiersz harmonogramu terminów — obramowanie/tło przy po terminie lub „w ciągu 7 dni”. */
+function stylTerminuHarmonogramu(planRaw, dziśYmd) {
+  const plan = dataDoSortuYYYYMMDD(planRaw);
+  if (!plan || !dziśYmd) {
+    return {
+      border: "1px solid rgba(148,163,184,0.15)",
+      background: "rgba(15,23,42,0.45)",
+      color: "#cbd5e1",
+    };
+  }
+  if (plan < dziśYmd) {
+    return {
+      border: "1px solid rgba(248,113,113,0.45)",
+      background: "rgba(239,68,68,0.08)",
+      color: "#fecaca",
+    };
+  }
+  const p = new Date(`${plan}T12:00:00`);
+  const d0 = new Date(`${dziśYmd}T12:00:00`);
+  const diff = Math.ceil((p - d0) / 86400000);
+  if (diff <= 7) {
+    return {
+      border: "1px solid rgba(234,179,8,0.4)",
+      background: "rgba(234,179,8,0.07)",
+      color: "#fde68a",
+    };
+  }
+  return {
+    border: "1px solid rgba(148,163,184,0.12)",
+    background: "rgba(15,23,42,0.35)",
+    color: "#e2e8f0",
+  };
+}
+
+/** Heurystyka kategorii zadania ogólnego (pole dział + słowa kluczowe) — bez zmian w bazie. */
+function zadaniaEtykietaKategorii(row) {
+  const blob = [row.zadanie, row.dzial, row.opis]
+    .map((x) => (x != null ? String(x).toLowerCase() : ""))
+    .join(" ");
+  if (/\b(auto|samoch|pojazd|flota)\b/.test(blob)) return "Samochody";
+  if (/\b(komputer|laptop|pc|serwer|it|drukark)\b/.test(blob)) return "Komputery";
+  if (/\b(sprzęt|sprzet|narzędz|narzedz|gps|tachimetr|rtk)\b/.test(blob)) return "Sprzęt";
+  if (/\b(biur|archiw|papier|poczt|ksero)\b/.test(blob)) return "Biuro";
+  if (/\b(organi|szkolen|proced|kadrow|sprawy administr)\b/.test(blob)) return "Organizacyjne";
+  const dz = tekstTrim(row.dzial);
+  return dz || "Inne";
+}
+
 /** Tekst do podglądu: sformatowana data albo „brak daty”. */
 function etykietaDatyStartu(v) {
   if (v == null || v === "") return "brak daty";
@@ -485,8 +638,8 @@ const KR_STATUS_W_BAZIE = [
   "oczekuje na zamawiającego",
 ];
 
-/** Zgodnie z supabase/kamienie-milowe-status-check.sql (CHECK opcjonalny) — wartości statusu kamienia milowego. */
-const KM_STATUS_W_BAZIE = [
+/** Zgodnie z supabase/kamienie-milowe-status-check.sql (CHECK opcjonalny) — wartości statusu etapu. */
+const ETAP_STATUS_W_BAZIE = [
   "planowane",
   "w trakcie",
   "zrealizowane",
@@ -496,7 +649,7 @@ const KM_STATUS_W_BAZIE = [
 ];
 
 /** Zgodnie z supabase/kamienie-milowe-typ-odniesienia.sql — co oznacza data odniesienia. */
-const KM_TYP_ODNIESIENIA_W_BAZIE = ["linia", "zlecenie"];
+const ETAP_TYP_ODNIESIENIA_W_BAZIE = ["linia", "zlecenie"];
 
 /** Etykieta w UI / tabeli dla wartości typ_odniesienia. */
 function kmEtykietaTypuOdniesienia(typ) {
@@ -540,6 +693,20 @@ const LOG_STATUS_ZDARZENIA_W_BAZIE = ["w trakcie", "ukończone", "oczekuje"];
 /** Status zadania ogólnego (tabela zadania) — te same etykiety co w LOG. */
 const ZADANIE_STATUS_W_BAZIE = LOG_STATUS_ZDARZENIA_W_BAZIE;
 
+/** Typ sprzętu w tabeli `sprzet` (lista + pole własne przy „z bazy”). */
+const SPRZET_TYP_W_BAZIE = ["komputer", "drukarka", "ksero", "inne"];
+
+/** Status zgłoszenia faktury kosztowej do opłacenia (księgowość). */
+const FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE = ["do_zaplaty", "oplacone", "anulowane"];
+
+function etykietaFakturyDoZaplatyStatus(st) {
+  const s = String(st ?? "").trim();
+  if (s === "do_zaplaty") return "Do opłacenia";
+  if (s === "oplacone") return "Opłacone";
+  if (s === "anulowane") return "Anulowane";
+  return s || "—";
+}
+
 /** Porównanie tekstów z pustymi na końcu przy sortowaniu rosnącym (locale pl). */
 function porownajTekstSort(a, b) {
   const na = a == null || String(a).trim() === "" ? "" : String(a).trim();
@@ -564,6 +731,20 @@ function podpisOsobyProwadzacej(nrWart, mapaNr) {
   const p = mapaNr.get(key);
   if (p?.imie_nazwisko) return `${key} — ${p.imie_nazwisko}`;
   return key;
+}
+
+/** Kolor komórki kalendarza rezerwacji — stały dla danego nr pracownika. */
+function kolorRezerwacjiDlaPracownika(nr) {
+  const s = String(nr ?? "").trim();
+  if (!s) return "rgba(51,65,85,0.55)";
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 37 + s.charCodeAt(i)) >>> 0;
+  return `hsla(${h % 360}, 55%, 40%, 0.88)`;
+}
+
+/** Niepuste pole „wymagane naprawy” — podświetlenie w tabeli i informacja na panelu. */
+function samochodWymagaNaprawy(row) {
+  return row != null && tekstTrim(row.wymagane_naprawy) !== "";
 }
 
 function logPustyForm() {
@@ -646,6 +827,96 @@ function podwykonawcaWierszDoFormu(row) {
     osoba_kontaktowa: row.osoba_kontaktowa != null ? String(row.osoba_kontaktowa) : "",
     telefon: row.telefon != null ? String(row.telefon) : "",
   };
+}
+
+function samochodPustyForm() {
+  return {
+    nazwa: "",
+    numer_rejestracyjny: "",
+    polisa_numer: "",
+    polisa_wazna_do: "",
+    przeglad_wazny_do: "",
+    uwagi_eksploatacja: "",
+    wymagane_naprawy: "",
+    notatki: "",
+  };
+}
+
+function samochodWierszDoFormu(row) {
+  return {
+    nazwa: row.nazwa != null ? String(row.nazwa) : "",
+    numer_rejestracyjny: row.numer_rejestracyjny != null ? String(row.numer_rejestracyjny) : "",
+    polisa_numer: row.polisa_numer != null ? String(row.polisa_numer) : "",
+    polisa_wazna_do: dataDoInputa(row.polisa_wazna_do),
+    przeglad_wazny_do: dataDoInputa(row.przeglad_wazny_do),
+    uwagi_eksploatacja: row.uwagi_eksploatacja != null ? String(row.uwagi_eksploatacja) : "",
+    wymagane_naprawy: row.wymagane_naprawy != null ? String(row.wymagane_naprawy) : "",
+    notatki: row.notatki != null ? String(row.notatki) : "",
+  };
+}
+
+function sprzetPustyForm() {
+  return {
+    typ: "komputer",
+    nazwa: "",
+    numer_inwentarzowy: "",
+    data_przegladu: "",
+    pracownik_nr: "",
+    notatki: "",
+  };
+}
+
+function sprzetWierszDoFormu(row) {
+  const typRaw = String(row.typ ?? "").trim();
+  return {
+    typ: typRaw || "komputer",
+    nazwa: row.nazwa != null ? String(row.nazwa) : "",
+    numer_inwentarzowy: row.numer_inwentarzowy != null ? String(row.numer_inwentarzowy) : "",
+    data_przegladu: dataDoInputa(row.data_przegladu),
+    pracownik_nr: row.pracownik_nr != null && row.pracownik_nr !== "" ? String(row.pracownik_nr) : "",
+    notatki: row.notatki != null ? String(row.notatki) : "",
+  };
+}
+
+function rezerwacjaPustyForm() {
+  return {
+    samochod_id: "",
+    data_dnia: "",
+    pracownik_nr: "",
+    opis_krotki: "",
+  };
+}
+
+function fakturaDoZaplatyPustyForm() {
+  return {
+    komu: "",
+    nr_konta: "",
+    kwota_brutto: "",
+    link_faktury: "",
+    numer_faktury: "",
+    zgloszil_pracownik_nr: "",
+    notatki: "",
+  };
+}
+
+function kwotaBruttoDoPayload(raw) {
+  const t = String(raw ?? "")
+    .trim()
+    .replace(/\s/g, "")
+    .replace(",", ".");
+  if (t === "") return null;
+  const n = Number.parseFloat(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function kwotaBruttoEtykieta(wartosc) {
+  if (wartosc == null || wartosc === "") return "—";
+  const n =
+    typeof wartosc === "number"
+      ? wartosc
+      : Number.parseFloat(String(wartosc).replace(",", ".").replace(/\s/g, ""));
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " zł brutto";
 }
 
 function krZleceniePwKwotaDoPayload(raw) {
@@ -763,11 +1034,83 @@ function boolDoTakNie(b) {
   return "";
 }
 
-/** Tekst do komórki KM: „—” gdy pusto; `title` z pełną treścią pod podpowiedź. */
+/** Tekst do komórki tabeli etapów: „—” gdy pusto; `title` z pełną treścią pod podpowiedź. */
 function kmTekstDoKomorki(val) {
   const t = val != null && String(val).trim() !== "" ? String(val).trim() : "";
   return { text: t || "—", title: t };
 }
+
+const STORAGE_TRYB_HELP = "g4_tryb_help";
+
+/** Podpowiedź pod przyciskiem — tylko przy włączonym trybie HELP (prezentacja). */
+const stylHelpPodPrzycisk = {
+  fontSize: "0.68rem",
+  color: "#4ade80",
+  lineHeight: 1.4,
+  margin: "0.2rem 0 0.5rem",
+  maxWidth: "20rem",
+};
+
+function HelpLinijka({ wlaczony, children }) {
+  if (!wlaczony || children == null || children === "") return null;
+  return <p style={stylHelpPodPrzycisk}>{children}</p>;
+}
+
+/** Menu sekcji karty projektu (hub KR) — nazwy „po ludzku” dla rady / kierowników. */
+const KR_PROJEKT_MENU = [
+  {
+    id: "przeglad",
+    label: "Przegląd",
+    help: "Pierwszy ekran projektu: skrót etapów, co pilne, ostatnie zgłoszenia i szybkie przejścia.",
+  },
+  {
+    id: "faktury",
+    label: "Faktury kosztowe",
+    help: "Zgłoszenia do księgowości: komu zapłacić, konto, brutto, link do faktury. FS sprzedaż — przy etapach i INV.",
+  },
+  {
+    id: "etapy",
+    label: "Etapy",
+    help: "Lista etapów prac i terminów tylko dla tego projektu — tu je wpisujesz i poprawiasz.",
+  },
+  {
+    id: "rozszerzenia",
+    label: "Rozszerzenia zakresu",
+    help: "Na później: aneksy i dopłaty poza pierwotną umową.",
+  },
+  {
+    id: "zlecenia",
+    label: "Zlecenia",
+    help: "Zlecenia dla firm zewnętrznych powiązane z tym projektem.",
+  },
+  {
+    id: "podwykonawcy",
+    label: "Podwykonawcy",
+    help: "Kto z zewnątrz realizuje prace — firmy i kontakty przy zleceniach.",
+  },
+  { id: "umowa", label: "Umowa", help: "Zleceniodawca, link do umowy, okres. Na razie jeden link, później więcej." },
+  {
+    id: "terminy",
+    label: "Terminy",
+    help: "Ważne daty z projektu, etapów i zleceń w jednym miejscu.",
+  },
+  {
+    id: "zgloszenia",
+    label: "Zgłoszenia",
+    help: "Dziennik zdarzeń przy tym projekcie — krótszy podgląd niż pełny LOG.",
+  },
+  {
+    id: "ryzyka",
+    label: "Problemy / ryzyka",
+    help: "Co wymaga uwagi: status projektu, etapy, zgłoszenia i zlecenia.",
+  },
+  { id: "os", label: "Oś czasu", help: "Jak pulpit: jedna oś dnia z etapami, PW i LOG." },
+  {
+    id: "zespol",
+    label: "Zespół / odpowiedzialności",
+    help: "Kto prowadzi projekt i kto odpowiada przy etapach oraz zgłoszeniach.",
+  },
+];
 
 function kmWierszDoFormu(row) {
   return {
@@ -798,22 +1141,34 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
 
-  /** Widok górnych przycisków: KR | ID (pracownik) | TASK (zadania). */
-  const [widok, setWidok] = useState("kr");
+  /** Widok modułu: panel startowy | KR | pracownik | zadania | … */
+  const [widok, setWidok] = useState("dashboard");
+  /** Sekcja „karty projektu” (hub KR) — zsynchronizowana z zakładkami/pills. */
+  const [krProjektSekcja, setKrProjektSekcja] = useState("przeglad");
+  /** Filtrowanie listy KR w prawym panelu. */
+  const [panelKrSzukaj, setPanelKrSzukaj] = useState("");
   /** Otwarty rekord KR (szczegóły + etapy); null = główny ekran z samą listą. */
   const [wybranyKrKlucz, setWybranyKrKlucz] = useState(null);
-  /** Widok kamieni milowych dla wybranego kodu KR (z listy głównej). */
+  /** Widok etapów (tabela kamienie_milowe) dla wybranego kodu KR (z listy głównej). */
   const [widokKmDlaKr, setWidokKmDlaKr] = useState(null);
   /** Dziennik zdarzeń (LOG) dla jednego KR — tabela dziennik_zdarzen. */
   const [widokLogDlaKr, setWidokLogDlaKr] = useState(null);
-  /** Podgląd INFO: KR + KM + LOG tylko do odczytu. */
+  /** Podgląd INFO: KR + etapy + LOG tylko do odczytu. */
   const [widokInfoDlaKr, setWidokInfoDlaKr] = useState(null);
   /** Zlecenia PW dla wybranego kodu KR (osobny widok z listy — przycisk PW). */
   const [widokPwDlaKr, setWidokPwDlaKr] = useState(null);
-  /** Pulpit / oś czasu — złączone KM, PW, LOG chronologicznie dla jednego KR. */
+  /** Pulpit / oś czasu — złączone ETAP, PW, LOG chronologicznie dla jednego KR. */
   const [widokPulpitDlaKr, setWidokPulpitDlaKr] = useState(null);
-  /** Pulpit: pierwszy klucz sortowania — data; potem typ (KM/PW/LOG), potem kolejność dodania. */
+  /** Pulpit: pierwszy klucz sortowania — data; potem typ (ETAP/PW/LOG), potem kolejność dodania. */
   const [pulpitSortDaty, setPulpitSortDaty] = useState("asc");
+  /** Prezentacja: zielone podpowiedzi pod przyciskami; zapamiętane w przeglądarce. */
+  const [trybHelp, setTrybHelp] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_TRYB_HELP) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [dziennikWpisy, setDziennikWpisy] = useState([]);
   const [dziennikFetchError, setDziennikFetchError] = useState(null);
   const [logForm, setLogForm] = useState(() => logPustyForm());
@@ -828,11 +1183,37 @@ export default function App() {
 
   const [podwykonawcyList, setPodwykonawcyList] = useState([]);
   const [podwykonawcyFetchError, setPodwykonawcyFetchError] = useState(null);
+  const [samochodyList, setSamochodyList] = useState([]);
+  const [samochodyFetchError, setSamochodyFetchError] = useState(null);
+  const [sprzetList, setSprzetList] = useState([]);
+  const [sprzetFetchError, setSprzetFetchError] = useState(null);
+  const [rezerwacjeList, setRezerwacjeList] = useState([]);
+  const [rezerwacjeFetchError, setRezerwacjeFetchError] = useState(null);
+  const [samochodEdycjaId, setSamochodEdycjaId] = useState(null);
+  const [samochodForm, setSamochodForm] = useState(() => samochodPustyForm());
+  const [sprzetEdycjaId, setSprzetEdycjaId] = useState(null);
+  const [sprzetForm, setSprzetForm] = useState(() => sprzetPustyForm());
+  const [rezerwacjaForm, setRezerwacjaForm] = useState(() => rezerwacjaPustyForm());
+  const [kalFlotaRok, setKalFlotaRok] = useState(() => new Date().getFullYear());
+  const [kalFlotaMiesiac, setKalFlotaMiesiac] = useState(() => new Date().getMonth() + 1);
   const [pwEdycjaId, setPwEdycjaId] = useState(null);
   const [pwForm, setPwForm] = useState(() => podwykonawcaPustyForm());
 
   const [krZleceniaPwList, setKrZleceniaPwList] = useState([]);
   const [krZleceniaPwFetchError, setKrZleceniaPwFetchError] = useState(null);
+  /** Zgłoszenia faktur kosztowych do opłacenia — lista przy otwartym KR (zakładka Faktury kosztowe). */
+  const [krFakturyDoZaplatyList, setKrFakturyDoZaplatyList] = useState([]);
+  const [krFakturyDoZaplatyFetchError, setKrFakturyDoZaplatyFetchError] = useState(null);
+  /** Wszystkie zgłoszenia ze statusem „do_zaplaty” — panel główny / księgowość. */
+  const [fakturyDoZaplatyOczekujaceList, setFakturyDoZaplatyOczekujaceList] = useState([]);
+  const [fakturyDoZaplatyOczekujaceFetchError, setFakturyDoZaplatyOczekujaceFetchError] = useState(null);
+  const [fakturaDoZaplatyForm, setFakturaDoZaplatyForm] = useState(() => fakturaDoZaplatyPustyForm());
+  /**
+   * **Faktury sprzedażowe** dla aktualnie wybranego KR (pulpit / karta projektu / tabela etapów) — odczyt z `faktury`
+   * po `etap_id`. BRUDNOPIS: docelowo filtr `typ = 'sprzedaz'` albo osobna tabela `faktury_sprzedaz`.
+   */
+  const [krFakturySprzedazList, setKrFakturySprzedazList] = useState([]);
+  const [krFakturySprzedazFetchError, setKrFakturySprzedazFetchError] = useState(null);
   const [krZleceniePwEdycjaId, setKrZleceniePwEdycjaId] = useState(null);
   const [krZleceniePwForm, setKrZleceniePwForm] = useState(() => krZleceniePwPustyForm());
   /** Kod KR dla zapisywanego zlecenia — wypełniany przy edycji z zakładki PW (gdy brak widokPwDlaKr). */
@@ -996,6 +1377,66 @@ export default function App() {
     setPodwykonawcyList(data ?? []);
   }
 
+  async function fetchSamochody() {
+    setSamochodyFetchError(null);
+    const { data, error } = await supabase
+      .from("samochod")
+      .select("*")
+      .order("nazwa", { ascending: true });
+
+    if (error) {
+      console.error("Błąd pobierania samochodów:", error);
+      setSamochodyFetchError(error.message);
+      setSamochodyList([]);
+      return;
+    }
+    setSamochodyList(data ?? []);
+  }
+
+  async function fetchSprzet() {
+    setSprzetFetchError(null);
+    const { data, error } = await supabase
+      .from("sprzet")
+      .select("*")
+      .order("typ", { ascending: true })
+      .order("nazwa", { ascending: true });
+
+    if (error) {
+      console.error("Błąd pobierania sprzętu:", error);
+      setSprzetFetchError(error.message);
+      setSprzetList([]);
+      return;
+    }
+    setSprzetList(data ?? []);
+  }
+
+  async function fetchRezerwacjeMiesiac(rok, miesiac1_12) {
+    const y = Number(rok);
+    const m = Number(miesiac1_12);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+      setRezerwacjeList([]);
+      return;
+    }
+    setRezerwacjeFetchError(null);
+    const ostatni = new Date(y, m, 0).getDate();
+    const od = `${y}-${String(m).padStart(2, "0")}-01`;
+    const doDnia = `${y}-${String(m).padStart(2, "0")}-${String(ostatni).padStart(2, "0")}`;
+    const { data, error } = await supabase
+      .from("samochod_rezerwacja")
+      .select("*")
+      .gte("data_dnia", od)
+      .lte("data_dnia", doDnia)
+      .order("data_dnia", { ascending: true });
+
+    if (error) {
+      console.error("Błąd pobierania rezerwacji:", error);
+      setRezerwacjeFetchError(error.message);
+      setRezerwacjeList([]);
+      return;
+    }
+    setRezerwacjeList(data ?? []);
+  }
+
   async function fetchKrZleceniaPwForKr(krKod) {
     const k = String(krKod ?? "").trim();
     if (!k) {
@@ -1017,6 +1458,136 @@ export default function App() {
       return;
     }
     setKrZleceniaPwList(data ?? []);
+  }
+
+  async function fetchKrFakturyDoZaplatyForKr(krKod) {
+    const k = String(krKod ?? "").trim();
+    if (!k) {
+      setKrFakturyDoZaplatyList([]);
+      setKrFakturyDoZaplatyFetchError(null);
+      return;
+    }
+    setKrFakturyDoZaplatyFetchError(null);
+    const { data, error } = await supabase
+      .from("kr_faktura_do_zaplaty")
+      .select("*")
+      .eq("kr", k)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Błąd pobierania zgłoszeń faktur do zapłaty:", error);
+      setKrFakturyDoZaplatyFetchError(error.message);
+      setKrFakturyDoZaplatyList([]);
+      return;
+    }
+    setKrFakturyDoZaplatyList(data ?? []);
+  }
+
+  async function fetchFakturyDoZaplatyOczekujace() {
+    setFakturyDoZaplatyOczekujaceFetchError(null);
+    const { data, error } = await supabase
+      .from("kr_faktura_do_zaplaty")
+      .select("*")
+      .eq("status", "do_zaplaty")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Błąd pobierania faktur oczekujących na płatność:", error);
+      setFakturyDoZaplatyOczekujaceFetchError(error.message);
+      setFakturyDoZaplatyOczekujaceList([]);
+      return;
+    }
+    setFakturyDoZaplatyOczekujaceList(data ?? []);
+  }
+
+  async function zapiszKrFakturaDoZaplaty(e, krKod) {
+    e.preventDefault();
+    const k = String(krKod ?? "").trim();
+    const komu = String(fakturaDoZaplatyForm.komu ?? "").trim();
+    if (!k || !komu) {
+      alert("Podaj kod KR i pole „Komu / odbiorca”.");
+      return;
+    }
+    const kw = kwotaBruttoDoPayload(fakturaDoZaplatyForm.kwota_brutto);
+    if (kw == null || kw < 0) {
+      alert("Podaj prawidłową kwotę brutto (np. 1234,56).");
+      return;
+    }
+    const payload = {
+      kr: k,
+      komu,
+      nr_konta: String(fakturaDoZaplatyForm.nr_konta ?? "").trim() || null,
+      kwota_brutto: kw,
+      link_faktury: String(fakturaDoZaplatyForm.link_faktury ?? "").trim() || null,
+      numer_faktury: String(fakturaDoZaplatyForm.numer_faktury ?? "").trim() || null,
+      zgloszil_pracownik_nr: String(fakturaDoZaplatyForm.zgloszil_pracownik_nr ?? "").trim() || null,
+      notatki: String(fakturaDoZaplatyForm.notatki ?? "").trim() || null,
+      status: "do_zaplaty",
+    };
+    const { error } = await supabase.from("kr_faktura_do_zaplaty").insert([payload]).select("id");
+    if (error) {
+      console.error(error);
+      alert(
+        "Zapis zgłoszenia: " +
+          error.message +
+          (String(error.message).includes("relation") || String(error.message).includes("does not exist")
+            ? "\n\nUruchom g4-app/supabase/kr-faktura-do-zaplaty.sql oraz RLS w rls-policies-anon.sql."
+            : "")
+      );
+      return;
+    }
+    setFakturaDoZaplatyForm(fakturaDoZaplatyPustyForm());
+    await fetchKrFakturyDoZaplatyForKr(k);
+    void fetchFakturyDoZaplatyOczekujace();
+  }
+
+  async function zapiszStatusKrFakturaDoZaplaty(rowId, status, krKod) {
+    const st = String(status ?? "").trim();
+    if (!FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(st)) return;
+    const { error } = await supabase.from("kr_faktura_do_zaplaty").update({ status: st }).eq("id", rowId);
+    if (error) {
+      console.error(error);
+      alert("Zmiana statusu: " + error.message);
+      return;
+    }
+    const k = String(krKod ?? "").trim();
+    if (k) await fetchKrFakturyDoZaplatyForKr(k);
+    void fetchFakturyDoZaplatyOczekujace();
+  }
+
+  /** Pobiera **faktury sprzedażowe** (wiersze `faktury` z `etap_id` należącym do etapów tego KR). */
+  async function fetchKrFakturySprzedazForKr(krKod) {
+    const k = String(krKod ?? "").trim();
+    if (!k) {
+      setKrFakturySprzedazList([]);
+      setKrFakturySprzedazFetchError(null);
+      return;
+    }
+    setKrFakturySprzedazFetchError(null);
+    const { data: etapyIdsRows, error: e1 } = await supabase
+      .from("kamienie_milowe")
+      .select("id")
+      .eq("kr", k);
+
+    if (e1) {
+      console.error("Błąd pobierania etapów pod faktury sprzedażowe:", e1);
+      setKrFakturySprzedazFetchError(e1.message);
+      setKrFakturySprzedazList([]);
+      return;
+    }
+    const ids = (etapyIdsRows ?? []).map((r) => r.id).filter((id) => id != null);
+    if (ids.length === 0) {
+      setKrFakturySprzedazList([]);
+      return;
+    }
+    const { data, error } = await supabase.from("faktury").select("*").in("etap_id", ids);
+    if (error) {
+      console.error("Błąd pobierania faktur sprzedażowych dla KR:", error);
+      setKrFakturySprzedazFetchError(error.message);
+      setKrFakturySprzedazList([]);
+      return;
+    }
+    setKrFakturySprzedazList(data ?? []);
   }
 
   async function fetchWszystkieZleceniaPw() {
@@ -1080,8 +1651,90 @@ export default function App() {
     setPwEdycjaId(null);
     setPwForm(podwykonawcaPustyForm());
     setWidok("kr");
+    setKrProjektSekcja("przeglad");
     void fetchKR();
     void fetchEtapy();
+  }
+
+  /** Dashboard: lista „Księgowość — faktury do opłacenia” (scroll na tym samym widoku lub po przejściu z innego). */
+  function przewinDoDashboardFakturyDoOplacenia() {
+    const run = () =>
+      document.getElementById("dashboard-faktury-do-oplacenia")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    if (widok === "dashboard") {
+      run();
+    } else {
+      przejdzDoDashboard();
+      requestAnimationFrame(() => requestAnimationFrame(run));
+      window.setTimeout(run, 160);
+    }
+  }
+
+  /** Panel operacyjny — ekran startowy z KPI (demo dla kierownictwa). */
+  function przejdzDoDashboard() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setKrProjektSekcja("przeglad");
+    setWidok("dashboard");
+    void fetchKR();
+    void fetchEtapy();
+    void fetchZadania();
+    void fetchWszystkieZleceniaPw();
+    void fetchSamochody();
+    void fetchFakturyDoZaplatyOczekujace();
+  }
+
+  /** Lista alertów operacyjnych (bez osobnej tabeli w bazie — reguły z istniejących danych). */
+  function przejdzDoOstrzezeniaPanel() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setWidok("ostrzezenia");
+    void fetchKR();
+    void fetchEtapy();
+    void fetchZadania();
+    void fetchWszystkieZleceniaPw();
+    void fetchPodwykonawcy();
+    void fetchFakturyDoZaplatyOczekujace();
   }
 
   function przejdzDoPracownikow() {
@@ -1157,6 +1810,71 @@ export default function App() {
     setWidok("podwykonawca");
     void fetchPodwykonawcy();
     void fetchPracownicy();
+  }
+
+  function przejdzDoSamochody() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    setKalFlotaRok(y);
+    setKalFlotaMiesiac(m);
+    setSamochodEdycjaId(null);
+    setSamochodForm(samochodPustyForm());
+    setRezerwacjaForm(rezerwacjaPustyForm());
+    setWidok("samochody");
+    void fetchPracownicy();
+    void fetchSamochody();
+    void fetchRezerwacjeMiesiac(y, m);
+  }
+
+  function przejdzDoSprzet() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setSprzetEdycjaId(null);
+    setSprzetForm(sprzetPustyForm());
+    setWidok("sprzet");
+    void fetchPracownicy();
+    void fetchSprzet();
   }
 
   /** Ekran pomocy: kiedy aplikacja podświetla „zagrożenia” / wymagające uwagi (pulpit, lista KR). */
@@ -1390,6 +2108,186 @@ export default function App() {
     await fetchPodwykonawcy();
   }
 
+  function wczytajSamochodDoEdycji(row) {
+    setSamochodEdycjaId(row.id);
+    setSamochodForm(samochodWierszDoFormu(row));
+  }
+
+  function anulujSamochodEdycje() {
+    setSamochodEdycjaId(null);
+    setSamochodForm(samochodPustyForm());
+  }
+
+  async function zapiszSamochod(e) {
+    e.preventDefault();
+    const nazwa = String(samochodForm.nazwa ?? "").trim();
+    if (!nazwa) {
+      alert("Podaj nazwę pojazdu (np. model + rejestracja).");
+      return;
+    }
+    const payload = {
+      nazwa,
+      numer_rejestracyjny: String(samochodForm.numer_rejestracyjny ?? "").trim() || null,
+      polisa_numer: String(samochodForm.polisa_numer ?? "").trim() || null,
+      polisa_wazna_do: String(samochodForm.polisa_wazna_do ?? "").trim() || null,
+      przeglad_wazny_do: String(samochodForm.przeglad_wazny_do ?? "").trim() || null,
+      uwagi_eksploatacja: String(samochodForm.uwagi_eksploatacja ?? "").trim() || null,
+      wymagane_naprawy: String(samochodForm.wymagane_naprawy ?? "").trim() || null,
+      notatki: String(samochodForm.notatki ?? "").trim() || null,
+    };
+
+    if (samochodEdycjaId != null) {
+      const { error } = await supabase.from("samochod").update(payload).eq("id", samochodEdycjaId).select("id");
+      if (error) {
+        console.error(error);
+        alert(
+          "Zapis samochodu: " +
+            error.message +
+            (String(error.message).includes("relation") || String(error.message).includes("does not exist")
+              ? "\n\nUruchom samochody-sprzet-rezerwacje.sql i sekcję samochod w rls-policies-anon.sql."
+              : "")
+        );
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("samochod").insert([payload]).select("id");
+      if (error) {
+        console.error(error);
+        alert("Dodawanie samochodu: " + error.message);
+        return;
+      }
+    }
+    setSamochodEdycjaId(null);
+    setSamochodForm(samochodPustyForm());
+    await fetchSamochody();
+  }
+
+  async function usunSamochod(id) {
+    if (!window.confirm("Usunąć ten samochód? Powiązane rezerwacje w kalendarzu też znikną.")) return;
+    const { error } = await supabase.from("samochod").delete().eq("id", id);
+    if (error) {
+      console.error(error);
+      alert("Usuwanie: " + error.message);
+      return;
+    }
+    if (samochodEdycjaId === id) {
+      anulujSamochodEdycje();
+    }
+    await fetchSamochody();
+    await fetchRezerwacjeMiesiac(kalFlotaRok, kalFlotaMiesiac);
+  }
+
+  async function zapiszRezerwacje(e) {
+    e.preventDefault();
+    const sid = Number.parseInt(String(rezerwacjaForm.samochod_id ?? "").trim(), 10);
+    const dataDnia = String(rezerwacjaForm.data_dnia ?? "").trim();
+    const pnr = String(rezerwacjaForm.pracownik_nr ?? "").trim();
+    if (!Number.isFinite(sid) || !dataDnia || !pnr) {
+      alert("Wybierz samochód, datę dnia i pracownika (ID z listy).");
+      return;
+    }
+    const { error } = await supabase.from("samochod_rezerwacja").upsert(
+      {
+        samochod_id: sid,
+        data_dnia: dataDnia,
+        pracownik_nr: pnr,
+        opis_krotki: String(rezerwacjaForm.opis_krotki ?? "").trim() || null,
+      },
+      { onConflict: "samochod_id,data_dnia" }
+    );
+    if (error) {
+      console.error(error);
+      alert(
+        "Rezerwacja: " +
+          error.message +
+          (String(error.message).includes("relation") || String(error.message).includes("does not exist")
+            ? "\n\nUruchom samochody-sprzet-rezerwacje.sql i RLS dla samochod_rezerwacja."
+            : "")
+      );
+      return;
+    }
+    setRezerwacjaForm(rezerwacjaPustyForm());
+    await fetchRezerwacjeMiesiac(kalFlotaRok, kalFlotaMiesiac);
+  }
+
+  async function usunRezerwacje(id) {
+    if (!window.confirm("Usunąć ten wpis z kalendarza?")) return;
+    const { error } = await supabase.from("samochod_rezerwacja").delete().eq("id", id);
+    if (error) {
+      console.error(error);
+      alert("Usuwanie rezerwacji: " + error.message);
+      return;
+    }
+    await fetchRezerwacjeMiesiac(kalFlotaRok, kalFlotaMiesiac);
+  }
+
+  function wczytajSprzetDoEdycji(row) {
+    setSprzetEdycjaId(row.id);
+    setSprzetForm(sprzetWierszDoFormu(row));
+  }
+
+  function anulujSprzetEdycje() {
+    setSprzetEdycjaId(null);
+    setSprzetForm(sprzetPustyForm());
+  }
+
+  async function zapiszSprzetEwidencja(e) {
+    e.preventDefault();
+    const nazwa = String(sprzetForm.nazwa ?? "").trim();
+    if (!nazwa) {
+      alert("Podaj nazwę sprzętu.");
+      return;
+    }
+    const typ = String(sprzetForm.typ ?? "").trim() || "inne";
+    const payload = {
+      typ,
+      nazwa,
+      numer_inwentarzowy: String(sprzetForm.numer_inwentarzowy ?? "").trim() || null,
+      data_przegladu: String(sprzetForm.data_przegladu ?? "").trim() || null,
+      pracownik_nr: String(sprzetForm.pracownik_nr ?? "").trim() || null,
+      notatki: String(sprzetForm.notatki ?? "").trim() || null,
+    };
+
+    if (sprzetEdycjaId != null) {
+      const { error } = await supabase.from("sprzet").update(payload).eq("id", sprzetEdycjaId).select("id");
+      if (error) {
+        console.error(error);
+        alert(
+          "Zapis sprzętu: " +
+            error.message +
+            (String(error.message).includes("relation") || String(error.message).includes("does not exist")
+              ? "\n\nUruchom samochody-sprzet-rezerwacje.sql i RLS dla sprzet."
+              : "")
+        );
+        return;
+      }
+    } else {
+      const { error } = await supabase.from("sprzet").insert([payload]).select("id");
+      if (error) {
+        console.error(error);
+        alert("Dodawanie sprzętu: " + error.message);
+        return;
+      }
+    }
+    setSprzetEdycjaId(null);
+    setSprzetForm(sprzetPustyForm());
+    await fetchSprzet();
+  }
+
+  async function usunSprzet(id) {
+    if (!window.confirm("Usunąć ten wpis sprzętu z ewidencji?")) return;
+    const { error } = await supabase.from("sprzet").delete().eq("id", id);
+    if (error) {
+      console.error(error);
+      alert("Usuwanie: " + error.message);
+      return;
+    }
+    if (sprzetEdycjaId === id) {
+      anulujSprzetEdycje();
+    }
+    await fetchSprzet();
+  }
+
   function wczytajKrZleceniePwDoEdycji(row) {
     setKrZleceniePwKontekstKr(row.kr != null ? String(row.kr).trim() : "");
     setKrZleceniePwEdycjaId(row.id);
@@ -1539,6 +2437,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_TRYB_HELP, trybHelp ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [trybHelp]);
+
+  useEffect(() => {
+    if (widok !== "samochody") return;
+    void fetchPracownicy();
+    void fetchSamochody();
+    void fetchRezerwacjeMiesiac(kalFlotaRok, kalFlotaMiesiac);
+  }, [widok, kalFlotaRok, kalFlotaMiesiac]);
+
+  useEffect(() => {
+    if (widok !== "sprzet") return;
+    void fetchPracownicy();
+    void fetchSprzet();
+  }, [widok]);
+
+  useEffect(() => {
     if (!requireAuth) {
       void (async () => {
         await fetchKR();
@@ -1546,6 +2465,8 @@ export default function App() {
         void fetchPracownicy();
         void fetchZadania();
         void fetchPodwykonawcy();
+        void fetchSamochody();
+        void fetchFakturyDoZaplatyOczekujace();
         setInitialFetchDone(true);
       })();
       return;
@@ -1560,6 +2481,8 @@ export default function App() {
       void fetchPracownicy();
       void fetchZadania();
       void fetchPodwykonawcy();
+      void fetchSamochody();
+      void fetchFakturyDoZaplatyOczekujace();
       setInitialFetchDone(true);
     })();
   }, [requireAuth, session?.user?.id]);
@@ -1569,17 +2492,59 @@ export default function App() {
     const kInfo = widokInfoDlaKr != null ? String(widokInfoDlaKr).trim() : "";
     const kPw = widokPwDlaKr != null ? String(widokPwDlaKr).trim() : "";
     const kPulpit = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
-    const k = kInfo || kPw || kPulpit;
+    const hubBezPodwidoku =
+      wybranyKrKlucz != null &&
+      widokKmDlaKr == null &&
+      widokLogDlaKr == null &&
+      widokPwDlaKr == null &&
+      widokPulpitDlaKr == null &&
+      widokInfoDlaKr == null
+        ? String(wybranyKrKlucz).trim()
+        : "";
+    const k = kInfo || kPw || kPulpit || hubBezPodwidoku;
     if (!k) {
       setKrZleceniaPwList([]);
       setKrZleceniaPwFetchError(null);
+      setKrFakturyDoZaplatyList([]);
+      setKrFakturyDoZaplatyFetchError(null);
       return;
     }
     void fetchKrZleceniaPwForKr(k);
+    void fetchKrFakturyDoZaplatyForKr(k);
     void fetchPodwykonawcy();
-  }, [widok, widokInfoDlaKr, widokPwDlaKr, widokPulpitDlaKr]);
+  }, [
+    widok,
+    widokInfoDlaKr,
+    widokPwDlaKr,
+    widokPulpitDlaKr,
+    wybranyKrKlucz,
+    widokKmDlaKr,
+    widokLogDlaKr,
+  ]);
 
-  /** Pulpit korzysta z tej samej tablicy co widok LOG; po KM edycja czyści `dziennikWpisy` — odśwież przy powrocie na oś. */
+  /** Jeden kod KR do podglądu FS: pulpit, tabela etapów lub karta projektu (hub). BRUDNOPIS: ewent. dodać widok INFO. */
+  const krKodDoPobraniaFakturSprzedaz = useMemo(() => {
+    if (widok !== "kr") return "";
+    const p = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
+    if (p) return p;
+    const km = widokKmDlaKr != null ? String(widokKmDlaKr).trim() : "";
+    if (km) return km;
+    const hub = wybranyKrKlucz != null ? String(wybranyKrKlucz).trim() : "";
+    if (hub) return hub;
+    return "";
+  }, [widok, widokPulpitDlaKr, widokKmDlaKr, wybranyKrKlucz]);
+
+  useEffect(() => {
+    const k = String(krKodDoPobraniaFakturSprzedaz ?? "").trim();
+    if (!k) {
+      setKrFakturySprzedazList([]);
+      setKrFakturySprzedazFetchError(null);
+      return;
+    }
+    void fetchKrFakturySprzedazForKr(k);
+  }, [krKodDoPobraniaFakturSprzedaz]);
+
+  /** Pulpit korzysta z tej samej tablicy co widok LOG; po edycji etapu czyści `dziennikWpisy` — odśwież przy powrocie na oś. */
   useEffect(() => {
     if (widok !== "kr") return;
     const kP = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
@@ -1588,8 +2553,7 @@ export default function App() {
       widokKmDlaKr == null &&
       widokLogDlaKr == null &&
       widokPwDlaKr == null &&
-      widokInfoDlaKr == null &&
-      wybranyKrKlucz == null;
+      widokInfoDlaKr == null;
     if (!pulpitNaWierzchu) return;
     void fetchDziennikForKr(kP);
   }, [
@@ -1610,6 +2574,61 @@ export default function App() {
     }
     return mapa;
   }, [etapy]);
+
+  const rezerwacjaMapKalendarz = useMemo(() => {
+    const m = new Map();
+    for (const r of rezerwacjeList) {
+      const dzien = dataDoInputa(r.data_dnia);
+      m.set(`${r.samochod_id}|${dzien}`, r);
+    }
+    return m;
+  }, [rezerwacjeList]);
+
+  const samochodyWymagajaceNaprawyLista = useMemo(
+    () => samochodyList.filter((car) => samochodWymagaNaprawy(car)),
+    [samochodyList],
+  );
+
+  /** Mapa etap_id → wiersze FS — wspólna dla pulpitu, karty KR i tabeli etapów (przy aktualnym `krKodDoPobrania…`). */
+  const fakturySprzedazMapaPoEtapId = useMemo(() => {
+    const m = new Map();
+    for (const f of krFakturySprzedazList) {
+      const id = f.etap_id;
+      if (id == null) continue;
+      if (!m.has(id)) m.set(id, []);
+      m.get(id).push(f);
+    }
+    return m;
+  }, [krFakturySprzedazList]);
+
+  /** Pulpit — INV sprzedaż: FS wg etapu (+ data skrótowa); PW = koszt/odbiór, nie mylić z FS. */
+  const pulpitInvWiersze = useMemo(() => {
+    const k = widokPulpitDlaKr != null ? String(widokPulpitDlaKr).trim() : "";
+    if (!k) return { etapy: [], pw: [] };
+    const listaKm = etapy.filter((e) => String(e.kr).trim() === k);
+    const etapyOut = listaKm.map((km) => {
+      const fList = fakturySprzedazMapaPoEtapId.get(km.id) ?? [];
+      const agg = fakturySprzedazAgregatDlaEtapu(fList);
+      return {
+        key: `etap-${km.id}`,
+        zrodlo: "ETAP",
+        opis: tekstTrim(km.etap) || `Etap #${km.id}`,
+        zafakturowane: agg.zafakturowane,
+        protokol: agg.protokol,
+        dataFs: agg.dataPokaz,
+      };
+    });
+    const pwOut = krZleceniaPwList.map((z) => ({
+      key: `pw-${z.id}`,
+      zrodlo: "PW",
+      opis:
+        [z.podwykonawca?.nazwa_firmy, z.numer_zlecenia].filter(Boolean).join(" · ") || `Zlecenie #${z.id}`,
+      zafakturowane: null,
+      protokol: z.czy_odebrane === true ? true : z.czy_odebrane === false ? false : null,
+      dataFs: "",
+    }));
+    return { etapy: etapyOut, pw: pwOut };
+  }, [widokPulpitDlaKr, etapy, fakturySprzedazMapaPoEtapId, krZleceniaPwList]);
 
   const wybranyRekordKr = useMemo(() => {
     if (wybranyKrKlucz == null || String(wybranyKrKlucz).trim() === "") return null;
@@ -1685,18 +2704,24 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /** Kamienie milowe dla wybranego KR — osobny widok z listą i formularzem. */
-  function otworzKmDlaKr(item) {
+  /** Etapy dla wybranego KR — osobny widok z listą i formularzem. `opts.hub` zachowuje wybór projektu w karcie KR. */
+  function otworzKmDlaKr(item, opts) {
+    const hub = opts?.hub === true;
     const k = String(item.kr).trim();
     setWidokKmDlaKr(k);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
     setWidokPwDlaKr(null);
-    setDziennikWpisy([]);
-    setDziennikFetchError(null);
-    setLogEdycjaId(null);
-    setLogForm(logPustyForm());
-    setWybranyKrKlucz(null);
+    setWidokPulpitDlaKr(null);
+    if (!hub) {
+      setDziennikWpisy([]);
+      setDziennikFetchError(null);
+      setLogEdycjaId(null);
+      setLogForm(logPustyForm());
+      setWybranyKrKlucz(null);
+    } else {
+      setWybranyKrKlucz(k);
+    }
     setEditingKrKey(null);
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
@@ -1713,13 +2738,16 @@ export default function App() {
   }
 
   function otworzLogDlaKr(item, opts) {
+    const hub = opts?.hub === true;
     const k = String(item.kr).trim();
     const edytujRow = opts?.edytujRow ?? null;
     setWidokLogDlaKr(k);
     setWidokKmDlaKr(null);
     setWidokInfoDlaKr(null);
     setWidokPwDlaKr(null);
-    setWybranyKrKlucz(null);
+    setWidokPulpitDlaKr(null);
+    if (!hub) setWybranyKrKlucz(null);
+    else setWybranyKrKlucz(k);
     setEditingKrKey(null);
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
@@ -1737,11 +2765,17 @@ export default function App() {
   }
 
   function powrotZLogDoListy() {
+    const kHub = wybranyKrKlucz != null ? String(wybranyKrKlucz).trim() : "";
     setWidokLogDlaKr(null);
-    setDziennikWpisy([]);
-    setDziennikFetchError(null);
     setLogEdycjaId(null);
     setLogForm(logPustyForm());
+    if (kHub) {
+      setKrProjektSekcja("przeglad");
+      void fetchDziennikForKr(kHub);
+    } else {
+      setDziennikWpisy([]);
+      setDziennikFetchError(null);
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1794,15 +2828,17 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /** Pulpit — jedna oś czasu: KM, PW, LOG + skrót kontaktów (przycisk przy wierszu KR). */
-  function otworzPulpitDlaKr(item) {
+  /** Pulpit — jedna oś czasu: ETAP, PW, LOG + skrót kontaktów (przycisk przy wierszu KR). */
+  function otworzPulpitDlaKr(item, opts) {
+    const hub = opts?.hub === true;
     const k = String(item.kr).trim();
     setWidokPulpitDlaKr(k);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
     setWidokPwDlaKr(null);
-    setWybranyKrKlucz(null);
+    if (!hub) setWybranyKrKlucz(null);
+    else setWybranyKrKlucz(k);
     setEditingKrKey(null);
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
@@ -1818,25 +2854,35 @@ export default function App() {
   }
 
   function powrotZPulpituDoListy() {
+    const kHub = wybranyKrKlucz != null ? String(wybranyKrKlucz).trim() : "";
     setWidokPulpitDlaKr(null);
     setPulpitSortDaty("asc");
-    setDziennikWpisy([]);
-    setDziennikFetchError(null);
-    setKrZleceniaPwList([]);
-    setKrZleceniaPwFetchError(null);
     setLogEdycjaId(null);
     setLogForm(logPustyForm());
+    if (kHub) {
+      setKrProjektSekcja("przeglad");
+      void fetchDziennikForKr(kHub);
+      void fetchKrZleceniaPwForKr(kHub);
+    } else {
+      setDziennikWpisy([]);
+      setDziennikFetchError(null);
+      setKrZleceniaPwList([]);
+      setKrZleceniaPwFetchError(null);
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   /** Zlecenia PW dla wybranego KR — osobny widok z listy (przycisk PW obok KR). */
-  function otworzPwDlaKr(item) {
+  function otworzPwDlaKr(item, opts) {
+    const hub = opts?.hub === true;
     const k = String(item.kr).trim();
     setWidokPwDlaKr(k);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
-    setWybranyKrKlucz(null);
+    setWidokPulpitDlaKr(null);
+    if (!hub) setWybranyKrKlucz(null);
+    else setWybranyKrKlucz(k);
     setEditingKrKey(null);
     setKmEdycjaId(null);
     setKmForm(kmPustyForm());
@@ -1855,6 +2901,133 @@ export default function App() {
     setKrZleceniePwEdycjaId(null);
     setKrZleceniePwKontekstKr(null);
     setKrZleceniePwForm(krZleceniePwPustyForm());
+    setKrProjektSekcja("przeglad");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** Wybór projektu z prawego panelu — karta KR bez pełnoekranowego „wyjścia” z contextu. */
+  function wybierzKrWPanelu(item) {
+    const k = String(item.kr).trim();
+    setWybranyKrKlucz(k);
+    setWidok("kr");
+    setKrProjektSekcja("przeglad");
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setEditingKrKey(null);
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    void fetchDziennikForKr(k);
+    void fetchKrZleceniaPwForKr(k);
+    void fetchEtapy();
+    void fetchPracownicy();
+    void fetchPodwykonawcy();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** Panel główny → karta KR, zakładka „Faktury kosztowe” (zgłoszenia do opłacenia). */
+  function otworzKrZakladkaFakturyKosztowe(krKod) {
+    const k = String(krKod ?? "").trim();
+    if (!k) return;
+    const rekord = krList.find((r) => String(r.kr).trim() === k);
+    setWidok("kr");
+    if (rekord) {
+      przejdzDoSekcjiKr(rekord, "faktury");
+    } else {
+      setWybranyKrKlucz(k);
+      setKrProjektSekcja("faktury");
+      setWidokKmDlaKr(null);
+      setWidokLogDlaKr(null);
+      setWidokPwDlaKr(null);
+      setWidokPulpitDlaKr(null);
+      setWidokInfoDlaKr(null);
+      void fetchDziennikForKr(k);
+      void fetchKrZleceniaPwForKr(k);
+      void fetchKrFakturyDoZaplatyForKr(k);
+      void fetchPracownicy();
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** Nawigacja zakładkami karty projektu — łączy stany podwidoków z istniejącą logiką. */
+  function przejdzDoSekcjiKr(item, sekcjaId) {
+    if (!item) return;
+    setKrProjektSekcja(sekcjaId);
+    if (sekcjaId === "przeglad") {
+      setWidokKmDlaKr(null);
+      setWidokLogDlaKr(null);
+      setWidokPwDlaKr(null);
+      setWidokPulpitDlaKr(null);
+      void fetchDziennikForKr(String(item.kr).trim());
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (sekcjaId === "etapy") {
+      otworzKmDlaKr(item, { hub: true });
+      return;
+    }
+    if (sekcjaId === "zgloszenia") {
+      const k = String(item.kr).trim();
+      setWybranyKrKlucz(k);
+      setWidokKmDlaKr(null);
+      setWidokLogDlaKr(null);
+      setWidokPwDlaKr(null);
+      setWidokPulpitDlaKr(null);
+      setWidokInfoDlaKr(null);
+      void fetchDziennikForKr(k);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (sekcjaId === "zlecenia" || sekcjaId === "podwykonawcy") {
+      const k = String(item.kr).trim();
+      setWybranyKrKlucz(k);
+      setWidokKmDlaKr(null);
+      setWidokLogDlaKr(null);
+      setWidokPwDlaKr(null);
+      setWidokPulpitDlaKr(null);
+      setWidokInfoDlaKr(null);
+      void fetchKrZleceniaPwForKr(k);
+      void fetchPodwykonawcy();
+      void fetchDziennikForKr(k);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (sekcjaId === "os") {
+      otworzPulpitDlaKr(item, { hub: true });
+      return;
+    }
+    /** Sekcje tylko w karcie hub (umowa, koszty, terminy…) — jak zgłoszenia: zawsze TRZYMAJ wybrany KR i wyłącz INFO. */
+    const k = String(item.kr).trim();
+    const sekcjeTylkoKarta = new Set([
+      "faktury",
+      "umowa",
+      "terminy",
+      "ryzyka",
+      "zespol",
+      "rozszerzenia",
+    ]);
+    if (sekcjeTylkoKarta.has(sekcjaId)) {
+      setWybranyKrKlucz(k);
+      setWidokKmDlaKr(null);
+      setWidokLogDlaKr(null);
+      setWidokPwDlaKr(null);
+      setWidokPulpitDlaKr(null);
+      setWidokInfoDlaKr(null);
+      void fetchDziennikForKr(k);
+      void fetchKrZleceniaPwForKr(k);
+      if (sekcjaId === "faktury") void fetchKrFakturyDoZaplatyForKr(k);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    void fetchDziennikForKr(String(item.kr).trim());
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1973,15 +3146,15 @@ export default function App() {
 
     const etapTrim = String(kmForm.etap ?? "").trim();
     if (!etapTrim) {
-      alert("Pole „Etap” jest wymagane przy zapisie kamienia milowego.");
+      alert("Pole „Etap” jest wymagane przy zapisie wiersza etapu.");
       return;
     }
 
     const statusWart = String(kmForm.status ?? "").trim();
     const statusDoBazy =
-      statusWart === "" ? null : KM_STATUS_W_BAZIE.includes(statusWart) ? statusWart : null;
+      statusWart === "" ? null : ETAP_STATUS_W_BAZIE.includes(statusWart) ? statusWart : null;
     if (statusWart !== "" && statusDoBazy === null) {
-      alert("Nieprawidłowy status kamienia milowego. Wybierz jedną z opcji listy lub „— brak —”.");
+      alert("Nieprawidłowy status etapu. Wybierz jedną z opcji listy lub „— brak —”.");
       return;
     }
 
@@ -1995,7 +3168,7 @@ export default function App() {
     const typOdnDoBazy =
       typOdnWart === ""
         ? null
-        : KM_TYP_ODNIESIENIA_W_BAZIE.includes(typOdnWart)
+        : ETAP_TYP_ODNIESIENIA_W_BAZIE.includes(typOdnWart)
           ? typOdnWart
           : null;
     if (typOdnWart !== "" && typOdnDoBazy === null) {
@@ -2030,7 +3203,7 @@ export default function App() {
       if (error) {
         console.error(error);
         alert(
-          "Zapis kamienia milowego: " +
+          "Zapis etapu: " +
             error.message +
             (String(error.message).includes("column") || String(error.message).includes("schema")
               ? "\n\nUruchom w SQL Editor: kamienie-milowe-kolumny.sql, kamienie-milowe-odniesienie-offset.sql, kamienie-milowe-typ-odniesienia.sql (brakujące kolumny)."
@@ -2049,7 +3222,7 @@ export default function App() {
       if (error) {
         console.error(error);
         alert(
-          "Dodawanie kamienia milowego: " +
+          "Dodawanie etapu: " +
             error.message +
             (String(error.message).includes("column") || String(error.message).includes("schema")
               ? "\n\nUruchom w SQL Editor: kamienie-milowe-kolumny.sql, kamienie-milowe-odniesienie-offset.sql, kamienie-milowe-typ-odniesienia.sql."
@@ -2070,7 +3243,7 @@ export default function App() {
   }
 
   async function usunKm(id) {
-    if (!window.confirm("Usunąć ten wiersz kamienia milowego?")) return;
+    if (!window.confirm("Usunąć ten wiersz etapu?")) return;
     const { error } = await supabase.from("kamienie_milowe").delete().eq("id", id);
     if (error) {
       console.error(error);
@@ -2081,7 +3254,7 @@ export default function App() {
         "Usuwanie: " +
           msg +
           (fkFaktury
-            ? "\n\nDo tego etapu są przypisane faktury (tabela faktury). Domyślnie baza nie pozwala usunąć kamienia milowego, dopóki coś na niego wskazuje.\n\nRozwiązanie: w SQL Editor uruchom plik g4-app/supabase/faktury-etap-on-delete.sql (ustalenie co się dzieje z fakturami przy usuwaniu KM), albo w panelu usuń lub zmień powiązane faktury."
+            ? "\n\nDo tego etapu są przypisane faktury sprzedażowe (tabela faktury, etap_id). Domyślnie baza nie pozwala usunąć wiersza etapu, dopóki coś na niego wskazuje.\n\nRozwiązanie: w SQL Editor uruchom plik g4-app/supabase/faktury-etap-on-delete.sql (ustalenie co się dzieje z fakturami przy usuwaniu etapu), albo w panelu usuń lub zmień powiązane faktury. (Koszty — inna przestrzeń / tabele — patrz zakładka Faktury kosztowe — brudnopis.)"
             : "\n\nJeśli to nie jest powiązanie z inną tabelą — sprawdź politykę DELETE w rls-policies-anon.sql.")
       );
       return;
@@ -2120,17 +3293,20 @@ export default function App() {
 
   function pulpitEdytujKarte(karta) {
     if (!rekordKrPulpit) return;
+    const hub =
+      wybranyKrKlucz != null &&
+      String(wybranyKrKlucz).trim() === String(rekordKrPulpit.kr).trim();
     if (karta.kind === "kr_start") {
       otworzEdycjeKrZTabeli(rekordKrPulpit);
       return;
     }
-    if (karta.kind === "km") {
+    if (karta.kind === "etap") {
       const row = etapy.find((e) => e.id === karta.edytujId);
       if (!row) {
-        alert("Nie znaleziono kamienia milowego — odśwież pulpit.");
+        alert("Nie znaleziono wiersza etapu — odśwież pulpit.");
         return;
       }
-      otworzKmDlaKr(rekordKrPulpit);
+      otworzKmDlaKr(rekordKrPulpit, hub ? { hub: true } : undefined);
       wczytajKmDoEdycji(row);
       return;
     }
@@ -2140,7 +3316,7 @@ export default function App() {
         alert("Nie znaleziono zlecenia PW — odśwież pulpit.");
         return;
       }
-      otworzPwDlaKr(rekordKrPulpit);
+      otworzPwDlaKr(rekordKrPulpit, hub ? { hub: true } : undefined);
       wczytajKrZleceniePwDoEdycji(z);
       return;
     }
@@ -2150,7 +3326,7 @@ export default function App() {
         alert("Nie znaleziono wpisu dziennika — odśwież pulpit.");
         return;
       }
-      otworzLogDlaKr(rekordKrPulpit, { edytujRow: row });
+      otworzLogDlaKr(rekordKrPulpit, { edytujRow: row, ...(hub ? { hub: true } : {}) });
     }
   }
 
@@ -2169,7 +3345,7 @@ export default function App() {
   }, [widokPulpitDlaKr, krZleceniaPwList]);
 
   /**
-   * Oznaczenie wiersza na liście KR (status „oczekuje na …” albo problematyczny KM).
+   * Oznaczenie wiersza na liście KR (status „oczekuje na …” albo problematyczny etap).
    * Pełny podział uwag (LOG / PW) jest na pulpicie projektu.
    */
   const kodyKrZWyroznieniemUwagi = useMemo(() => {
@@ -2255,9 +3431,9 @@ export default function App() {
       out.push({
         sortKey,
         tieBreak: tie++,
-        kind: "km",
+        kind: "etap",
         edytujId: row.id,
-        title: `KM · ${et}`,
+        title: `ETAP · ${et}`,
         subtitle: null,
         wymagaUwagi: pulpitKmWymagaUwagi(row, dziś),
         bodyLines: lines,
@@ -2694,115 +3870,1334 @@ export default function App() {
   );
   const krEdycjaStatusWymagaUwagi = pulpitKrRekordWymagaUwagi({ status: editForm.status });
 
-  return (
-    <div style={s.page}>
-      <nav style={s.topNav} aria-label="Wybór tabeli">
-        <span style={s.navGroup}>
-          <button
-            type="button"
-            style={widok === "kr" ? s.btnNavActive : s.btnNav}
-            onClick={przejdzDoKr}
+  const dziśDash = dzisiajDataYYYYMMDD();
+
+  const panelKrListaFiltrowana = useMemo(() => {
+    const q = panelKrSzukaj.trim().toLowerCase();
+    if (!q) return krListPosortowana;
+    return krListPosortowana.filter((row) => {
+      const blob = [
+        row.kr,
+        row.nazwa_obiektu,
+        row.dzial,
+        row.status,
+        row.zleceniodawca,
+      ]
+        .map((x) => (x != null ? String(x).toLowerCase() : ""))
+        .join(" ");
+      return blob.includes(q);
+    });
+  }, [krListPosortowana, panelKrSzukaj]);
+
+  const liczbaTematowUwagi = useMemo(() => {
+    let n = 0;
+    for (const row of krList) {
+      if (kodyKrZWyroznieniemUwagi.has(String(row.kr).trim())) n++;
+    }
+    return n;
+  }, [krList, kodyKrZWyroznieniemUwagi]);
+
+  const liczbaZadanWToku = useMemo(() => {
+    return zadaniaList.filter((z) => {
+      const st = String(z.status ?? "").toLowerCase();
+      return st && st !== "zakończone" && st !== "zakonczone" && st !== "wykonane";
+    }).length;
+  }, [zadaniaList]);
+
+  const liczbaOpoznionychEtapow = useMemo(() => {
+    let n = 0;
+    for (const e of etapy) {
+      if (pulpitKmWymagaUwagi(e, dziśDash)) n++;
+    }
+    return n;
+  }, [etapy, dziśDash]);
+
+  const liczbaZlecenDoOdbioru = useMemo(() => {
+    let n = 0;
+    for (const z of pwZleceniaWszystkieList) {
+      if (pulpitPwWymagaUwagi(z, dziśDash)) n++;
+    }
+    return n;
+  }, [pwZleceniaWszystkieList, dziśDash]);
+
+  /**
+   * Otwarte zgłoszenia globalnie — pełna liczba wymagałaby zapytania SQL / materialized view.
+   * Na demo: placeholder „—”; w kodzie miejsce pod przyszłe podłączenie.
+   */
+  const liczbaOtwartychZgloszenGlobal = "—";
+
+  const listaAlertowOperacyjnych = useMemo(() => {
+    const out = [];
+    for (const row of krList) {
+      if (pulpitKrRekordWymagaUwagi(row)) {
+        out.push({
+          severity: "wazny",
+          text: `KR ${row.kr}: status „oczekuje na zamawiającego” — decyzja zleceniodawcy.`,
+        });
+      }
+    }
+    for (const e of etapy) {
+      if (pulpitKmPlanPrzeterminowany(e, dziśDash)) {
+        out.push({
+          severity: "krytyczny",
+          text: `Etap „${e.etap ?? "—"}” (KR ${e.kr}): plan po terminie.`,
+        });
+      } else if (
+        e.zagrozenie === "tak" ||
+        e.zagrozenie === true ||
+        tekstTrim(e.zagrozenie_opis)
+      ) {
+        out.push({
+          severity: "wazny",
+          text: `Ryzyko na etapie „${e.etap ?? "—"}” (KR ${e.kr}).`,
+        });
+      }
+    }
+    for (const z of pwZleceniaWszystkieList) {
+      if (pulpitPwWymagaUwagi(z, dziśDash)) {
+        out.push({
+          severity: "krytyczny",
+          text: `PW / KR ${z.kr}: termin minął, brak odbioru.`,
+        });
+      }
+    }
+    for (const row of zadaniaList) {
+      const plan = dataDoSortuYYYYMMDD(row.data_planowana);
+      if (
+        plan &&
+        plan < dziśDash &&
+        !tekstTrim(row.data_realna) &&
+        String(row.status ?? "").toLowerCase() !== "zakończone"
+      ) {
+        out.push({
+          severity: "wazny",
+          text: `Zadanie ogólne przeterminowane: ${tekstTrim(row.zadanie) || row.id}.`,
+        });
+      }
+    }
+    return out;
+  }, [krList, etapy, pwZleceniaWszystkieList, zadaniaList, dziśDash]);
+
+  /** Zakładki „karty projektu” — wspólne dla widoku KR i trybu hub (etapy / LOG / PW / pulpit). */
+  function renderKrProjektPills(item) {
+    if (!item) return null;
+    const activeId = widokPulpitDlaKr
+      ? "os"
+      : widokKmDlaKr
+        ? "etapy"
+        : widokLogDlaKr
+          ? "zgloszenia"
+          : widokPwDlaKr
+            ? krProjektSekcja === "podwykonawcy"
+              ? "podwykonawcy"
+              : "zlecenia"
+            : krProjektSekcja;
+    return (
+      <nav style={op.pillsRow} aria-label="Sekcje projektu">
+        {KR_PROJEKT_MENU.map((m) => (
+          <div
+            key={m.id}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              maxWidth: trybHelp ? "min(100%, 12.5rem)" : undefined,
+            }}
           >
-            KR
-          </button>
-          <button
-            type="button"
-            style={widok === "pracownik" ? s.btnNavActive : s.btnNav}
-            onClick={przejdzDoPracownikow}
-          >
-            ID
-          </button>
-          <button
-            type="button"
-            style={widok === "zadania" ? s.btnNavActive : s.btnNav}
-            onClick={przejdzDoZadania}
-          >
-            TASK
-          </button>
-          <button
-            type="button"
-            style={widok === "podwykonawca" ? s.btnNavActive : s.btnNav}
-            onClick={przejdzDoPodwykonawcow}
-            title="Podwykonawcy (PW)"
-          >
-            PW
-          </button>
-          <button
-            type="button"
-            style={widok === "zagrozenia" ? s.btnNavActive : s.btnNav}
-            onClick={przejdzDoInfoZagrozen}
-            title="Kiedy wiersze są na czerwono — pulpit i lista KR"
-          >
-            INFO · zagrożenia
-          </button>
-        </span>
-        {requireAuth && session?.user ? (
-          <>
-            <span style={s.navSep} aria-hidden="true" />
-            <span style={{ ...s.navGroup, marginLeft: "auto" }}>
-              <span
+            <button type="button" style={op.pill(activeId === m.id)} onClick={() => przejdzDoSekcjiKr(item, m.id)}>
+              {m.label}
+            </button>
+            <HelpLinijka wlaczony={trybHelp}>{m.help}</HelpLinijka>
+          </div>
+        ))}
+      </nav>
+    );
+  }
+
+  function kolorKropkiKrWPanelu(row) {
+    const k = String(row.kr ?? "").trim();
+    if (k && kodyKrZWyroznieniemUwagi.has(k)) return "#f87171";
+    if (pulpitKrRekordWymagaUwagi(row)) return "#fbbf24";
+    const st = String(row.status ?? "").toLowerCase();
+    if (st.includes("zakończ") || st.includes("zakoncz") || st.includes("rozlicz")) return "#4ade80";
+    return "#64748b";
+  }
+
+  /** Treść zakładek karty projektu (bez pozycji otwierających pełny widok etapów / pulpit). */
+  function renderKrKartaSekcja(item) {
+    const listaEtapow = etapyWedlugKr.get(item.kr) ?? [];
+    const d0 = dzisiajDataYYYYMMDD();
+    const sekcja = krProjektSekcja;
+    const logOrd = [...dziennikWpisy].sort((a, b) => {
+      const x = dataDoSortuYYYYMMDD(b.data_zdarzenia) ?? "";
+      const y = dataDoSortuYYYYMMDD(a.data_zdarzenia) ?? "";
+      return x.localeCompare(y);
+    });
+
+    const umowaBlok = (
+      <div
+        style={{
+          marginBottom: "1rem",
+          padding: "1rem 1.15rem",
+          borderRadius: "16px",
+          border: "1px solid rgba(148,163,184,0.12)",
+          background: "rgba(15,23,42,0.55)",
+          fontSize: "0.88rem",
+          color: "#d4d4d4",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "0.72rem",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            color: "#94a3b8",
+            marginBottom: "0.65rem",
+          }}
+        >
+          Umowa i zleceniodawca
+        </div>
+        {!item.zleceniodawca?.trim() &&
+        !item.osoba_odpowiedzialna_zleceniodawcy?.trim() &&
+        !item.link_umowy?.trim() &&
+        !item.okres_projektu_od &&
+        !item.okres_projektu_do ? (
+          <p style={{ ...op.muted, margin: 0 }}>
+            Brak uzupełnionych pól umowy — uzupełnij je przyciskiem <strong>Edytuj KR</strong>.
+          </p>
+        ) : null}
+        {item.zleceniodawca?.trim() ? (
+          <div style={{ marginBottom: "0.45rem" }}>
+            <span style={s.muted}>Zleceniodawca: </span>
+            <strong style={{ color: "#f5f5f5" }}>{item.zleceniodawca.trim()}</strong>
+          </div>
+        ) : null}
+        {item.osoba_odpowiedzialna_zleceniodawcy?.trim() ? (
+          <div style={{ marginBottom: "0.45rem" }}>
+            <span style={s.muted}>Osoba po stronie zleceniodawcy: </span>
+            {item.osoba_odpowiedzialna_zleceniodawcy.trim()}
+          </div>
+        ) : null}
+        {item.link_umowy?.trim() ? (
+          <div style={{ marginBottom: "0.45rem" }}>
+            <span style={s.muted}>Link do umowy: </span>
+            <a
+              href={hrefLinkuZewnetrznego(item.link_umowy)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "#7dd3fc", wordBreak: "break-all" }}
+            >
+              {item.link_umowy.trim()}
+            </a>
+          </div>
+        ) : null}
+        {item.okres_projektu_od || item.okres_projektu_do ? (
+          <div>
+            <span style={s.muted}>Okres trwania: </span>
+            {item.okres_projektu_od ? dataDoInputa(item.okres_projektu_od) : "—"} —{" "}
+            {item.okres_projektu_do ? dataDoInputa(item.okres_projektu_do) : "—"}
+          </div>
+        ) : null}
+        <p style={{ ...op.muted, margin: "0.85rem 0 0", fontSize: "0.78rem" }}>
+          BRUDNOPIS: docelowo <strong>osobna tabela</strong> (np. wiele linków / wersji umowy do wklejenia, aneksy) —
+          na razie jedno pole <code style={s.code}>link_umowy</code> w rekordzie KR („Edytuj KR”). Warunki i uwagi —
+          nadal koncepcyjnie pod przyszłe pola lub powiązanie z aneksami.
+        </p>
+      </div>
+    );
+
+    if (sekcja === "przeglad") {
+      const etapyRyzyko = listaEtapow.filter((e) => pulpitKmWymagaUwagi(e, d0)).length;
+      const logOtwarte = dziennikWpisy.filter((r) => pulpitLogWymagaUwagi(r)).length;
+      const pwPoTerminie = krZleceniaPwList.filter((z) => pulpitPwWymagaUwagi(z, d0)).length;
+      return (
+        <>
+          <div style={{ ...op.kpiGrid, marginBottom: "1rem" }}>
+            <div style={op.kpiCard("rgba(56,189,248,0.22)")}>
+              <div style={{ ...op.muted, fontSize: "0.7rem" }}>Etapy</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{listaEtapow.length}</div>
+            </div>
+            <div style={op.kpiCard("rgba(147,197,253,0.22)")}>
+              <div style={{ ...op.muted, fontSize: "0.7rem" }}>Zgłoszenia (otwarte)</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{logOtwarte}</div>
+            </div>
+            <div style={op.kpiCard("rgba(251,191,36,0.25)")}>
+              <div style={{ ...op.muted, fontSize: "0.7rem" }}>PW — uwaga termin</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{pwPoTerminie}</div>
+            </div>
+            <div style={op.kpiCard("rgba(248,113,113,0.28)")}>
+              <div style={{ ...op.muted, fontSize: "0.7rem" }}>Etapy z ryzykiem</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{etapyRyzyko}</div>
+            </div>
+          </div>
+
+          {listaEtapow.length > 0 ? (
+            <div style={{ marginBottom: "1rem" }}>
+              <h3 style={{ ...op.sectionTitle, fontSize: "0.88rem" }}>Etapy — skrót</h3>
+              <div
                 style={{
-                  ...s.muted,
-                  fontSize: "0.8rem",
-                  maxWidth: "min(14rem, 40vw)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                  gap: "0.65rem",
                 }}
-                title={session.user.email ?? ""}
               >
+                {listaEtapow.map((et) => {
+                  const uw = pulpitKmWymagaUwagi(et, d0);
+                  const fList = fakturySprzedazMapaPoEtapId.get(et.id) ?? [];
+                  const fsAgg = fakturySprzedazAgregatDlaEtapu(fList);
+                  return (
+                    <div
+                      key={et.id}
+                      style={{
+                        padding: "0.75rem 0.85rem",
+                        borderRadius: "14px",
+                        border: uw ? "1px solid rgba(248,113,113,0.4)" : "1px solid rgba(148,163,184,0.12)",
+                        background: uw ? "rgba(248,113,113,0.07)" : "rgba(15,23,42,0.5)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, color: "#f1f5f9", marginBottom: "0.25rem" }}>
+                        {et.etap ?? "—"}
+                      </div>
+                      <div style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
+                        {et.status ? <span>Status: {et.status} · </span> : null}
+                        {et.data_planowana ? (
+                          <span>Plan: {dataDoInputa(et.data_planowana)}</span>
+                        ) : (
+                          <span>Plan: —</span>
+                        )}
+                      </div>
+                      {/* BRUDNOPIS FS: skrót sprzedaży — pełna lista dokumentów później pod etapem / modal. */}
+                      <div
+                        style={{
+                          fontSize: "0.7rem",
+                          color: "#c4b5fd",
+                          marginTop: "0.4rem",
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        FS: zafakt. {pulpitInvFormatTakNieNieznane(fsAgg.zafakturowane)} · prot.{" "}
+                        {pulpitInvFormatTakNieNieznane(fsAgg.protokol)}
+                        {fsAgg.dataPokaz ? (
+                          <>
+                            {" "}
+                            · data: {dataPLZFormat(fsAgg.dataPokaz)}
+                          </>
+                        ) : null}
+                      </div>
+                      {et.osoba_odpowiedzialna ? (
+                        <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: "0.35rem" }}>
+                          Odp.: {et.osoba_odpowiedzialna}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <div style={{ marginBottom: "1rem" }}>
+            <h3 style={{ ...op.sectionTitle, fontSize: "0.88rem" }}>Ostatnie zdarzenia</h3>
+            {logOrd.length === 0 ? (
+              <p style={{ ...op.muted, margin: 0 }}>Brak wpisów w dzienniku dla tego KR.</p>
+            ) : (
+              <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                {logOrd.slice(0, 4).map((row) => (
+                  <li
+                    key={row.id}
+                    style={{
+                      padding: "0.65rem 0.75rem",
+                      marginBottom: "0.45rem",
+                      borderRadius: "12px",
+                      border: "1px solid rgba(148,163,184,0.1)",
+                      background: "rgba(15,23,42,0.45)",
+                      fontSize: "0.8rem",
+                      color: "#e2e8f0",
+                    }}
+                  >
+                    <span style={op.badge("rgba(59,130,246,0.2)", "#bfdbfe")}>
+                      {row.typ_zdarzenia ?? "—"}
+                    </span>{" "}
+                    <span style={{ color: "#94a3b8" }}>
+                      {row.data_zdarzenia ? dataDoInputa(row.data_zdarzenia) : "—"}
+                    </span>
+                    <div style={{ marginTop: "0.35rem" }}>
+                      {row.opis?.trim() ? row.opis : "—"}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div style={s.btnRow}>
+            <button type="button" style={s.btn} onClick={() => otworzPulpitDlaKr(item, { hub: true })}>
+              Oś czasu (pełny pulpit)
+            </button>
+            <button type="button" style={s.btnGhost} onClick={() => otworzKmDlaKr(item, { hub: true })}>
+              Tabela etapów (ETAP)
+            </button>
+            <button type="button" style={s.btnGhost} onClick={() => otworzLogDlaKr(item, { hub: true })}>
+              Pełna obsługa zgłoszeń (LOG)
+            </button>
+            <button type="button" style={s.btnGhost} onClick={() => otworzPwDlaKr(item, { hub: true })}>
+              Edycja zleceń PW
+            </button>
+            <button type="button" style={s.btnGhost} onClick={() => przejdzDoSekcjiKr(item, "faktury")}>
+              Faktury kosztowe (rama)
+            </button>
+          </div>
+
+          <OpFutureModule title="Budżet / finanse (koncepcja przy tej KR)">
+            Szczegóły kosztów i szkic list — w zakładce{" "}
+            <button
+              type="button"
+              onClick={() => przejdzDoSekcjiKr(item, "faktury")}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#7dd3fc",
+                cursor: "pointer",
+                font: "inherit",
+                fontWeight: 600,
+                textDecoration: "underline",
+                padding: 0,
+              }}
+            >
+              Faktury kosztowe
+            </button>
+            . FS (sprzedaż) — przy etapach i na pulpicie (INV).
+          </OpFutureModule>
+        </>
+      );
+    }
+
+    if (sekcja === "umowa") return umowaBlok;
+
+    if (sekcja === "rozszerzenia") {
+      return (
+        <OpFutureModule title="Rozszerzenia zakresu">
+          Moduł gotowy do wdrożenia — aneksy, dodatkowe uzgodnienia i rozliczenie rozszerzeń w ramach tego KR.
+          Obecnie brak osobnej tabeli w bazie; UI przygotowane pod przyszłe pola.
+        </OpFutureModule>
+      );
+    }
+
+    if (sekcja === "faktury") {
+      const krK = String(item.kr ?? "").trim();
+      return (
+        <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
+          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Faktury kosztowe — do opłacenia (zgłoszenie)</h3>
+          <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
+            <strong>Nie mylić z FS:</strong> faktury <strong>sprzedażowe</strong> są przy etapach i pulpicie (
+            <strong>INV</strong>). Tu pracownik zgłasza <strong>koszt do przelewu</strong> — wpisy ze statusem „do
+            opłacenia” widać na panelu głównym dla księgowości.
+          </p>
+          {krFakturyDoZaplatyFetchError ? (
+            <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
+              <strong>Nie wczytano listy zgłoszeń.</strong> {krFakturyDoZaplatyFetchError}
+              <br />
+              <span style={{ fontSize: "0.88em" }}>
+                Uruchom <code style={s.code}>kr-faktura-do-zaplaty.sql</code> i RLS dla{" "}
+                <code style={s.code}>kr_faktura_do_zaplaty</code>.
+              </span>
+            </div>
+          ) : null}
+
+          {krFakturyDoZaplatyList.length === 0 ? (
+            <p style={{ ...op.muted, marginBottom: "1rem" }}>Brak zgłoszeń dla tego KR — dodaj pierwsze poniżej.</p>
+          ) : (
+            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Data</th>
+                    <th style={s.th}>Komu</th>
+                    <th style={s.th}>Konto</th>
+                    <th style={s.th}>Brutto</th>
+                    <th style={s.th}>Nr faktury</th>
+                    <th style={s.th}>Link</th>
+                    <th style={s.th}>Zgłosił</th>
+                    <th style={s.th}>Status</th>
+                    <th style={s.th}>Notatki</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {krFakturyDoZaplatyList.map((row) => {
+                    const nt = kmTekstDoKomorki(row.notatki);
+                    const st = String(row.status ?? "do_zaplaty").trim();
+                    const opl = st === "oplacone";
+                    return (
+                      <tr
+                        key={row.id}
+                        style={
+                          st === "do_zaplaty"
+                            ? { background: "rgba(251,191,36,0.1)", boxShadow: "inset 3px 0 0 #fbbf24" }
+                            : undefined
+                        }
+                      >
+                        <td style={s.td}>
+                          {row.created_at
+                            ? new Date(row.created_at).toLocaleString("pl-PL", { dateStyle: "short" })
+                            : "—"}
+                        </td>
+                        <td style={s.td}>
+                          <strong style={{ color: opl ? "#94a3b8" : "#f8fafc" }}>{row.komu?.trim() || "—"}</strong>
+                        </td>
+                        <td style={{ ...s.td, fontFamily: "ui-monospace, monospace", fontSize: "0.78rem" }}>
+                          {row.nr_konta?.trim() ? row.nr_konta : "—"}
+                        </td>
+                        <td style={{ ...s.td, fontWeight: 600, color: opl ? "#86efac" : "#fde68a" }}>
+                          {kwotaBruttoEtykieta(row.kwota_brutto)}
+                        </td>
+                        <td style={s.td}>{row.numer_faktury?.trim() ? row.numer_faktury : "—"}</td>
+                        <td style={s.td}>
+                          {row.link_faktury?.trim() ? (
+                            <a
+                              href={hrefLinkuZewnetrznego(row.link_faktury)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: "#7dd3fc" }}
+                            >
+                              otwórz
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td style={s.td}>
+                          {podpisOsobyProwadzacej(row.zgloszil_pracownik_nr, mapaProwadzacychId) ?? "—"}
+                        </td>
+                        <td style={s.td}>
+                          <select
+                            style={{ ...s.input, padding: "0.25rem 0.35rem", fontSize: "0.78rem", minWidth: "8.5rem" }}
+                            value={FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(st) ? st : "do_zaplaty"}
+                            onChange={(ev) => void zapiszStatusKrFakturaDoZaplaty(row.id, ev.target.value, krK)}
+                          >
+                            {FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.map((v) => (
+                              <option key={v} value={v}>
+                                {etykietaFakturyDoZaplatyStatus(v)}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={s.td} title={nt.title}>
+                          {nt.text}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e2e8f0", margin: "0 0 0.65rem" }}>
+            Nowe zgłoszenie (projekt {krK})
+          </h4>
+          <form style={{ ...s.form, maxWidth: "min(40rem, 100%)" }} onSubmit={(e) => void zapiszKrFakturaDoZaplaty(e, krK)}>
+            <label style={s.label}>
+              Komu / odbiorca przelewu <span style={{ color: "#fca5a5" }}>*</span>
+              <input
+                style={s.input}
+                type="text"
+                value={fakturaDoZaplatyForm.komu}
+                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, komu: ev.target.value }))}
+                required
+                placeholder="np. nazwa firmy z faktury"
+              />
+            </label>
+            <label style={s.label}>
+              Nr konta bankowego
+              <input
+                style={s.input}
+                type="text"
+                value={fakturaDoZaplatyForm.nr_konta}
+                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, nr_konta: ev.target.value }))}
+                placeholder="np. 12 3456…"
+              />
+            </label>
+            <label style={s.label}>
+              Kwota brutto <span style={{ color: "#fca5a5" }}>*</span>
+              <input
+                style={s.input}
+                type="text"
+                inputMode="decimal"
+                value={fakturaDoZaplatyForm.kwota_brutto}
+                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, kwota_brutto: ev.target.value }))}
+                required
+                placeholder="np. 1234,56"
+              />
+            </label>
+            <label style={s.label}>
+              Nr faktury (opcjonalnie)
+              <input
+                style={s.input}
+                type="text"
+                value={fakturaDoZaplatyForm.numer_faktury}
+                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, numer_faktury: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Link do faktury / skanu (opcjonalnie)
+              <input
+                style={s.input}
+                type="url"
+                value={fakturaDoZaplatyForm.link_faktury}
+                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, link_faktury: ev.target.value }))}
+                placeholder="https://…"
+              />
+            </label>
+            <label style={s.label}>
+              Zgłasza — <code style={s.code}>pracownik.nr</code>
+              <select
+                style={s.input}
+                value={String(fakturaDoZaplatyForm.zgloszil_pracownik_nr ?? "")}
+                onChange={(ev) =>
+                  setFakturaDoZaplatyForm((f) => ({ ...f, zgloszil_pracownik_nr: ev.target.value }))
+                }
+              >
+                <option value="">— bez wyboru —</option>
+                {(() => {
+                  const cur = String(fakturaDoZaplatyForm.zgloszil_pracownik_nr ?? "").trim();
+                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                  const orphan = cur !== "" && !nrs.has(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>{cur} (nie w liście)</option>
+                      ) : null}
+                      {pracownicyPosortowani.map((p) => (
+                        <option key={String(p.nr)} value={String(p.nr)}>
+                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Notatki (opcjonalnie)
+              <textarea
+                style={{ ...s.input, minHeight: "2.8rem" }}
+                value={fakturaDoZaplatyForm.notatki}
+                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, notatki: ev.target.value }))}
+                rows={2}
+              />
+            </label>
+            <div style={s.btnRow}>
+              <button type="submit" style={s.btn}>
+                Zgłoś do opłacenia
+              </button>
+            </div>
+          </form>
+
+          <OpFutureModule title="Szersza ewidencja kosztów (później)">
+            Kategorie kosztów, powiązanie z PW, netto / VAT, terminy płatności — można rozwinąć obok tej tabeli.
+          </OpFutureModule>
+        </div>
+      );
+    }
+
+    if (sekcja === "terminy") {
+      const rows = [];
+      if (item.data_rozpoczecia)
+        rows.push({ t: "Data rozpoczęcia (KR)", d: item.data_rozpoczecia });
+      if (item.okres_projektu_od) rows.push({ t: "Okres projektu — od", d: item.okres_projektu_od });
+      if (item.okres_projektu_do) rows.push({ t: "Okres projektu — do", d: item.okres_projektu_do });
+      for (const e of listaEtapow) {
+        if (e.data_planowana) rows.push({ t: `Etap: ${e.etap ?? "—"}`, d: e.data_planowana });
+      }
+      for (const z of krZleceniaPwList) {
+        if (z.termin_zlecenia)
+          rows.push({ t: `PW: ${z.numer_zlecenia?.trim() ? z.numer_zlecenia : "zlecenie"}`, d: z.termin_zlecenia });
+      }
+      rows.sort((a, b) => {
+        const x = dataDoSortuYYYYMMDD(a.d) ?? "";
+        const y = dataDoSortuYYYYMMDD(b.d) ?? "";
+        return x.localeCompare(y);
+      });
+      return (
+        <>
+          <h3 style={{ ...op.sectionTitle, fontSize: "0.95rem" }}>Harmonogram terminów</h3>
+          {rows.length === 0 ? (
+            <p style={{ ...op.muted, margin: 0 }}>Brak zapisanych terminów dla tego projektu.</p>
+          ) : (
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {rows.map((r, i) => {
+                const stl = stylTerminuHarmonogramu(r.d, d0);
+                return (
+                  <li
+                    key={`${r.t}-${i}`}
+                    style={{
+                      ...stl,
+                      padding: "0.65rem 0.85rem",
+                      marginBottom: "0.4rem",
+                      borderRadius: "12px",
+                      fontSize: "0.82rem",
+                    }}
+                  >
+                    <strong>{r.t}</strong> — {dataPLZFormat(dataDoSortuYYYYMMDD(r.d) ?? "")}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      );
+    }
+
+    if (sekcja === "zgloszenia") {
+      return (
+        <>
+          <div style={s.btnRow}>
+            <button type="button" style={s.btn} onClick={() => otworzLogDlaKr(item, { hub: true })}>
+              Pełny widok z formularzem (LOG)
+            </button>
+          </div>
+          {logOrd.length === 0 ? (
+            <p style={{ ...op.muted, marginTop: "0.75rem" }}>Brak zgłoszeń dla tego KR.</p>
+          ) : (
+            <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+              {logOrd.map((row) => {
+                const uw = pulpitLogWymagaUwagi(row);
+                return (
+                  <div
+                    key={row.id}
+                    style={{
+                      padding: "0.85rem 1rem",
+                      borderRadius: "14px",
+                      border: uw ? "1px solid rgba(251,191,36,0.35)" : "1px solid rgba(148,163,184,0.12)",
+                      background: uw ? "rgba(251,191,36,0.06)" : "rgba(15,23,42,0.5)",
+                    }}
+                  >
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.35rem" }}>
+                      <span style={op.badge("rgba(56,189,248,0.22)", "#bae6fd")}>
+                        {row.typ_zdarzenia ?? "—"}
+                      </span>
+                      <span style={op.badge("rgba(52,211,153,0.15)", "#a7f3d0")}>
+                        {row.status_zdarzenia?.trim() ? row.status_zdarzenia : "—"}
+                      </span>
+                      <span style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                        {row.data_zdarzenia != null && String(row.data_zdarzenia).trim() !== ""
+                          ? dataDoInputa(row.data_zdarzenia)
+                          : "—"}
+                      </span>
+                    </div>
+                    <p style={{ margin: "0 0 0.45rem", color: "#e2e8f0", fontSize: "0.85rem" }}>
+                      {row.opis?.trim() ? row.opis : "—"}
+                    </p>
+                    <div style={{ fontSize: "0.78rem", color: "#94a3b8", lineHeight: 1.45 }}>
+                      <div>
+                        Zgłaszający:{" "}
+                        {podpisOsobyProwadzacej(row.osoba_zglaszajaca, mapaProwadzacychId) ?? "—"}
+                      </div>
+                      <div>
+                        Wymagane działanie: {row.wymagane_dzialanie?.trim() ? row.wymagane_dzialanie : "—"}
+                      </div>
+                      <div>
+                        Odpowiedzialny:{" "}
+                        {podpisOsobyProwadzacej(row.osoba_odpowiedzialna_za_zadanie, mapaProwadzacychId) ??
+                          "—"}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    if (sekcja === "ryzyka") {
+      const lista = [];
+      if (pulpitKrRekordWymagaUwagi(item))
+        lista.push({ pr: "Wysoki", txt: "Projekt oczekuje na decyzję zleceniodawcy." });
+      for (const e of listaEtapow) {
+        if (pulpitKmWymagaUwagi(e, d0))
+          lista.push({
+            pr: pulpitKmPlanPrzeterminowany(e, d0) ? "Krytyczny" : "Ważny",
+            txt: `Etap „${e.etap ?? "—"}” — zagrożenie lub termin.`,
+          });
+      }
+      for (const row of dziennikWpisy) {
+        if (pulpitLogWymagaUwagi(row))
+          lista.push({
+            pr: "Ważny",
+            txt: `Zgłoszenie (${row.typ_zdarzenia ?? "—"}) wymaga domknięcia.`,
+          });
+      }
+      for (const z of krZleceniaPwList) {
+        if (pulpitPwWymagaUwagi(z, d0))
+          lista.push({ pr: "Krytyczny", txt: `Zlecenie PW po terminie — ${z.numer_zlecenia ?? "—"}.` });
+      }
+      return (
+        <>
+          <h3 style={{ ...op.sectionTitle }}>Panel ryzyk</h3>
+          {lista.length === 0 ? (
+            <p style={{ ...op.muted, margin: 0 }}>Brak pozycji spełniających reguły ryzyka — utrzymuj tak dalej.</p>
+          ) : (
+            lista.map((x, i) => (
+              <div key={i} style={op.alertRow(x.pr === "Krytyczny" ? "krytyczny" : "wazny")}>
+                <strong>{x.pr}</strong> — {x.txt}
+              </div>
+            ))
+          )}
+        </>
+      );
+    }
+
+    if (sekcja === "zespol") {
+      const linie = [];
+      const p = podpisOsobyProwadzacej(item.osoba_prowadzaca, mapaProwadzacychId);
+      if (p) linie.push({ r: "Prowadzenie projektu", o: p });
+      for (const e of listaEtapow) {
+        if (tekstTrim(e.osoba_odpowiedzialna))
+          linie.push({ r: `Etap: ${e.etap ?? "—"}`, o: String(e.osoba_odpowiedzialna) });
+      }
+      for (const row of dziennikWpisy) {
+        const zg = podpisOsobyProwadzacej(row.osoba_zglaszajaca, mapaProwadzacychId);
+        const od = podpisOsobyProwadzacej(row.osoba_odpowiedzialna_za_zadanie, mapaProwadzacychId);
+        if (zg) linie.push({ r: "Zgłoszenie — zgłaszający", o: zg });
+        if (od) linie.push({ r: "Zgłoszenie — odpowiedzialny", o: od });
+      }
+      for (const z of krZleceniaPwList) {
+        const w = podpisOsobyProwadzacej(z.pracownik_weryfikacja, mapaProwadzacychId);
+        if (w) linie.push({ r: `PW ${z.numer_zlecenia ?? ""} — weryfikacja`, o: w });
+      }
+      return (
+        <>
+          <h3 style={{ ...op.sectionTitle }}>Zespół i odpowiedzialności</h3>
+          {linie.length === 0 ? (
+            <p style={{ ...op.muted, margin: 0 }}>Brak przypisanych osób w danych projektu.</p>
+          ) : (
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {linie.map((ln, i) => (
+                <li
+                  key={i}
+                  style={{
+                    padding: "0.55rem 0.75rem",
+                    marginBottom: "0.35rem",
+                    borderRadius: "10px",
+                    border: "1px solid rgba(148,163,184,0.12)",
+                    background: "rgba(15,23,42,0.45)",
+                    fontSize: "0.82rem",
+                    color: "#cbd5e1",
+                  }}
+                >
+                  <span style={{ color: "#94a3b8" }}>{ln.r}: </span>
+                  <strong style={{ color: "#f1f5f9" }}>{ln.o}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      );
+    }
+
+    if (sekcja === "zlecenia") {
+      return (
+        <>
+          <div style={s.btnRow}>
+            <button type="button" style={s.btn} onClick={() => otworzPwDlaKr(item, { hub: true })}>
+              Pełna tabela i formularz PW
+            </button>
+          </div>
+          {krZleceniaPwList.length === 0 ? (
+            <p style={{ ...op.muted, marginTop: "0.75rem" }}>Brak zleceń PW przypisanych do tego KR.</p>
+          ) : (
+            <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.55rem" }}>
+              {krZleceniaPwList.map((z) => {
+                const firma =
+                  z.podwykonawca && typeof z.podwykonawca === "object" && !Array.isArray(z.podwykonawca)
+                    ? z.podwykonawca.nazwa_firmy
+                    : "—";
+                const zak = kmTekstDoKomorki(z.opis_zakresu);
+                return (
+                  <div
+                    key={z.id}
+                    style={{
+                      padding: "0.85rem 1rem",
+                      borderRadius: "14px",
+                      border: pulpitPwWymagaUwagi(z, d0)
+                        ? "1px solid rgba(248,113,113,0.4)"
+                        : "1px solid rgba(148,163,184,0.12)",
+                      background: "rgba(15,23,42,0.5)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, color: "#f8fafc" }}>
+                      {z.numer_zlecenia?.trim() ? z.numer_zlecenia : "—"}{" "}
+                      <span style={{ fontWeight: 500, color: "#94a3b8" }}>· {firma}</span>
+                    </div>
+                    <div style={{ fontSize: "0.8rem", color: "#cbd5e1", marginTop: "0.35rem" }} title={zak.title}>
+                      {zak.text}
+                    </div>
+                    <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: "0.35rem" }}>
+                      Termin: {z.termin_zlecenia ? dataDoInputa(z.termin_zlecenia) : "—"} · Status:{" "}
+                      {z.status?.trim() ? z.status : "—"} · Netto: {krZleceniePwKwotaEtykieta(z.cena_netto)}
+                    </div>
+                    <div style={{ fontSize: "0.76rem", color: "#64748b" }}>
+                      Weryfikacja: {podpisOsobyProwadzacej(z.pracownik_weryfikacja, mapaProwadzacychId) ?? "—"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    if (sekcja === "podwykonawcy") {
+      return (
+        <>
+          <div style={s.btnRow}>
+            <button type="button" style={s.btn} onClick={() => otworzPwDlaKr(item, { hub: true })}>
+              Pełna lista PW z edycją
+            </button>
+          </div>
+          {krZleceniaPwList.length === 0 ? (
+            <p style={{ ...op.muted, marginTop: "0.75rem" }}>Brak podwykonawców / zleceń przy tym KR.</p>
+          ) : (
+            <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.55rem" }}>
+              {krZleceniaPwList.map((z) => {
+                const pw = z.podwykonawca && typeof z.podwykonawca === "object" && !Array.isArray(z.podwykonawca) ? z.podwykonawca : null;
+                return (
+                  <div
+                    key={z.id}
+                    style={{
+                      padding: "0.85rem 1rem",
+                      borderRadius: "14px",
+                      border: "1px solid rgba(148,163,184,0.12)",
+                      background: "rgba(15,23,42,0.5)",
+                      fontSize: "0.82rem",
+                      color: "#e2e8f0",
+                    }}
+                  >
+                    <strong>{pw?.nazwa_firmy?.trim() ? pw.nazwa_firmy : "—"}</strong>
+                    <div style={{ color: "#94a3b8", marginTop: "0.35rem" }}>
+                      Kontakt: {pw?.osoba_kontaktowa?.trim() || "—"} · Tel: {pw?.telefon?.trim() || "—"} · E-mail
+                      (faktury): {tekstTrim(z.osoba_faktury_email) || "—"}
+                    </div>
+                    <div style={{ marginTop: "0.35rem", color: "#64748b" }}>
+                      Zlecenie {z.numer_zlecenia ?? "—"} · Termin:{" "}
+                      {z.termin_zlecenia ? dataDoInputa(z.termin_zlecenia) : "—"} · Odebrane:{" "}
+                      {z.czy_odebrane === true ? "tak" : "nie"} · Sprawdzone: {z.czy_sprawdzone === true ? "tak" : "nie"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    return null;
+  }
+
+  return (
+    <div style={op.shellOuter}>
+      <div style={op.shellGrid}>
+        <main style={op.shellMain}>
+          <header style={{ marginBottom: "1.35rem" }}>
+            <p style={op.brandKicker}>PODGLĄD OPERACYJNY · USŁUGI GEODEZYJNE</p>
+            <h1 style={op.brandTitle}>Panel przepływu informacji</h1>
+            <p style={op.brandSub}>
+              Jedno miejsce dla projektów (KR), etapów, zleceń i zgłoszeń. Poniżej dane na żywo z Supabase —
+              układ z myślą o spotkaniu z kierownictwem.
+            </p>
+          </header>
+          {requireAuth && session?.user ? (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "0.5rem",
+                marginBottom: "0.75rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ ...op.muted, fontSize: "0.8rem", alignSelf: "center" }} title={session.user.email ?? ""}>
                 {session.user.email}
               </span>
-              <button
-                type="button"
-                style={s.btnNav}
-                onClick={() => void supabase.auth.signOut()}
-              >
+              <button type="button" style={s.btnGhost} onClick={() => void supabase.auth.signOut()}>
                 Wyloguj
               </button>
-            </span>
-          </>
-        ) : null}
-      </nav>
-      <p style={{ ...s.muted, marginTop: "-0.35rem", marginBottom: "1rem", fontSize: "0.82rem" }}>
-        {widok === "kr" ? (
-          <>
-            Widok: <strong style={{ color: "#d4d4d4" }}>tabela kr + kamienie milowe</strong>
-          </>
-        ) : widok === "zagrozenia" ? (
-          <>
-            Pomoc:{" "}
-            <strong style={{ color: "#fca5a5" }}>czerwone podświetlenia</strong> na pulpicie i liście KR —
-            poniżej pełna lista reguł
-          </>
-        ) : widok === "zadania" ? (
-          <>
-            Widok:{" "}
-            <strong style={{ color: "#d4d4d4" }}>
-              tabela zadania (sprzęt, organizacja — bez powiązania z KR)
-            </strong>
-          </>
-        ) : widok === "podwykonawca" ? (
-          <>
-            Widok:{" "}
-            <strong style={{ color: "#d4d4d4" }}>tabela podwykonawca</strong> (PW — firmy
-            zewnętrzne)
-          </>
-        ) : (
-          <>
-            Widok: <strong style={{ color: "#d4d4d4" }}>tabela pracownik</strong> (identyfikatory
-            osób)
-          </>
-        )}
-      </p>
+            </div>
+          ) : null}
 
-      {widok === "kr" && (krFetchError || etapyFetchError) ? (
+      {(widok === "kr" ||
+        widok === "dashboard" ||
+        widok === "ostrzezenia") &&
+      (krFetchError || etapyFetchError) ? (
         <div style={s.errBox} role="alert">
           <strong>Błąd pobierania z Supabase.</strong>
           <br />
           {krFetchError ? <>KR: {krFetchError}<br /></> : null}
           {etapyFetchError ? <>Etapy: {etapyFetchError}</> : null}
         </div>
+      ) : null}
+
+      {widok === "dashboard" ? (
+        <>
+          <div style={op.heroCard}>
+            <div
+              role="button"
+              tabIndex={0}
+              title="Kliknij: moduł Ostrzeżenia"
+              onClick={() => przejdzDoOstrzezeniaPanel()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  przejdzDoOstrzezeniaPanel();
+                }
+              }}
+              style={{
+                cursor: "pointer",
+                outline: "none",
+                margin: "-0.35rem",
+                padding: "0.35rem",
+                borderRadius: "10px",
+                marginBottom: "0.65rem",
+              }}
+            >
+              <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Stan operacyjny</h2>
+              <p style={{ ...op.muted, marginBottom: 0, maxWidth: "42rem" }}>
+                Skrót sytuacji w firmie — liczby z aktualnej bazy. Szczegóły ryzyk otwierasz w{" "}
+                <strong style={{ color: "#fde68a" }}>Ostrzeżeniach</strong> lub na kartach projektów.
+              </p>
+            </div>
+            <div style={op.kpiGrid}>
+              <OpKpiCard
+                label="Aktywne projekty (KR)"
+                value={krList.length}
+                hint="Rekordy w tabeli kr"
+                onClick={przejdzDoKr}
+                title="Kliknij: lista projektów (KR)"
+              />
+              <OpKpiCard
+                label="Tematy wymagające uwagi (KR)"
+                value={liczbaTematowUwagi}
+                hint="Lista KR — zgodnie z regułami podświetleń"
+                border="rgba(248,113,113,0.35)"
+                onClick={przejdzDoKr}
+                title="Kliknij: lista projektów (KR) — tematy z uwagą"
+              />
+              <OpKpiCard
+                label="Otwarte zgłoszenia (globalnie)"
+                value={liczbaOtwartychZgloszenGlobal}
+                hint="Placeholder — do podłączenia zbiorczego zapytania na dziennik_zdarzen"
+                border="rgba(147,197,253,0.28)"
+                onClick={przejdzDoOstrzezeniaPanel}
+                title="Kliknij: Ostrzeżenia (zbiorczy podgląd zdarzeń)"
+              />
+              <OpKpiCard
+                label="Etapy — wymagające uwagi"
+                value={liczbaOpoznionychEtapow}
+                hint="Etapy: ryzyko / termin / zagrożenie"
+                border="rgba(251,191,36,0.35)"
+                onClick={przejdzDoOstrzezeniaPanel}
+                title="Kliknij: Ostrzeżenia"
+              />
+              <OpKpiCard
+                label="Zlecenia PW po terminie (odbiór)"
+                value={liczbaZlecenDoOdbioru}
+                hint="Zbiorcza lista zleceń PW"
+                border="rgba(248,113,113,0.3)"
+                onClick={przejdzDoPodwykonawcow}
+                title="Kliknij: zlecenia podwykonawców"
+              />
+              <OpKpiCard
+                label="Zadania ogólne w toku (heurystyka)"
+                value={liczbaZadanWToku}
+                hint="Status inny niż domknięcie"
+                border="rgba(52,211,153,0.28)"
+                onClick={przejdzDoZadania}
+                title="Kliknij: zadania"
+              />
+              <OpKpiCard
+                label="Samochody — zgłoszone naprawy"
+                value={samochodyWymagajaceNaprawyLista.length}
+                hint="Wypełnione pole „wymagane naprawy” we flocie"
+                border="rgba(248,113,113,0.42)"
+                onClick={przejdzDoSamochody}
+                title="Kliknij: flota / samochody"
+              />
+              <OpKpiCard
+                label="Faktury kosztowe — do opłacenia"
+                value={fakturyDoZaplatyOczekujaceList.length}
+                hint="Zgłoszenia pracowników (zakładka Faktury kosztowe przy KR)"
+                border="rgba(251,191,36,0.42)"
+                onClick={przewinDoDashboardFakturyDoOplacenia}
+                title="Kliknij: przewiń do listy faktur do opłacenia na tym panelu"
+              />
+            </div>
+          </div>
+
+          {fakturyDoZaplatyOczekujaceFetchError ? (
+            <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
+              <strong>Faktury do zapłaty (panel):</strong> {fakturyDoZaplatyOczekujaceFetchError}
+              <br />
+              <span style={{ fontSize: "0.88em" }}>
+                Uruchom <code style={s.code}>kr-faktura-do-zaplaty.sql</code> i RLS dla{" "}
+                <code style={s.code}>kr_faktura_do_zaplaty</code>.
+              </span>
+            </div>
+          ) : null}
+
+          <div style={op.sectionCard}>
+            <h3 style={op.sectionTitle}>Najważniejsze dziś</h3>
+            <ul style={{ margin: 0, paddingLeft: "1.15rem", color: "#cbd5e1", fontSize: "0.88rem", lineHeight: 1.6 }}>
+              <li>
+                <strong>{listaAlertowOperacyjnych.length}</strong> automatycznych alertów w systemie (zob. moduł
+                Ostrzeżenia).
+              </li>
+              <li>
+                Projekty z oznaczeniem uwagi na liście KR: <strong>{liczbaTematowUwagi}</strong>.
+              </li>
+              <li>
+                Zlecenia podwykonawcze wymagające domknięcia: <strong>{liczbaZlecenDoOdbioru}</strong>.
+              </li>
+              <li>
+                Pojazdy z zapisem o wymaganej naprawie:{" "}
+                <strong
+                  style={{
+                    color: samochodyWymagajaceNaprawyLista.length ? "#fecaca" : "#e2e8f0",
+                  }}
+                >
+                  {samochodyWymagajaceNaprawyLista.length}
+                </strong>
+                {samochodyWymagajaceNaprawyLista.length
+                  ? " — szczegóły w karcie „Flota” poniżej lub w zakładce Samochody."
+                  : "."}
+              </li>
+              <li>
+                Faktury kosztowe oczekujące na przelew:{" "}
+                <strong
+                  style={{
+                    color: fakturyDoZaplatyOczekujaceList.length ? "#fde68a" : "#e2e8f0",
+                  }}
+                >
+                  {fakturyDoZaplatyOczekujaceList.length}
+                </strong>
+                {fakturyDoZaplatyOczekujaceList.length
+                  ? " — lista w karcie „Księgowość” obok; status zmienisz w karcie projektu."
+                  : "."}
+              </li>
+            </ul>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem" }}>
+            <div
+              id="dashboard-faktury-do-oplacenia"
+              style={{
+                scrollMarginTop: "0.85rem",
+                ...op.sectionCard,
+                ...(fakturyDoZaplatyOczekujaceList.length
+                  ? {
+                      borderColor: "rgba(251,191,36,0.45)",
+                      boxShadow: "0 0 0 1px rgba(251,191,36,0.2)",
+                      background: "linear-gradient(145deg, rgba(120,53,15,0.15), rgba(15,23,42,0.92))",
+                    }
+                  : {}),
+              }}
+            >
+              <h3
+                style={{
+                  ...op.sectionTitle,
+                  ...(fakturyDoZaplatyOczekujaceList.length ? { color: "#fde68a" } : {}),
+                }}
+              >
+                Księgowość — faktury do opłacenia
+              </h3>
+              {fakturyDoZaplatyOczekujaceList.length === 0 ? (
+                <p style={{ ...op.muted, margin: 0 }}>
+                  Brak zgłoszeń ze statusem „do opłacenia”. Pracownik dodaje je w karcie projektu →{" "}
+                  <strong>Faktury kosztowe</strong>.
+                </p>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fde68a", fontSize: "0.84rem" }}>
+                  {fakturyDoZaplatyOczekujaceList.slice(0, 10).map((z) => (
+                    <li key={z.id} style={{ marginBottom: "0.55rem" }}>
+                      <button
+                        type="button"
+                        onClick={() => otworzKrZakladkaFakturyKosztowe(z.kr)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "#fcd34d",
+                          cursor: "pointer",
+                          fontWeight: 700,
+                          padding: 0,
+                          textDecoration: "underline",
+                          font: "inherit",
+                        }}
+                      >
+                        {String(z.kr).trim()}
+                      </button>
+                      {" · "}
+                      <strong>{z.komu?.trim() || "—"}</strong>
+                      <span style={{ display: "block", color: "#fef3c7", fontSize: "0.8rem", marginTop: "0.15rem" }}>
+                        {kwotaBruttoEtykieta(z.kwota_brutto)}
+                        {z.nr_konta?.trim() ? ` · ${z.nr_konta}` : ""}
+                        {z.link_faktury?.trim() ? (
+                          <>
+                            {" · "}
+                            <a
+                              href={hrefLinkuZewnetrznego(z.link_faktury)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: "#7dd3fc" }}
+                            >
+                              link
+                            </a>
+                          </>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div
+              style={{
+                ...op.sectionCard,
+                ...(samochodyWymagajaceNaprawyLista.length
+                  ? {
+                      borderColor: "rgba(248,113,113,0.45)",
+                      boxShadow: "0 0 0 1px rgba(248,113,113,0.15)",
+                      background: "linear-gradient(145deg, rgba(127,29,29,0.12), rgba(15,23,42,0.92))",
+                    }
+                  : {}),
+              }}
+            >
+              <h3
+                style={{
+                  ...op.sectionTitle,
+                  ...(samochodyWymagajaceNaprawyLista.length ? { color: "#fecaca" } : {}),
+                }}
+              >
+                Flota — wymagane naprawy
+              </h3>
+              {samochodyWymagajaceNaprawyLista.length === 0 ? (
+                <p style={{ ...op.muted, margin: 0 }}>Brak zgłoszonych napraw (pole „wymagane naprawy” puste u wszystkich aut).</p>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fecaca", fontSize: "0.84rem" }}>
+                  {samochodyWymagajaceNaprawyLista.slice(0, 8).map((car) => (
+                    <li key={car.id} style={{ marginBottom: "0.5rem" }}>
+                      <strong>{car.nazwa?.trim() || "Pojazd"}</strong>
+                      {car.numer_rejestracyjny?.trim() ? ` · ${car.numer_rejestracyjny}` : ""}
+                      {car.wymagane_naprawy?.trim() ? (
+                        <span
+                          style={{ display: "block", color: "#fca5a5", fontSize: "0.8rem", marginTop: "0.2rem", lineHeight: 1.4 }}
+                        >
+                          {car.wymagane_naprawy.trim().length > 140
+                            ? `${car.wymagane_naprawy.trim().slice(0, 138)}…`
+                            : car.wymagane_naprawy.trim()}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {samochodyWymagajaceNaprawyLista.length > 0 ? (
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, marginTop: "0.85rem", fontSize: "0.8rem", borderColor: "rgba(248,113,113,0.35)" }}
+                  onClick={przejdzDoSamochody}
+                >
+                  Otwórz Samochody
+                </button>
+              ) : null}
+            </div>
+            <div style={op.sectionCard}>
+              <h3 style={op.sectionTitle}>Terminy zagrożone</h3>
+              {listaAlertowOperacyjnych.filter((a) => a.severity === "krytyczny").length === 0 ? (
+                <p style={{ ...op.muted, margin: 0 }}>Brak krytycznych z automatycznej reguły — dobry znak.</p>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fecaca", fontSize: "0.84rem" }}>
+                  {listaAlertowOperacyjnych
+                    .filter((a) => a.severity === "krytyczny")
+                    .slice(0, 6)
+                    .map((a, i) => (
+                      <li key={`k-${i}`} style={{ marginBottom: "0.35rem" }}>
+                        {a.text}
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+            <div style={op.sectionCard}>
+              <h3 style={op.sectionTitle}>Ostatnie zgłoszenia</h3>
+              <p style={{ ...op.muted, margin: 0 }}>
+                Pełny podgląd zbiorczy zgłoszeń —{" "}
+                <strong style={{ color: "#93c5fd" }}>pole gotowe pod wdrożenie</strong> (widok SQL lub synchronizacja
+                dziennika). W projekcie zobaczysz listę w zakładce <em>Zgłoszenia</em>.
+              </p>
+            </div>
+            <div style={op.sectionCard}>
+              <h3 style={op.sectionTitle}>Projekty wymagające decyzji</h3>
+              {krList.filter((r) => pulpitKrRekordWymagaUwagi(r)).length === 0 ? (
+                <p style={{ ...op.muted, margin: 0 }}>Brak KR ze statusem „oczekuje na zamawiającego”.</p>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fde68a", fontSize: "0.84rem" }}>
+                  {krList
+                    .filter((r) => pulpitKrRekordWymagaUwagi(r))
+                    .slice(0, 6)
+                    .map((r) => (
+                      <li key={r.kr} style={{ marginBottom: "0.35rem" }}>
+                        <strong>{r.kr}</strong>
+                        {r.nazwa_obiektu ? ` — ${r.nazwa_obiektu}` : ""}
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <OpFutureModule title="Budżet / finanse projektu (koncepcja)">
+            Karta na przyszłe KPI: budżet umowy, faktury wystawione, koszty podwykonawców, saldo. UI przygotowane —
+            podłączenie pod tabele lub eksport z FK.
+          </OpFutureModule>
+          <OpFutureModule title="Roboczogodziny · teren (przyszły moduł)">
+            Miejsce na ewidencję godzin i zadania terenowe — <strong>wersja koncepcyjna</strong>, bez zmian w bazie.
+          </OpFutureModule>
+        </>
+      ) : null}
+
+      {widok === "ostrzezenia" ? (
+        <>
+          <div style={op.heroCard}>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Ostrzeżenia operacyjne</h2>
+            <p style={{ ...op.muted, marginBottom: "1rem", maxWidth: "44rem" }}>
+              Lista zbudowana automatycznie z danych już w systemie (KR, etapy, zlecenia PW, zadania ogólne). Priorytet
+              poniżej to skrót dla kierownictwa — szczegóły w kartach projektów.
+            </p>
+            <div style={{ marginBottom: "0.75rem" }}>
+              <span style={op.badge("rgba(239,68,68,0.25)", "#fecaca")}>Krytyczne</span>{" "}
+              <span style={op.badge("rgba(234,179,8,0.2)", "#fde68a")}>Ważne</span>{" "}
+              <span style={op.badge("rgba(59,130,246,0.2)", "#bfdbfe")}>Informacyjne</span>
+            </div>
+            {listaAlertowOperacyjnych.length === 0 ? (
+              <p style={{ ...op.muted, margin: 0 }}>Brak wpisów spełniających reguły alertów — gratulacje zespołu.</p>
+            ) : (
+              listaAlertowOperacyjnych.map((a, i) => (
+                <div key={`al-${i}`} style={op.alertRow(a.severity)}>
+                  <strong style={{ display: "block", marginBottom: "0.2rem" }}>
+                    {a.severity === "krytyczny" ? "Krytyczne" : a.severity === "wazny" ? "Ważne" : "Informacja"}
+                  </strong>
+                  {a.text}
+                </div>
+              ))
+            )}
+          </div>
+          <button type="button" style={{ ...s.btnGhost, marginBottom: "1rem" }} onClick={przejdzDoInfoZagrozen}>
+            Pełna dokumentacja reguł podświecania (INFO)
+          </button>
+        </>
       ) : null}
 
       {widok === "pracownik" && pracFetchError ? (
@@ -2842,6 +5237,39 @@ export default function App() {
         </div>
       ) : null}
 
+      {widok === "samochody" && (samochodyFetchError || rezerwacjeFetchError) ? (
+        <div style={s.errBox} role="alert">
+          {samochodyFetchError ? (
+            <>
+              <strong>Samochody:</strong> {samochodyFetchError}
+              <br />
+            </>
+          ) : null}
+          {rezerwacjeFetchError ? (
+            <>
+              <strong>Rezerwacje:</strong> {rezerwacjeFetchError}
+              <br />
+            </>
+          ) : null}
+          <span style={{ fontSize: "0.88em" }}>
+            Uruchom <code style={s.code}>g4-app/supabase/samochody-sprzet-rezerwacje.sql</code>, potem sekcje{" "}
+            <code style={s.code}>samochod</code> / <code style={s.code}>samochod_rezerwacja</code> w{" "}
+            <code style={s.code}>rls-policies-anon.sql</code>.
+          </span>
+        </div>
+      ) : null}
+
+      {widok === "sprzet" && sprzetFetchError ? (
+        <div style={s.errBox} role="alert">
+          <strong>Błąd pobierania sprzętu.</strong> {sprzetFetchError}
+          <br />
+          <span style={{ fontSize: "0.88em" }}>
+            Uruchom <code style={s.code}>samochody-sprzet-rezerwacje.sql</code> i RLS dla{" "}
+            <code style={s.code}>sprzet</code>.
+          </span>
+        </div>
+      ) : null}
+
       {widok === "zagrozenia" ? (
         <section style={s.krTopWrap} aria-labelledby="zagrozenia-naglowek">
           <h2 id="zagrozenia-naglowek" style={{ ...s.krTopTitle, fontSize: "1rem", marginTop: 0 }}>
@@ -2876,7 +5304,7 @@ export default function App() {
               <strong style={{ color: "#fecaca" }}>„oczekuje na zamawiającego”</strong>.
             </li>
             <li style={{ marginBottom: "0.5rem" }}>
-              <strong style={{ color: "#f87171" }}>KM</strong> — <strong>którykolwiek</strong> z warunków: pole
+              <strong style={{ color: "#f87171" }}>ETAP</strong> — <strong>którykolwiek</strong> z warunków: pole
               zagrożenia ustawione na tak (lub równoważna wartość w bazie); albo wypełniony{" "}
               <strong>opis zagrożenia</strong>; albo <strong>data planowana</strong> jest wcześniejsza niż{" "}
               <strong>dziś</strong>, przy czym status etapu <strong>nie</strong> należy do zamkniętych:{" "}
@@ -2916,7 +5344,7 @@ export default function App() {
             Pulpit — skrzynka „Wymaga uwagi”
           </h3>
           <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
-            Pod przyciskami <strong>KM / PW / LOG / …</strong> pojawia się podsumowanie, jeśli na osi jest co najmniej{" "}
+            Pod przyciskami <strong>ETAP / PW / LOG / …</strong> pojawia się podsumowanie, jeśli na osi jest co najmniej{" "}
             <strong>jedna</strong> pozycja spełniająca powyższe reguły — z liczbą takich pozycji.
           </p>
 
@@ -2939,8 +5367,8 @@ export default function App() {
               status tego KR to <strong>„oczekuje na zamawiającego”</strong>, <strong>albo</strong>
             </li>
             <li style={{ marginBottom: "0.5rem" }}>
-              <strong>którykolwiek kamień milowy</strong> przypisany do tego kodu KR spełnia reguły „uwagi” jak dla{" "}
-              <strong style={{ color: "#f87171" }}>KM</strong> na pulpicie (zagrożenie / opis / plan po terminie przy
+              <strong>którykolwiek etap</strong> przypisany do tego kodu KR spełnia reguły „uwagi” jak dla{" "}
+              <strong style={{ color: "#f87171" }}>ETAP</strong> na pulpicie (zagrożenie / opis / plan po terminie przy
               etapie nie zamkniętym).
             </li>
           </ul>
@@ -2962,7 +5390,7 @@ export default function App() {
               color: "#c4c4c4",
             }}
           >
-            <li>KR / KM: zmień status lub usuń zagrożenie / zaktualizuj plan, domknij etap zgodnie z regułami powyżej.</li>
+            <li>KR / ETAP: zmień status lub usuń zagrożenie / zaktualizuj plan, domknij etap zgodnie z regułami powyżej.</li>
             <li>LOG: ustaw status na <strong>ukończone</strong>, gdy sprawa jest załatwiona.</li>
             <li>PW: odhacz <strong>odebrane</strong> lub skoryguj termin w bazie.</li>
           </ul>
@@ -3091,22 +5519,34 @@ export default function App() {
 
       {widok === "zadania" ? (
         <>
-          <h2 style={{ ...s.h2, marginTop: 0 }}>TASK — zadania ogólne</h2>
-          <p style={{ ...s.muted, marginBottom: "0.75rem" }}>
-            Tabela <code style={s.code}>zadania</code>: zadania nie przypisane do KR (np. sprzęt,
-            organizacja). Osoby wybierasz z zakładki <strong style={{ color: "#92c9ff" }}>ID</strong>{" "}
-            (kolumny <code style={s.code}>osoba_odpowiedzialna</code>,{" "}
-            <code style={s.code}>osoba_zlecajaca</code> — opcjonalnie).
-          </p>
+          <div style={op.heroCard}>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Zadania ogólne</h2>
+            <p style={{ ...op.muted, marginBottom: "0.35rem", maxWidth: "44rem" }}>
+              Poza projektami (KR): flota, IT, sprzęt, biuro, organizacja. Kategoria poniżej to{" "}
+              <strong>heurystyka</strong> z treści i działu (bez nowych kolumn w bazie).
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.15rem" }}>
+              {["Samochody", "Komputery", "Sprzęt", "Biuro", "Organizacyjne"].map((kat) => (
+                <span key={kat} style={op.badge("rgba(71,85,105,0.35)", "#cbd5e1")}>
+                  {kat}
+                </span>
+              ))}
+            </div>
+            <p style={{ ...op.muted, margin: 0, fontSize: "0.76rem" }}>
+              Tabela <code style={s.code}>zadania</code> w Supabase — osoby z zakładki{" "}
+              <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
+            </p>
+          </div>
 
           {zadaniaFetchError ? null : zadaniaList.length === 0 ? (
             <p style={s.muted}>Brak zadań — dodaj pierwsze formularzem poniżej.</p>
           ) : (
-            <div style={s.tableWrap}>
+            <div style={{ ...s.tableWrap, borderRadius: "16px", overflow: "hidden" }}>
               <table style={{ ...s.table, fontSize: "0.86rem" }}>
                 <thead>
                   <tr>
                     <th style={s.th}>Zadanie</th>
+                    <th style={s.th}>Kategoria</th>
                     <th style={{ ...s.th, color: "#7dd3fc" }}>Dział</th>
                     <th style={s.th}>Odpow.</th>
                     <th style={s.th}>Zlecający</th>
@@ -3121,11 +5561,30 @@ export default function App() {
                 <tbody>
                   {zadaniaList.map((row) => {
                     const zt = kmTekstDoKomorki(row.zadanie);
-                    const op = kmTekstDoKomorki(row.opis);
+                    const opisKom = kmTekstDoKomorki(row.opis);
+                    const kat = zadaniaEtykietaKategorii(row);
+                    const plan = dataDoSortuYYYYMMDD(row.data_planowana);
+                    const przeterm =
+                      plan &&
+                      plan < dzisiajDataYYYYMMDD() &&
+                      !tekstTrim(row.data_realna) &&
+                      String(row.status ?? "").toLowerCase() !== "zakończone";
                     return (
-                      <tr key={row.id}>
+                      <tr
+                        key={row.id}
+                        style={
+                          przeterm
+                            ? { background: "rgba(248,113,113,0.07)", boxShadow: "inset 3px 0 0 #f87171" }
+                            : row.zagrozenie === true
+                              ? { background: "rgba(251,191,36,0.06)", boxShadow: "inset 3px 0 0 #fbbf24" }
+                              : undefined
+                        }
+                      >
                         <td style={s.td} title={zt.title || undefined}>
                           <strong style={{ color: "#f5f5f5" }}>{zt.text}</strong>
+                        </td>
+                        <td style={s.td}>
+                          <span style={op.badge("rgba(99,102,241,0.22)", "#c7d2fe")}>{kat}</span>
                         </td>
                         <td style={{ ...s.td, ...s.dzialWartosc }}>
                           {row.dzial?.trim() ? row.dzial : "—"}
@@ -3148,8 +5607,8 @@ export default function App() {
                         <td style={s.td}>
                           {row.zagrozenie === true ? "tak" : row.zagrozenie === false ? "nie" : "—"}
                         </td>
-                        <td style={s.td} title={op.title || undefined}>
-                          {op.text}
+                        <td style={s.td} title={opisKom.title || undefined}>
+                          {opisKom.text}
                         </td>
                         <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
                           <button
@@ -3843,20 +6302,768 @@ export default function App() {
         </>
       ) : null}
 
+      {widok === "samochody" ? (
+        <>
+          <div style={op.heroCard}>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Samochody</h2>
+            <p style={{ ...op.muted, marginBottom: 0, maxWidth: "46rem", lineHeight: 1.5 }}>
+              Lista pojazdów: ważność polisy i przeglądu, uwagi o działaniu oraz co do naprawy. Pełniejsza ewidencja
+              ubezpieczeń (np. osobna tabela) może być dodana później. <strong>Kalendarz</strong> — kliknij komórkę,
+              żeby ustawić lub poprawić przypisanie: który samochód, który dzień, który pracownik (kolor zależy od
+              numeru ID).
+            </p>
+          </div>
+
+          {samochodyList.length === 0 && !samochodyFetchError ? (
+            <p style={s.muted}>Brak pojazdów w bazie — dodaj pierwszy formularzem poniżej, żeby pojawiły się w kalendarzu.</p>
+          ) : samochodyList.length > 0 ? (
+            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Pojazd</th>
+                    <th style={s.th}>Rej.</th>
+                    <th style={s.th}>Polisa ważna</th>
+                    <th style={s.th}>Nr polisy</th>
+                    <th style={s.th}>Przegląd</th>
+                    <th style={s.th}>Uwagi (ekspl.)</th>
+                    <th style={s.th}>Naprawy</th>
+                    <th style={s.th} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {samochodyList.map((car) => {
+                    const u = kmTekstDoKomorki(car.uwagi_eksploatacja);
+                    const nap = kmTekstDoKomorki(car.wymagane_naprawy);
+                    const naprawa = samochodWymagaNaprawy(car);
+                    return (
+                      <tr
+                        key={car.id}
+                        style={
+                          naprawa
+                            ? {
+                                background: "rgba(248,113,113,0.12)",
+                                boxShadow: "inset 4px 0 0 #ef4444",
+                              }
+                            : undefined
+                        }
+                      >
+                        <td style={s.td}>
+                          <strong style={{ color: naprawa ? "#fecaca" : "#fafafa" }}>
+                            {car.nazwa?.trim() || "—"}
+                            {naprawa ? (
+                              <span
+                                style={{
+                                  display: "block",
+                                  fontSize: "0.68rem",
+                                  fontWeight: 700,
+                                  color: "#f87171",
+                                  marginTop: "0.2rem",
+                                }}
+                              >
+                                Wymaga naprawy
+                              </span>
+                            ) : null}
+                          </strong>
+                        </td>
+                        <td style={s.td}>{car.numer_rejestracyjny?.trim() ? car.numer_rejestracyjny : "—"}</td>
+                        <td style={s.td}>
+                          {car.polisa_wazna_do ? dataDoInputa(car.polisa_wazna_do) : "—"}
+                        </td>
+                        <td style={s.td}>{car.polisa_numer?.trim() ? car.polisa_numer : "—"}</td>
+                        <td style={s.td}>
+                          {car.przeglad_wazny_do ? dataDoInputa(car.przeglad_wazny_do) : "—"}
+                        </td>
+                        <td style={s.td} title={u.title}>
+                          {u.text}
+                        </td>
+                        <td
+                          style={{
+                            ...s.td,
+                            ...(naprawa
+                              ? { color: "#fecaca", fontWeight: 600 }
+                              : {}),
+                          }}
+                          title={nap.title}
+                        >
+                          {nap.text}
+                        </td>
+                        <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                            onClick={() => wczytajSamochodDoEdycji(car)}
+                          >
+                            Edytuj
+                          </button>{" "}
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                            onClick={() => usunSamochod(car.id)}
+                          >
+                            Usuń
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          <h3
+            style={{
+              fontSize: "1rem",
+              fontWeight: 600,
+              color: "#fff",
+              margin: "0 0 0.65rem",
+            }}
+          >
+            {samochodEdycjaId != null ? "Edycja pojazdu" : "Nowy pojazd"}
+          </h3>
+          <form style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1.75rem" }} onSubmit={zapiszSamochod}>
+            <label style={s.label}>
+              Nazwa / opis pojazdu <span style={{ color: "#fca5a5" }}>*</span>
+              <input
+                style={s.input}
+                type="text"
+                value={samochodForm.nazwa}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, nazwa: ev.target.value }))}
+                required
+                placeholder="np. Skoda Octavia · WX 12345"
+              />
+            </label>
+            <label style={s.label}>
+              Numer rejestracyjny
+              <input
+                style={s.input}
+                type="text"
+                value={samochodForm.numer_rejestracyjny}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, numer_rejestracyjny: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Nr polisy (na później można rozwinąć osobną tabelę ubezpieczeń)
+              <input
+                style={s.input}
+                type="text"
+                value={samochodForm.polisa_numer}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, polisa_numer: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Polisa ważna do
+              <input
+                style={s.input}
+                type="date"
+                value={samochodForm.polisa_wazna_do}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, polisa_wazna_do: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Przegląd ważny do
+              <input
+                style={s.input}
+                type="date"
+                value={samochodForm.przeglad_wazny_do}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, przeglad_wazny_do: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Zgłoszone uwagi o działaniu / stanie
+              <textarea
+                style={{ ...s.input, minHeight: "3.5rem" }}
+                value={samochodForm.uwagi_eksploatacja}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, uwagi_eksploatacja: ev.target.value }))}
+                rows={2}
+              />
+            </label>
+            <label style={s.label}>
+              Zgłoszenie — wymagane naprawy
+              <textarea
+                style={{ ...s.input, minHeight: "3.5rem" }}
+                value={samochodForm.wymagane_naprawy}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, wymagane_naprawy: ev.target.value }))}
+                rows={2}
+              />
+            </label>
+            <label style={s.label}>
+              Inne notatki
+              <textarea
+                style={{ ...s.input, minHeight: "2.5rem" }}
+                value={samochodForm.notatki}
+                onChange={(ev) => setSamochodForm((f) => ({ ...f, notatki: ev.target.value }))}
+                rows={2}
+              />
+            </label>
+            <div style={s.btnRow}>
+              <button type="submit" style={s.btn}>
+                {samochodEdycjaId != null ? "Zapisz pojazd" : "Dodaj pojazd"}
+              </button>
+              {samochodEdycjaId != null ? (
+                <button type="button" style={s.btnGhost} onClick={anulujSamochodEdycje}>
+                  Anuluj edycję
+                </button>
+              ) : null}
+            </div>
+          </form>
+
+          <div style={{ ...op.sectionCard, marginBottom: "1.25rem" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.65rem", marginBottom: "0.75rem" }}>
+              <h3 style={{ ...op.sectionTitle, margin: 0, fontSize: "1.05rem" }}>Kalendarz — kto ma które auto</h3>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginLeft: "auto" }}>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, padding: "0.35rem 0.65rem", fontSize: "0.78rem" }}
+                  onClick={() => {
+                    if (kalFlotaMiesiac <= 1) {
+                      setKalFlotaRok((y) => y - 1);
+                      setKalFlotaMiesiac(12);
+                    } else {
+                      setKalFlotaMiesiac((m) => m - 1);
+                    }
+                  }}
+                >
+                  ← Miesiąc
+                </button>
+                <span style={{ fontSize: "0.88rem", color: "#e2e8f0", minWidth: "10rem", textAlign: "center" }}>
+                  {new Date(kalFlotaRok, kalFlotaMiesiac - 1, 15).toLocaleDateString("pl-PL", {
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </span>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, padding: "0.35rem 0.65rem", fontSize: "0.78rem" }}
+                  onClick={() => {
+                    if (kalFlotaMiesiac >= 12) {
+                      setKalFlotaRok((y) => y + 1);
+                      setKalFlotaMiesiac(1);
+                    } else {
+                      setKalFlotaMiesiac((m) => m + 1);
+                    }
+                  }}
+                >
+                  Miesiąc →
+                </button>
+              </div>
+            </div>
+            {samochodyList.length === 0 ? (
+              <p style={{ ...op.muted, margin: 0 }}>Dodaj pojazd — wtedy zobaczysz siatkę dni.</p>
+            ) : (
+              <div style={{ overflowX: "auto", marginBottom: "0.85rem" }}>
+                <table style={{ borderCollapse: "separate", borderSpacing: "2px", fontSize: "0.68rem" }}>
+                  <thead>
+                    <tr>
+                      <th
+                        style={{
+                          position: "sticky",
+                          left: 0,
+                          zIndex: 2,
+                          background: "#0f172a",
+                          color: "#94a3b8",
+                          textAlign: "left",
+                          padding: "0.35rem 0.5rem",
+                          minWidth: "7.5rem",
+                          borderRadius: "6px 0 0 0",
+                        }}
+                      >
+                        Auto
+                      </th>
+                      {Array.from(
+                        { length: new Date(kalFlotaRok, kalFlotaMiesiac, 0).getDate() },
+                        (_, i) => i + 1
+                      ).map((dz) => {
+                        const iso = `${kalFlotaRok}-${String(kalFlotaMiesiac).padStart(2, "0")}-${String(dz).padStart(2, "0")}`;
+                        const wd = new Date(kalFlotaRok, kalFlotaMiesiac - 1, dz).getDay();
+                        const weekend = wd === 0 || wd === 6;
+                        return (
+                          <th
+                            key={dz}
+                            style={{
+                              padding: "0.2rem 0.15rem",
+                              minWidth: "1.65rem",
+                              textAlign: "center",
+                              color: weekend ? "#64748b" : "#94a3b8",
+                              fontWeight: 600,
+                              background: weekend ? "rgba(30,41,59,0.6)" : "rgba(30,41,59,0.35)",
+                            }}
+                            title={iso}
+                          >
+                            {dz}
+                            <span
+                              style={{
+                                display: "block",
+                                fontSize: "0.58rem",
+                                fontWeight: 500,
+                                opacity: 0.85,
+                              }}
+                            >
+                              {new Date(kalFlotaRok, kalFlotaMiesiac - 1, dz).toLocaleDateString("pl-PL", {
+                                weekday: "short",
+                              })}
+                            </span>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {samochodyList.map((car) => {
+                      const naprawaKal = samochodWymagaNaprawy(car);
+                      return (
+                      <tr key={car.id}>
+                        <td
+                          style={{
+                            position: "sticky",
+                            left: 0,
+                            zIndex: 1,
+                            background: naprawaKal ? "rgba(127,29,29,0.55)" : "#111a24",
+                            color: naprawaKal ? "#fecaca" : "#e2e8f0",
+                            padding: "0.35rem 0.5rem",
+                            fontWeight: 600,
+                            fontSize: "0.74rem",
+                            borderTop: "1px solid rgba(148,163,184,0.12)",
+                            maxWidth: "9rem",
+                            boxShadow: naprawaKal ? "inset 3px 0 0 #ef4444" : undefined,
+                          }}
+                          title={naprawaKal ? "Zgłoszona naprawa — sprawdź pole w tabeli floty" : (car.nazwa ?? "")}
+                        >
+                          {car.nazwa?.trim() || "—"}
+                        </td>
+                        {Array.from(
+                          { length: new Date(kalFlotaRok, kalFlotaMiesiac, 0).getDate() },
+                          (_, i) => i + 1
+                        ).map((dz) => {
+                          const iso = `${kalFlotaRok}-${String(kalFlotaMiesiac).padStart(2, "0")}-${String(dz).padStart(2, "0")}`;
+                          const rez = rezerwacjaMapKalendarz.get(`${car.id}|${iso}`);
+                          const wd = new Date(kalFlotaRok, kalFlotaMiesiac - 1, dz).getDay();
+                          const weekend = wd === 0 || wd === 6;
+                          const krotki =
+                            rez && rez.pracownik_nr
+                              ? String(rez.pracownik_nr).slice(0, 5)
+                              : "";
+                          const pod = rez
+                            ? podpisOsobyProwadzacej(rez.pracownik_nr, mapaProwadzacychId) ?? String(rez.pracownik_nr)
+                            : "Wolne — kliknij, aby przypisać";
+                          return (
+                            <td key={dz} title={pod} style={{ padding: 0, verticalAlign: "middle" }}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRezerwacjaForm({
+                                    samochod_id: String(car.id),
+                                    data_dnia: iso,
+                                    pracownik_nr: rez ? String(rez.pracownik_nr) : "",
+                                    opis_krotki: rez?.opis_krotki != null ? String(rez.opis_krotki) : "",
+                                  });
+                                }}
+                                style={{
+                                  width: "100%",
+                                  minHeight: "2.1rem",
+                                  border: "none",
+                                  borderRadius: "4px",
+                                  cursor: "pointer",
+                                  fontSize: "0.62rem",
+                                  fontWeight: 700,
+                                  color: rez ? "#f8fafc" : "#475569",
+                                  background: rez
+                                    ? kolorRezerwacjiDlaPracownika(rez.pracownik_nr)
+                                    : weekend
+                                      ? "rgba(30,41,59,0.25)"
+                                      : "rgba(30,41,59,0.12)",
+                                }}
+                              >
+                                {krotki || "·"}
+                              </button>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: "0.35rem" }}>Legenda — kolory wg pracownika (ID):</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+              {[...new Set(rezerwacjeList.map((r) => String(r.pracownik_nr ?? "").trim()).filter(Boolean))].map((nr) => (
+                <span
+                  key={nr}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.35rem",
+                    padding: "0.2rem 0.45rem",
+                    borderRadius: "6px",
+                    background: "rgba(15,23,42,0.6)",
+                    fontSize: "0.72rem",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "10px",
+                      height: "10px",
+                      borderRadius: "2px",
+                      background: kolorRezerwacjiDlaPracownika(nr),
+                    }}
+                  />
+                  {podpisOsobyProwadzacej(nr, mapaProwadzacychId) ?? nr}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <h3
+            style={{
+              fontSize: "1rem",
+              fontWeight: 600,
+              color: "#fff",
+              margin: "0 0 0.65rem",
+            }}
+          >
+            Zapis rezerwacji (lub zmień po kliknięciu komórki)
+          </h3>
+          <form style={{ ...s.form, maxWidth: "min(36rem, 100%)", marginBottom: "1.25rem" }} onSubmit={zapiszRezerwacje}>
+            <label style={s.label}>
+              Samochód
+              <select
+                style={s.input}
+                value={rezerwacjaForm.samochod_id}
+                onChange={(ev) => setRezerwacjaForm((f) => ({ ...f, samochod_id: ev.target.value }))}
+                required
+              >
+                <option value="">— wybierz —</option>
+                {samochodyList.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.nazwa?.trim() || c.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={s.label}>
+              Dzień
+              <input
+                style={s.input}
+                type="date"
+                value={rezerwacjaForm.data_dnia}
+                onChange={(ev) => setRezerwacjaForm((f) => ({ ...f, data_dnia: ev.target.value }))}
+                required
+              />
+            </label>
+            <label style={s.label}>
+              Pracownik (ID)
+              <select
+                style={s.input}
+                value={String(rezerwacjaForm.pracownik_nr ?? "")}
+                onChange={(ev) => setRezerwacjaForm((f) => ({ ...f, pracownik_nr: ev.target.value }))}
+                required
+              >
+                <option value="">— wybierz —</option>
+                {(() => {
+                  const cur = String(rezerwacjaForm.pracownik_nr ?? "").trim();
+                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                  const orphan = cur !== "" && !nrs.has(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>{cur} (nie w liście)</option>
+                      ) : null}
+                      {pracownicyPosortowani.map((p) => (
+                        <option key={String(p.nr)} value={String(p.nr)}>
+                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Krótki opis (np. trasa, projekt — opcjonalnie)
+              <input
+                style={s.input}
+                type="text"
+                value={rezerwacjaForm.opis_krotki}
+                onChange={(ev) => setRezerwacjaForm((f) => ({ ...f, opis_krotki: ev.target.value }))}
+              />
+            </label>
+            {pracFetchError ? (
+              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+                Lista pracowników: {pracFetchError}
+              </p>
+            ) : null}
+            <div style={s.btnRow}>
+              <button type="submit" style={s.btn}>
+                Zapisz / nadpisz ten dzień
+              </button>
+            </div>
+          </form>
+
+          {rezerwacjeList.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e2e8f0", margin: "0 0 0.5rem" }}>
+                Wpisy w tym miesiącu
+              </h3>
+              <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden", marginBottom: "2rem" }}>
+                <table style={{ ...s.table, fontSize: "0.8rem" }}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>Data</th>
+                      <th style={s.th}>Auto</th>
+                      <th style={s.th}>Pracownik</th>
+                      <th style={s.th}>Opis</th>
+                      <th style={s.th} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rezerwacjeList.map((rz) => {
+                      const auto = samochodyList.find((c) => c.id === rz.samochod_id);
+                      return (
+                        <tr key={rz.id}>
+                          <td style={s.td}>{dataDoInputa(rz.data_dnia)}</td>
+                          <td style={s.td}>{auto?.nazwa?.trim() ?? rz.samochod_id}</td>
+                          <td style={s.td}>
+                            {podpisOsobyProwadzacej(rz.pracownik_nr, mapaProwadzacychId) ?? rz.pracownik_nr}
+                          </td>
+                          <td style={s.td}>{rz.opis_krotki?.trim() ? rz.opis_krotki : "—"}</td>
+                          <td style={{ ...s.td, textAlign: "right" }}>
+                            <button
+                              type="button"
+                              style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                              onClick={() => usunRezerwacje(rz.id)}
+                            >
+                              Usuń
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {widok === "sprzet" ? (
+        <>
+          <div style={op.heroCard}>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Sprzęt</h2>
+            <p style={{ ...op.muted, marginBottom: 0, maxWidth: "44rem", lineHeight: 1.5 }}>
+              Komputery, drukarki, urządzenia wielofunkcyjne — z datą przeglądu / serwisu i opcjonalnym{" "}
+              <strong>przypisaniem do pracownika</strong> (jak w zakładce Pracownicy).
+            </p>
+          </div>
+
+          {sprzetList.length === 0 && !sprzetFetchError ? (
+            <p style={s.muted}>Brak wpisów — dodaj pierwszy sprzęt formularzem poniżej.</p>
+          ) : sprzetList.length > 0 ? (
+            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.84rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Typ</th>
+                    <th style={s.th}>Nazwa</th>
+                    <th style={s.th}>Inwentarz</th>
+                    <th style={s.th}>Przegląd / serwis</th>
+                    <th style={s.th}>Przypisany</th>
+                    <th style={s.th}>Notatki</th>
+                    <th style={s.th} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sprzetList.map((row) => {
+                    const nt = kmTekstDoKomorki(row.notatki);
+                    return (
+                      <tr key={row.id}>
+                        <td style={s.td}>
+                          <span style={op.badge("rgba(99,102,241,0.22)", "#c7d2fe")}>
+                            {row.typ?.trim() ? row.typ : "—"}
+                          </span>
+                        </td>
+                        <td style={s.td}>
+                          <strong style={{ color: "#fafafa" }}>{row.nazwa?.trim() || "—"}</strong>
+                        </td>
+                        <td style={s.td}>{row.numer_inwentarzowy?.trim() ? row.numer_inwentarzowy : "—"}</td>
+                        <td style={s.td}>
+                          {row.data_przegladu ? dataDoInputa(row.data_przegladu) : "—"}
+                        </td>
+                        <td style={s.td}>
+                          {podpisOsobyProwadzacej(row.pracownik_nr, mapaProwadzacychId) ?? "—"}
+                        </td>
+                        <td style={s.td} title={nt.title}>
+                          {nt.text}
+                        </td>
+                        <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                            onClick={() => wczytajSprzetDoEdycji(row)}
+                          >
+                            Edytuj
+                          </button>{" "}
+                          <button
+                            type="button"
+                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                            onClick={() => usunSprzet(row.id)}
+                          >
+                            Usuń
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          <h3
+            style={{
+              fontSize: "1rem",
+              fontWeight: 600,
+              color: "#fff",
+              margin: "0 0 0.65rem",
+            }}
+          >
+            {sprzetEdycjaId != null ? "Edycja sprzętu" : "Nowy wpis"}
+          </h3>
+          <form style={{ ...s.form, maxWidth: "min(38rem, 100%)", marginBottom: "2rem" }} onSubmit={zapiszSprzetEwidencja}>
+            <label style={s.label}>
+              Typ
+              <select
+                style={s.input}
+                value={sprzetForm.typ}
+                onChange={(ev) => setSprzetForm((f) => ({ ...f, typ: ev.target.value }))}
+              >
+                {(() => {
+                  const cur = String(sprzetForm.typ ?? "").trim();
+                  const znane = new Set(SPRZET_TYP_W_BAZIE);
+                  const orphan = cur !== "" && !znane.has(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>{cur} (z bazy)</option>
+                      ) : null}
+                      {SPRZET_TYP_W_BAZIE.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Nazwa <span style={{ color: "#fca5a5" }}>*</span>
+              <input
+                style={s.input}
+                type="text"
+                value={sprzetForm.nazwa}
+                onChange={(ev) => setSprzetForm((f) => ({ ...f, nazwa: ev.target.value }))}
+                required
+              />
+            </label>
+            <label style={s.label}>
+              Numer inwentarzowy
+              <input
+                style={s.input}
+                type="text"
+                value={sprzetForm.numer_inwentarzowy}
+                onChange={(ev) => setSprzetForm((f) => ({ ...f, numer_inwentarzowy: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Data przeglądu / serwisu (np. ksero, drukarka)
+              <input
+                style={s.input}
+                type="date"
+                value={sprzetForm.data_przegladu}
+                onChange={(ev) => setSprzetForm((f) => ({ ...f, data_przegladu: ev.target.value }))}
+              />
+            </label>
+            <label style={s.label}>
+              Przypisany pracownik — <code style={s.code}>pracownik.nr</code>
+              <select
+                style={s.input}
+                value={String(sprzetForm.pracownik_nr ?? "")}
+                onChange={(ev) => setSprzetForm((f) => ({ ...f, pracownik_nr: ev.target.value }))}
+              >
+                <option value="">— biuro / magazyn —</option>
+                {(() => {
+                  const cur = String(sprzetForm.pracownik_nr ?? "").trim();
+                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                  const orphan = cur !== "" && !nrs.has(cur);
+                  return (
+                    <>
+                      {orphan ? (
+                        <option value={cur}>{cur} (nie w liście)</option>
+                      ) : null}
+                      {pracownicyPosortowani.map((p) => (
+                        <option key={String(p.nr)} value={String(p.nr)}>
+                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
+              Notatki
+              <textarea
+                style={{ ...s.input, minHeight: "3rem" }}
+                value={sprzetForm.notatki}
+                onChange={(ev) => setSprzetForm((f) => ({ ...f, notatki: ev.target.value }))}
+                rows={2}
+              />
+            </label>
+            {pracFetchError ? (
+              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+                Lista pracowników: {pracFetchError}
+              </p>
+            ) : null}
+            <div style={s.btnRow}>
+              <button type="submit" style={s.btn}>
+                {sprzetEdycjaId != null ? "Zapisz zmiany" : "Dodaj sprzęt"}
+              </button>
+              {sprzetEdycjaId != null ? (
+                <button type="button" style={s.btnGhost} onClick={anulujSprzetEdycje}>
+                  Anuluj edycję
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </>
+      ) : null}
+
       {widok === "kr" && widokKmDlaKr ? (
-        <section style={s.krTopWrap} aria-labelledby="km-naglowek">
+        <section style={s.krTopWrap} aria-labelledby="etap-naglowek">
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotZKmDoListy}>
-              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokKmDlaKr)
-                ? "← Pulpit"
-                : "← Lista KR"}
+              {wybranyKrKlucz != null && String(wybranyKrKlucz).trim() === String(widokKmDlaKr).trim()
+                ? "← Karta projektu"
+                : widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokKmDlaKr)
+                  ? "← Pulpit"
+                  : "← Lista KR"}
             </button>
           </div>
+          {wybranyRekordKr &&
+          wybranyKrKlucz != null &&
+          String(wybranyKrKlucz).trim() === String(widokKmDlaKr).trim()
+            ? renderKrProjektPills(wybranyRekordKr)
+            : null}
           <h2
-            id="km-naglowek"
+            id="etap-naglowek"
             style={{ ...s.krTopTitle, fontSize: "0.98rem" }}
           >
-            Kamienie milowe — KR {widokKmDlaKr}
+            Etapy — KR {widokKmDlaKr}
           </h2>
           <p style={{ ...s.muted, marginBottom: "0.75rem", fontSize: "0.82rem" }}>
             Wiersze w tabeli <code style={s.code}>kamienie_milowe</code> przypisane do tego KR. Pole{" "}
@@ -3872,23 +7079,27 @@ export default function App() {
             się po zapisie, gdy oba pola są wypełnione.{" "}
             <strong style={{ color: "#fca5a5" }}>Czerwień w tabeli i formularzu</strong> — te same
             pola co ostrzeżenie na pulpicie: zagrożenie, opis zagrożenia, przeterminowany plan (przy
-            etapie niezamkniętym), status przy takim planie.
+            etapie niezamkniętym), status przy takim planie. Kolumny{" "}
+            <strong style={{ color: "#c4b5fd" }}>FS</strong> — faktury <strong>sprzedażowe</strong> (<code style={s.code}>faktury</code> / <code style={s.code}>etap_id</code>); kosztowe — zakładka „Faktury kosztowe” (brudnopis).
           </p>
 
           <div style={s.tableWrap}>
             <table style={s.kmTable}>
               <colgroup>
-                <col style={{ width: "8%" }} />
                 <col style={{ width: "7%" }} />
                 <col style={{ width: "6.5%" }} />
-                <col style={{ width: "4.5%" }} />
-                <col style={{ width: "7%" }} />
-                <col style={{ width: "10%" }} />
-                <col style={{ width: "4.5%" }} />
-                <col style={{ width: "4.5%" }} />
-                <col style={{ width: "16%" }} />
-                <col style={{ width: "15%" }} />
-                <col style={{ width: "7%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "4%" }} />
+                <col style={{ width: "6.5%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "4%" }} />
+                <col style={{ width: "4%" }} />
+                <col style={{ width: "5%" }} />
+                <col style={{ width: "5%" }} />
+                <col style={{ width: "5%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "6.5%" }} />
               </colgroup>
               <thead>
                 <tr>
@@ -3914,6 +7125,15 @@ export default function App() {
                   <th style={s.kmTh}>Odpow.</th>
                   <th style={s.kmTh}>Osiąg.</th>
                   <th style={s.kmTh}>Zagr.</th>
+                  <th style={s.kmTh} title="Faktura sprzedażowa — skrót z tabeli faktury">
+                    FS
+                  </th>
+                  <th style={s.kmTh} title="Protokół odbioru (faktura sprzedażowa)">
+                    Prot.
+                  </th>
+                  <th style={s.kmTh} title="Data FS (najnowsza z wierszy)">
+                    Data FS
+                  </th>
                   <th style={s.kmTh}>Uwagi</th>
                   <th style={s.kmTh}>Opis zagrożenia</th>
                   <th style={s.kmTh} />
@@ -3923,6 +7143,7 @@ export default function App() {
                 {listaKmDlaWidoku.map((row) => {
                   const uw = kmTekstDoKomorki(row.uwagi);
                   const oz = kmTekstDoKomorki(row.zagrozenie_opis);
+                  const fsAgg = fakturySprzedazAgregatDlaEtapu(fakturySprzedazMapaPoEtapId.get(row.id));
                   return (
                     <tr key={row.id}>
                       <td style={s.kmTd}>
@@ -3968,6 +7189,15 @@ export default function App() {
                       >
                         {row.zagrozenie === true ? "tak" : row.zagrozenie === false ? "nie" : "—"}
                       </td>
+                      <td style={{ ...s.kmTd, fontSize: "0.65rem", color: "#d4c4f7" }}>
+                        {pulpitInvFormatTakNieNieznane(fsAgg.zafakturowane)}
+                      </td>
+                      <td style={{ ...s.kmTd, fontSize: "0.65rem", color: "#d4c4f7" }}>
+                        {pulpitInvFormatTakNieNieznane(fsAgg.protokol)}
+                      </td>
+                      <td style={{ ...s.kmTd, fontSize: "0.65rem", color: "#d4c4f7", whiteSpace: "nowrap" }}>
+                        {fsAgg.dataPokaz ? dataPLZFormat(fsAgg.dataPokaz) : "—"}
+                      </td>
                       <td style={s.kmTd} title={uw.title || undefined}>
                         {uw.text}
                       </td>
@@ -4004,7 +7234,7 @@ export default function App() {
           </div>
 
           {listaKmDlaWidoku.length === 0 ? (
-            <p style={s.muted}>Brak kamieni milowych — uzupełnij formularz poniżej.</p>
+            <p style={s.muted}>Brak zapisanych etapów — uzupełnij formularz poniżej.</p>
           ) : null}
 
           <h3
@@ -4040,7 +7270,7 @@ export default function App() {
                 <option value="">— brak —</option>
                 {(() => {
                   const cur = String(kmForm.typ_odniesienia ?? "").trim();
-                  const orphan = cur !== "" && !KM_TYP_ODNIESIENIA_W_BAZIE.includes(cur);
+                  const orphan = cur !== "" && !ETAP_TYP_ODNIESIENIA_W_BAZIE.includes(cur);
                   return (
                     <>
                       {orphan ? (
@@ -4105,7 +7335,7 @@ export default function App() {
               />
             </label>
             <label style={s.label}>
-              Status kamienia milowego
+              Status etapu
               <select
                 style={{
                   ...s.input,
@@ -4118,7 +7348,7 @@ export default function App() {
                 <option value="">— brak —</option>
                 {(() => {
                   const cur = String(kmForm.status ?? "").trim();
-                  const orphan = cur !== "" && !KM_STATUS_W_BAZIE.includes(cur);
+                  const orphan = cur !== "" && !ETAP_STATUS_W_BAZIE.includes(cur);
                   return (
                     <>
                       {orphan ? (
@@ -4126,7 +7356,7 @@ export default function App() {
                           {cur} (nie ma na liście — wybierz status z listy poniżej i zapisz)
                         </option>
                       ) : null}
-                      {KM_STATUS_W_BAZIE.map((st) => (
+                      {ETAP_STATUS_W_BAZIE.map((st) => (
                         <option key={st} value={st}>
                           {st}
                         </option>
@@ -4220,13 +7450,20 @@ export default function App() {
         <section style={s.krTopWrap} aria-labelledby="pw-kr-naglowek">
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotZPwDoListy}>
-              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokPwDlaKr)
-                ? "← Pulpit"
-                : "← Lista KR"}
+              {wybranyKrKlucz != null && String(wybranyKrKlucz).trim() === String(widokPwDlaKr).trim()
+                ? "← Karta projektu"
+                : widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokPwDlaKr)
+                  ? "← Pulpit"
+                  : "← Lista KR"}
             </button>
           </div>
+          {wybranyRekordKr &&
+          wybranyKrKlucz != null &&
+          String(wybranyKrKlucz).trim() === String(widokPwDlaKr).trim()
+            ? renderKrProjektPills(wybranyRekordKr)
+            : null}
           <h2 id="pw-kr-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
-            Zlecenia PW — KR {widokPwDlaKr}
+            Zlecenia i podwykonawcy (PW) — KR {widokPwDlaKr}
           </h2>
           <p style={{ ...s.muted, fontSize: "0.82rem", marginBottom: "0.65rem" }}>
             Tabela <code style={s.code}>kr_zlecenie_podwykonawcy</code>: podwykonawca z bazy (
@@ -4600,13 +7837,20 @@ export default function App() {
         <section style={s.krTopWrap} aria-labelledby="log-naglowek">
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotZLogDoListy}>
-              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokLogDlaKr)
-                ? "← Pulpit"
-                : "← Lista KR"}
+              {wybranyKrKlucz != null && String(wybranyKrKlucz).trim() === String(widokLogDlaKr).trim()
+                ? "← Karta projektu"
+                : widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(widokLogDlaKr)
+                  ? "← Pulpit"
+                  : "← Lista KR"}
             </button>
           </div>
+          {wybranyRekordKr &&
+          wybranyKrKlucz != null &&
+          String(wybranyKrKlucz).trim() === String(widokLogDlaKr).trim()
+            ? renderKrProjektPills(wybranyRekordKr)
+            : null}
           <h2 id="log-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
-            LOG (dziennik zdarzeń) — KR {widokLogDlaKr}
+            Zgłoszenia (dziennik zdarzeń) — KR {widokLogDlaKr}
           </h2>
           <p style={{ ...s.muted, marginBottom: "0.75rem", fontSize: "0.82rem" }}>
             Wpisy w tabeli <code style={s.code}>dziennik_zdarzen</code> dla tego projektu.{" "}
@@ -4844,22 +8088,40 @@ export default function App() {
       !widokLogDlaKr &&
       !widokPwDlaKr &&
       !widokInfoDlaKr &&
-      !wybranyKrKlucz ? (
+      (wybranyKrKlucz == null ||
+        String(wybranyKrKlucz).trim() === String(widokPulpitDlaKr ?? "").trim()) ? (
         <section style={s.krTopWrap} aria-labelledby="pulpit-naglowek">
           <div style={{ marginBottom: "0.65rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotZPulpituDoListy}>
-              ← Lista KR
+              {wybranyKrKlucz != null &&
+              String(wybranyKrKlucz).trim() === String(widokPulpitDlaKr ?? "").trim()
+                ? "← Karta projektu"
+                : "← Lista KR"}
             </button>
+            <HelpLinijka wlaczony={trybHelp}>
+              {wybranyKrKlucz != null &&
+              String(wybranyKrKlucz).trim() === String(widokPulpitDlaKr ?? "").trim()
+                ? "Wróć do zakładek projektu zamiast samej osi na czasie."
+                : "Wróć do tabeli wszystkich projektów."}
+            </HelpLinijka>
           </div>
+          {wybranyRekordKr &&
+          wybranyKrKlucz != null &&
+          String(wybranyKrKlucz).trim() === String(widokPulpitDlaKr ?? "").trim()
+            ? renderKrProjektPills(wybranyRekordKr)
+            : null}
           <h2 id="pulpit-naglowek" style={{ ...s.krTopTitle, fontSize: "0.9rem" }}>
             Pulpit projektu — KR {widokPulpitDlaKr}
           </h2>
           <p style={{ ...s.muted, marginBottom: "0.5rem", fontSize: "0.74rem", lineHeight: 1.45 }}>
             Oś czasu: <strong>najpierw data</strong>, potem ikonka (
-            <strong style={{ color: "#f87171" }}>KM</strong>,{" "}
+            <strong style={{ color: "#f87171" }}>ETAP</strong>,{" "}
             <strong style={{ color: "#fbbf24" }}>PW</strong>,{" "}
             <strong style={{ color: "#38bdf8" }}>LOG</strong>, zielony — start), potem skrót.{" "}
-            <strong style={{ color: "#4ade80" }}>Zielona linia</strong> — dziś. Poniżej: dane projektu i skrót kontaktów; edycja całego KR — przyciski pod nagłówkiem, pojedynczej pozycji — przycisk „Edytuj” przy wierszu osi.
+            <strong style={{ color: "#4ade80" }}>Zielona linia</strong> — dziś. Układ: dane i przyciski ({" "}
+            <strong style={{ color: "#fde68a" }}>UMOWA</strong> → karta KR / zakładka Umowa;{" "}
+            <strong style={{ color: "#c4b5fd" }}>INV</strong> → finanse na tym pulpicie), potem alert, kontakty PW, oś
+            czasu.
           </p>
           {!rekordKrPulpit ? (
             <div style={s.errBox} role="alert">
@@ -4992,45 +8254,294 @@ export default function App() {
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
-                  gap: "0.35rem",
+                  gap: "0.45rem 0.65rem",
                   marginBottom: "0.65rem",
+                  alignItems: "flex-start",
                 }}
               >
-                <button
-                  type="button"
-                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
-                  onClick={() => otworzKmDlaKr(rekordKrPulpit)}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                    onClick={() => otworzKmDlaKr(rekordKrPulpit)}
+                  >
+                    ETAP
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>Lista etapów tego projektu — terminy, status, „co w toku”.</HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                    onClick={() => otworzPwDlaKr(rekordKrPulpit)}
+                  >
+                    PW
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>Zlecenia dla firm zewnętrznych pod tym projektem.</HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                    onClick={() => otworzLogDlaKr(rekordKrPulpit)}
+                  >
+                    LOG
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>Dziennik zdarzeń — pełna lista wpisów i możliwość edycji.</HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                    onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}
+                  >
+                    Edytuj KR
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>Zmiana danych karty: nazwa, status, umowa, prowadzący…</HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...s.btnGhost,
+                      padding: "0.32rem 0.65rem",
+                      fontSize: "0.78rem",
+                      borderColor: "rgba(251,191,36,0.45)",
+                      color: "#fde68a",
+                    }}
+                    title="Karta projektu → zakładka Umowa (dziś: pola KR). Wkrótce: osobna tabela na wiele linków."
+                    onClick={() => przejdzDoSekcjiKr(rekordKrPulpit, "umowa")}
+                  >
+                    UMOWA
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>
+                    Przechodzisz do zakładki Umowa na karcie projektu (link, okres, zleceniodawca).
+                  </HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
+                    onClick={() => otworzInfoDlaKr(rekordKrPulpit)}
+                  >
+                    INFO
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>
+                    Podgląd ostrzeżeń i reguł dla tego projektu — krócej niż pełna zakładka z dokumentacją.
+                  </HelpLinijka>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...s.btnGhost,
+                      padding: "0.32rem 0.65rem",
+                      fontSize: "0.78rem",
+                      borderColor: "rgba(196,181,253,0.5)",
+                      color: "#ede9fe",
+                    }}
+                    title="Przewiń do finansów: FS (sprzedaż) i koszty (rama) na tym pulpicie"
+                    onClick={() =>
+                      document.getElementById("pulpit-finanse")?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      })
+                    }
+                  >
+                    INV
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>
+                    Przewija w dół do faktur dla klienta i ramy kosztów — bez zmiany widoku.
+                  </HelpLinijka>
+                </div>
+              </div>
+              <div id="pulpit-finanse" style={{ scrollMarginTop: "0.85rem" }}>
+                <div
+                  style={{
+                    fontSize: "0.62rem",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    color: "#a78bfa",
+                    marginBottom: "0.45rem",
+                    fontWeight: 700,
+                  }}
+                  id="pulpit-finanse-naglowek"
                 >
-                  KM
-                </button>
-                <button
-                  type="button"
-                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
-                  onClick={() => otworzPwDlaKr(rekordKrPulpit)}
+                  Finanse na pulpicie — sprzedaż (FS) i koszty
+                </div>
+                <div
+                  style={{
+                    marginBottom: "0.65rem",
+                    padding: "0.5rem 0.7rem",
+                    borderRadius: "8px",
+                    border: "1px solid #3d3550",
+                    background: "#18141f",
+                  }}
+                  aria-labelledby="pulpit-inv-naglowek"
                 >
-                  PW
-                </button>
-                <button
-                  type="button"
-                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
-                  onClick={() => otworzLogDlaKr(rekordKrPulpit)}
+                  <div
+                    style={{
+                      fontSize: "0.65rem",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: "#c4b5fd",
+                      marginBottom: "0.35rem",
+                    }}
+                    id="pulpit-inv-naglowek"
+                  >
+                    Sprzedaż — FS i odbiór (etap / PW)
+                  </div>
+                  <p style={{ ...s.muted, margin: "0 0 0.45rem", fontSize: "0.68rem", lineHeight: 1.45 }}>
+                    <strong style={{ color: "#e7e5ff" }}>ETAP / FS:</strong> faktury sprzedażowe z{" "}
+                    <code style={s.code}>faktury</code> (<code style={s.code}>etap_id</code>).{" "}
+                    <strong style={{ color: "#e7e5ff" }}>PW:</strong> kolumna „Odebrane” (nie to samo co protokół FS).
+                  </p>
+                  {krFakturySprzedazFetchError ? (
+                    <p style={{ ...s.muted, margin: "0 0 0.4rem", fontSize: "0.72rem", color: "#fca5a5" }} role="alert">
+                      Faktury sprzedażowe: {krFakturySprzedazFetchError}
+                    </p>
+                  ) : null}
+                  {pulpitInvWiersze.etapy.length === 0 && pulpitInvWiersze.pw.length === 0 ? (
+                    <p style={{ ...s.muted, margin: 0, fontSize: "0.72rem" }}>
+                      Brak etapów i zleceń PW dla tego KR — zestawienie puste.
+                    </p>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table
+                        style={{
+                          width: "100%",
+                          borderCollapse: "collapse",
+                          fontSize: "0.72rem",
+                          color: "#e8e8e8",
+                        }}
+                      >
+                        <thead>
+                          <tr style={{ borderBottom: "1px solid #3d3550" }}>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem 0.35rem 0", color: "#a3a3a3" }}>
+                              Źródło
+                            </th>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#a3a3a3" }}>
+                              Pozycja
+                            </th>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#a3a3a3" }}>
+                              Zafakturowane
+                            </th>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#a3a3a3" }}>
+                              Protokół (odbiór)
+                            </th>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0", color: "#a3a3a3" }}>
+                              Data (FS)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pulpitInvWiersze.etapy.map((w) => (
+                            <tr key={w.key} style={{ borderBottom: "1px solid #2a2435" }}>
+                              <td style={{ padding: "0.35rem 0.5rem 0.35rem 0", whiteSpace: "nowrap", color: "#c4b5fd" }}>
+                                {w.zrodlo}
+                              </td>
+                              <td style={{ padding: "0.35rem 0.5rem", wordBreak: "break-word" }}>{w.opis}</td>
+                              <td style={{ padding: "0.35rem 0.5rem" }}>
+                                {pulpitInvFormatTakNieNieznane(w.zafakturowane)}
+                              </td>
+                              <td style={{ padding: "0.35rem 0.5rem" }}>
+                                {pulpitInvFormatTakNieNieznane(w.protokol)}
+                              </td>
+                              <td style={{ padding: "0.35rem 0", whiteSpace: "nowrap" }}>
+                                {w.dataFs ? dataPLZFormat(w.dataFs) : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                          {pulpitInvWiersze.pw.map((w) => (
+                            <tr key={w.key} style={{ borderBottom: "1px solid #2a2435" }}>
+                              <td style={{ padding: "0.35rem 0.5rem 0.35rem 0", whiteSpace: "nowrap", color: "#fbbf24" }}>
+                                {w.zrodlo}
+                              </td>
+                              <td style={{ padding: "0.35rem 0.5rem", wordBreak: "break-word" }}>{w.opis}</td>
+                              <td style={{ padding: "0.35rem 0.5rem" }}>{pulpitInvFormatTakNieNieznane(w.zafakturowane)}</td>
+                              <td style={{ padding: "0.35rem 0.5rem" }}>
+                                {pulpitInvFormatTakNieNieznane(w.protokol)}
+                              </td>
+                              <td style={{ padding: "0.35rem 0" }}>—</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+                <div
+                  style={{
+                    marginBottom: "0.65rem",
+                    padding: "0.5rem 0.7rem",
+                    borderRadius: "8px",
+                    border: "1px solid rgba(52,211,153,0.28)",
+                    background: "rgba(6,78,59,0.12)",
+                  }}
+                  aria-labelledby="pulpit-koszty-naglowek"
                 >
-                  LOG
-                </button>
-                <button
-                  type="button"
-                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
-                  onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}
-                >
-                  Edytuj KR
-                </button>
-                <button
-                  type="button"
-                  style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
-                  onClick={() => otworzInfoDlaKr(rekordKrPulpit)}
-                >
-                  INFO
-                </button>
+                  <div
+                    style={{
+                      fontSize: "0.65rem",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: "#6ee7b7",
+                      marginBottom: "0.35rem",
+                    }}
+                    id="pulpit-koszty-naglowek"
+                  >
+                    Koszty (rama — ten sam pulpit)
+                  </div>
+                  <p style={{ ...s.muted, margin: "0 0 0.5rem", fontSize: "0.68rem", lineHeight: 1.45 }}>
+                    Klauzule, paliwo, faktury PW, RBGH / wycena później —{' '}
+                    <strong style={{ color: "#a7f3d0" }}>bez sprzedaży FS</strong> (ta jest w tabeli powyżej). BRUDNOPIS:
+                    podłączenie pod osobną tabelę w bazie.
+                  </p>
+                  <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.72rem", color: "#94a3b8" }}>
+                    <div
+                      style={{
+                        padding: "0.45rem 0.55rem",
+                        borderRadius: "8px",
+                        border: "1px dashed rgba(52,211,153,0.22)",
+                        background: "rgba(15,23,42,0.35)",
+                      }}
+                    >
+                      <strong style={{ color: "#d1fae5" }}>Szablony kosztów</strong> — typ, umowa, limity (placeholder).
+                    </div>
+                    <div
+                      style={{
+                        padding: "0.45rem 0.55rem",
+                        borderRadius: "8px",
+                        border: "1px dashed rgba(52,211,153,0.22)",
+                        background: "rgba(15,23,42,0.35)",
+                      }}
+                    >
+                      <strong style={{ color: "#d1fae5" }}>Faktury od podwykonawców</strong> — powiązanie z PW (placeholder).
+                    </div>
+                    <div
+                      style={{
+                        padding: "0.45rem 0.55rem",
+                        borderRadius: "8px",
+                        border: "1px dashed rgba(52,211,153,0.22)",
+                        background: "rgba(15,23,42,0.35)",
+                      }}
+                    >
+                      <strong style={{ color: "#d1fae5" }}>Roboczogodziny</strong> — suma h, stawka / wycena (placeholder).
+                    </div>
+                  </div>
+                  {wybranyKrKlucz != null &&
+                  String(wybranyKrKlucz).trim() === String(rekordKrPulpit.kr).trim() ? (
+                    <div style={{ marginTop: "0.55rem" }}>
+                      <button
+                        type="button"
+                        style={{ ...s.btnGhost, padding: "0.28rem 0.55rem", fontSize: "0.7rem" }}
+                        onClick={() => przejdzDoSekcjiKr(rekordKrPulpit, "faktury")}
+                      >
+                        Pełna zakładka „Faktury kosztowe” w karcie KR
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
               {(() => {
                 const n = pulpitOśKarty.filter((c) => c.wymagaUwagi).length;
@@ -5050,7 +8561,7 @@ export default function App() {
                     }}
                   >
                     <strong style={{ color: "#f87171" }}>Wymaga uwagi</strong> — {n}{" "}
-                    {n === 1 ? "pozycja" : "pozycje"} na osi. Reguły: zagrożenie lub przeterminowany plan KM (etap nie
+                    {n === 1 ? "pozycja" : "pozycje"} na osi. Reguły: zagrożenie lub przeterminowany plan etapu (etap nie
                     zamknięty), LOG w statusie „w trakcie” lub „oczekuje”, PW po terminie bez odbioru, status KR
                     „oczekuje na zamawiającego”.
                   </div>
@@ -5111,7 +8622,7 @@ export default function App() {
               ) : null}
               {pulpitOśKarty.length === 0 ? (
                 <p style={{ ...s.muted, fontSize: "0.76rem", marginBottom: "0.35rem" }}>
-                  Brak pozycji na osi — dodaj wpisy KM, PW lub LOG dla tego projektu.
+                  Brak pozycji na osi — dodaj wpisy ETAP, PW lub LOG dla tego projektu.
                 </p>
               ) : (
                 <div
@@ -5361,7 +8872,7 @@ export default function App() {
             <strong style={{ color: "#e5e5e5" }}>PW</strong>,{" "}
             <code style={s.code}>kamienie_milowe</code>,{" "}
             <code style={s.code}>dziennik_zdarzen</code>. Edycja — przyciski{" "}
-            <strong style={{ color: "#e5e5e5" }}>KM</strong>, <strong style={{ color: "#e5e5e5" }}>PW</strong>,{" "}
+            <strong style={{ color: "#e5e5e5" }}>ETAP</strong>, <strong style={{ color: "#e5e5e5" }}>PW</strong>,{" "}
             <strong style={{ color: "#e5e5e5" }}>LOG</strong>, <strong style={{ color: "#e5e5e5" }}>Edytuj KR</strong> na pulpicie
             projektu.
           </p>
@@ -5614,10 +9125,10 @@ export default function App() {
                       margin: "1.25rem 0 0.5rem",
                     }}
                   >
-                    Kamienie milowe
+                    Etapy
                   </h3>
                   {listaKmDlaInfo.length === 0 ? (
-                    <p style={s.muted}>Brak wierszy w tabeli kamienie milowe dla tego KR.</p>
+                    <p style={s.muted}>Brak zapisanych etapów dla tego KR.</p>
                   ) : (
                     <div style={s.tableWrap}>
                       <table style={s.kmTable}>
@@ -5828,13 +9339,16 @@ export default function App() {
         </section>
       ) : null}
 
-      {widok === "kr" && wybranyKrKlucz ? (
+      {widok === "kr" &&
+      wybranyKrKlucz &&
+      !widokKmDlaKr &&
+      !widokLogDlaKr &&
+      !widokPwDlaKr &&
+      !widokPulpitDlaKr ? (
         <>
           <div style={{ marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={powrotDoListyKr}>
-              {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(wybranyKrKlucz)
-                ? "← Pulpit"
-                : "← Lista KR"}
+              ← Lista KR / panel
             </button>
           </div>
           {!wybranyRekordKr ? (
@@ -5843,9 +9357,7 @@ export default function App() {
               <strong style={{ color: "#fff" }}>{wybranyKrKlucz}</strong> w aktualnej liście.
               <div style={{ marginTop: "0.75rem" }}>
                 <button type="button" style={s.btnGhost} onClick={powrotDoListyKr}>
-                  {widokPulpitDlaKr != null && String(widokPulpitDlaKr) === String(wybranyKrKlucz)
-                    ? "Wróć do pulpitu"
-                    : "Wróć do listy"}
+                  Wróć do listy
                 </button>
               </div>
             </div>
@@ -5854,123 +9366,141 @@ export default function App() {
               const item = wybranyRekordKr;
               const listaEtapow = etapyWedlugKr.get(item.kr) ?? [];
               const isEditing = editingKrKey === item.kr;
+              const etapyZagrozony = listaEtapow.some((e) => pulpitKmWymagaUwagi(e, dziśDash));
+              const stKr = String(item.status ?? "").toLowerCase();
               return (
                 <section
                   id={`kr-card-${item.kr}`}
-                  style={s.krBlock}
+                  style={{
+                    borderRadius: "20px",
+                    marginBottom: "1.25rem",
+                    overflow: "hidden",
+                    background: "linear-gradient(145deg, rgba(30,41,59,0.52), rgba(15,23,42,0.85))",
+                    border: "1px solid rgba(148,163,184,0.12)",
+                    boxShadow: "0 24px 48px -20px rgba(0,0,0,0.55)",
+                  }}
                   aria-label={`KR ${item.kr}`}
                 >
-                  <header style={s.krHead}>
-                    <span>
-                      <strong>{item.kr}</strong>
-                      {!isEditing && item.nazwa_obiektu ? ` — ${item.nazwa_obiektu}` : ""}
-                      {!isEditing && item.rodzaj_pracy?.trim() ? (
-                        <span style={s.muted}> · {item.rodzaj_pracy.trim()}</span>
-                      ) : null}
-                      {!isEditing && item.dzial ? (
-                        <span style={s.dzialWartosc}> · dział: {item.dzial}</span>
-                      ) : null}
-                      {!isEditing && item.status ? (
-                        <span
-                          style={{
-                            ...s.statusKr,
-                            ...stylEtykietyUwagiPulpitu(pulpitKrRekordWymagaUwagi(item)),
-                          }}
-                        >
-                          {" "}
-                          · {item.status}
-                        </span>
-                      ) : null}
-                      {!isEditing &&
-                      podpisOsobyProwadzacej(item.osoba_prowadzaca, mapaProwadzacychId) ? (
-                        <span style={s.muted}>
-                          {" "}
-                          · prowadzący:{" "}
-                          <strong style={{ color: "#e5e5e5" }}>
-                            {podpisOsobyProwadzacej(item.osoba_prowadzaca, mapaProwadzacychId)}
-                          </strong>
-                        </span>
-                      ) : null}
-                      {!isEditing ? (
-                        <span style={s.muted}>
-                          {" "}
-                          · start: {etykietaDatyStartu(item.data_rozpoczecia)}
-                        </span>
-                      ) : null}
-                    </span>
-                    {!isEditing ? (
-                      <button type="button" style={s.btnGhost} onClick={() => openEditKr(item)}>
-                        Edytuj KR
-                      </button>
-                    ) : null}
-                  </header>
-                  <div style={s.krBody}>
-                    {!isEditing &&
-                    (item.zleceniodawca?.trim() ||
-                      item.osoba_odpowiedzialna_zleceniodawcy?.trim() ||
-                      item.link_umowy?.trim() ||
-                      item.okres_projektu_od ||
-                      item.okres_projektu_do) ? (
-                      <div
-                        style={{
-                          marginBottom: "1rem",
-                          padding: "0.85rem 1rem",
-                          borderRadius: "10px",
-                          border: "1px solid #2e2e2e",
-                          background: "#121212",
-                          fontSize: "0.88rem",
-                          color: "#d4d4d4",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: "0.72rem",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.06em",
-                            color: "#737373",
-                            marginBottom: "0.5rem",
-                          }}
-                        >
-                          Zleceniodawca i umowa
+                  <header
+                    style={{
+                      ...s.krHead,
+                      background: "rgba(15,23,42,0.92)",
+                      flexDirection: "column",
+                      alignItems: "stretch",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        justifyContent: "space-between",
+                        gap: "0.65rem",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.02em" }}>
+                          <strong>{item.kr}</strong>
+                          {!isEditing && item.nazwa_obiektu ? (
+                            <span style={{ fontWeight: 600 }}> — {item.nazwa_obiektu}</span>
+                          ) : null}
                         </div>
-                        {item.zleceniodawca?.trim() ? (
-                          <div style={{ marginBottom: "0.35rem" }}>
-                            <span style={s.muted}>Zleceniodawca: </span>
-                            <strong style={{ color: "#f5f5f5" }}>{item.zleceniodawca.trim()}</strong>
-                          </div>
-                        ) : null}
-                        {item.osoba_odpowiedzialna_zleceniodawcy?.trim() ? (
-                          <div style={{ marginBottom: "0.35rem" }}>
-                            <span style={s.muted}>Osoba po stronie zleceniodawcy: </span>
-                            {item.osoba_odpowiedzialna_zleceniodawcy.trim()}
-                          </div>
-                        ) : null}
-                        {item.link_umowy?.trim() ? (
-                          <div style={{ marginBottom: "0.35rem" }}>
-                            <span style={s.muted}>Umowa: </span>
-                            <a
-                              href={hrefLinkuZewnetrznego(item.link_umowy)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ color: "#7dd3fc", wordBreak: "break-all" }}
-                            >
-                              {item.link_umowy.trim()}
-                            </a>
-                          </div>
-                        ) : null}
-                        {item.okres_projektu_od || item.okres_projektu_do ? (
-                          <div>
-                            <span style={s.muted}>Okres trwania: </span>
-                            {item.okres_projektu_od
-                              ? dataDoInputa(item.okres_projektu_od)
-                              : "—"}{" "}
-                            —{" "}
-                            {item.okres_projektu_do
-                              ? dataDoInputa(item.okres_projektu_do)
-                              : "—"}
+                        {!isEditing ? (
+                          <div
+                            style={{
+                              marginTop: "0.45rem",
+                              fontSize: "0.82rem",
+                              color: "#94a3b8",
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {item.dzial ? (
+                              <span style={s.dzialWartosc}>Dział: {item.dzial}</span>
+                            ) : null}
+                            {item.dzial && item.status ? <span> · </span> : null}
+                            {item.status ? (
+                              <span
+                                style={{
+                                  ...stylEtykietyUwagiPulpitu(pulpitKrRekordWymagaUwagi(item)),
+                                  color: pulpitKrRekordWymagaUwagi(item) ? "#fecaca" : "#a7f3d0",
+                                }}
+                              >
+                                {item.status}
+                              </span>
+                            ) : null}
+                            {podpisOsobyProwadzacej(item.osoba_prowadzaca, mapaProwadzacychId) ? (
+                              <span>
+                                {" "}
+                                · Prowadzący:{" "}
+                                <strong style={{ color: "#e2e8f0" }}>
+                                  {podpisOsobyProwadzacej(item.osoba_prowadzaca, mapaProwadzacychId)}
+                                </strong>
+                              </span>
+                            ) : null}
+                            <span> · Start: {etykietaDatyStartu(item.data_rozpoczecia)}</span>
+                            {item.zleceniodawca?.trim() ? (
+                              <span>
+                                {" "}
+                                · ZL: <strong style={{ color: "#cbd5e1" }}>{item.zleceniodawca.trim()}</strong>
+                              </span>
+                            ) : null}
+                            {item.link_umowy?.trim() ? (
+                              <span>
+                                {" "}
+                                ·{" "}
+                                <a
+                                  href={hrefLinkuZewnetrznego(item.link_umowy)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#7dd3fc" }}
+                                >
+                                  Umowa
+                                </a>
+                              </span>
+                            ) : null}
+                            {item.okres_projektu_od || item.okres_projektu_do ? (
+                              <span>
+                                {" "}
+                                · Okres:{" "}
+                                {item.okres_projektu_od ? dataDoInputa(item.okres_projektu_od) : "—"} →{" "}
+                                {item.okres_projektu_do ? dataDoInputa(item.okres_projektu_do) : "—"}
+                              </span>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
+                      {!isEditing ? (
+                        <button type="button" style={s.btnGhost} onClick={() => openEditKr(item)}>
+                          Edytuj KR
+                        </button>
+                      ) : null}
+                    </div>
+                    {!isEditing ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                        {stKr.includes("w toku") || stKr.includes("realiz") ? (
+                          <span style={op.badge("rgba(56,189,248,0.22)", "#bae6fd")}>W toku</span>
+                        ) : null}
+                        {pulpitKrRekordWymagaUwagi(item) ? (
+                          <span style={op.badge("rgba(234,179,8,0.22)", "#fde68a")}>Oczekuje</span>
+                        ) : null}
+                        {etapyZagrozony ? (
+                          <span style={op.badge("rgba(248,113,113,0.2)", "#fecaca")}>Zagrożone</span>
+                        ) : null}
+                        {stKr.includes("zakończ") ||
+                        stKr.includes("zakoncz") ||
+                        stKr.includes("rozlicz") ? (
+                          <span style={op.badge("rgba(52,211,153,0.22)", "#a7f3d0")}>Zakończone</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </header>
+                  <div style={{ ...s.krBody, background: "rgba(8,12,18,0.45)" }}>
+                    {!isEditing ? (
+                      <>
+                        {renderKrProjektPills(item)}
+                        {renderKrKartaSekcja(item)}
+                      </>
                     ) : null}
                     {isEditing ? (
                       <div style={s.editPanel}>
@@ -6241,46 +9771,48 @@ export default function App() {
                       </div>
                     ) : null}
 
-                    {isEditing ? <hr style={s.divider} /> : null}
-
-                    <h2 style={{ ...s.h2, marginTop: isEditing ? "0.5rem" : 0 }}>Etapy projektu</h2>
-
-                    {listaEtapow.length === 0 ? (
-                      <p style={s.muted}>Brak etapów</p>
-                    ) : (
-                      <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
-                        {listaEtapow.map((et) => (
-                          <li key={et.id} style={s.etapItem}>
-                            <strong style={{ color: "#fff" }}>{et.etap}</strong>
-                            {et.status ? (
-                              <span style={s.muted}> · status: {et.status}</span>
-                            ) : null}
-                            {et.typ_odniesienia || et.data_odniesienia ? (
-                              <span style={s.muted}>
-                                {" "}
-                                · odn.
-                                {et.typ_odniesienia
-                                  ? ` (${kmEtykietaTypuOdniesienia(et.typ_odniesienia)})`
-                                  : ""}
-                                {et.data_odniesienia
-                                  ? `: ${dataDoInputa(et.data_odniesienia)}`
-                                  : ""}
-                              </span>
-                            ) : null}
-                            {et.offset_miesiecy != null && et.offset_miesiecy !== "" ? (
-                              <span style={s.muted}> · +{et.offset_miesiecy} mc</span>
-                            ) : null}
-                            {et.data_planowana ? (
-                              <span style={s.muted}>
-                                {" "}
-                                · plan:{" "}
-                                {dataDoInputa(et.data_planowana)}
-                              </span>
-                            ) : null}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    {isEditing ? (
+                      <>
+                        <hr style={s.divider} />
+                        <h2 style={{ ...s.h2, marginTop: "0.5rem" }}>Etapy projektu (edycja w tabeli etapów)</h2>
+                        {listaEtapow.length === 0 ? (
+                          <p style={s.muted}>Brak etapów — dodaj je w zakładce Etapy.</p>
+                        ) : (
+                          <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+                            {listaEtapow.map((et) => (
+                              <li key={et.id} style={s.etapItem}>
+                                <strong style={{ color: "#fff" }}>{et.etap}</strong>
+                                {et.status ? (
+                                  <span style={s.muted}> · status: {et.status}</span>
+                                ) : null}
+                                {et.typ_odniesienia || et.data_odniesienia ? (
+                                  <span style={s.muted}>
+                                    {" "}
+                                    · odn.
+                                    {et.typ_odniesienia
+                                      ? ` (${kmEtykietaTypuOdniesienia(et.typ_odniesienia)})`
+                                      : ""}
+                                    {et.data_odniesienia
+                                      ? `: ${dataDoInputa(et.data_odniesienia)}`
+                                      : ""}
+                                  </span>
+                                ) : null}
+                                {et.offset_miesiecy != null && et.offset_miesiecy !== "" ? (
+                                  <span style={s.muted}> · +{et.offset_miesiecy} mc</span>
+                                ) : null}
+                                {et.data_planowana ? (
+                                  <span style={s.muted}>
+                                    {" "}
+                                    · plan:{" "}
+                                    {dataDoInputa(et.data_planowana)}
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
+                    ) : null}
                   </div>
                 </section>
               );
@@ -6305,9 +9837,9 @@ export default function App() {
             Kliknij nagłówek <strong style={{ color: "#7dd3fc" }}>Dział</strong> lub{" "}
             <strong style={{ color: "#a7f3d0" }}>Status</strong>, by zmienić kolejność (drugi klik — odwrotnie). Bez
             sortowania — jak w bazie (numer KR).             Przy projekcie użyj <strong style={{ color: "#fda4af" }}>Pulpit</strong>
-            — tam dane KR, oś czasu (KM / PW / LOG) i przyciski edycji.{" "}
+            — tam dane KR, oś czasu (ETAP / PW / LOG) i przyciski edycji.{" "}
             <strong style={{ color: "#f87171" }}>Różowe tło</strong> wiersza — status „oczekuje na zamawiającego” lub
-            kamień milowy z ryzykiem / przeterminowanym planem (reszta uwag tylko na pulpicie). Nowy rekord — poniżej
+            etap z ryzykiem / przeterminowanym planem (reszta uwag tylko na pulpicie). Nowy rekord — poniżej
             tabeli.
           </p>
           <div style={s.tableWrap}>
@@ -6366,7 +9898,7 @@ export default function App() {
                       <strong style={{ color: wierszUwaga ? "#fecaca" : "#fff" }}>{item.kr}</strong>
                       {wierszUwaga ? (
                         <span
-                          title="Status KR lub kamień milowy wymaga uwagi — szczegóły na pulpicie"
+                          title="Status KR lub etap wymaga uwagi — szczegóły na pulpicie"
                           style={{
                             marginLeft: "0.35rem",
                             color: "#f87171",
@@ -6563,6 +10095,202 @@ export default function App() {
 
         </>
       ) : null}
+        </main>
+
+        <aside style={op.shellAside} aria-label="Nawigacja operacyjna">
+          <div style={{ ...op.brandKicker, marginBottom: "0.5rem" }}>Sterowanie</div>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "0.45rem",
+              cursor: "pointer",
+              fontSize: "0.8rem",
+              color: "#cbd5e1",
+              marginBottom: "0.55rem",
+              lineHeight: 1.35,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={trybHelp}
+              onChange={(e) => setTrybHelp(e.target.checked)}
+              style={{ marginTop: "0.2rem", flexShrink: 0 }}
+            />
+            <span>
+              <strong style={{ color: "#4ade80" }}>Tryb HELP</strong>
+              <span style={{ display: "block", fontSize: "0.72rem", color: "#94a3b8", fontWeight: 400 }}>
+                Włącz krótkie podpowiedzi pod przyciskami (zielone). Wyłącz po prezentacji — ustawienie zostaje w
+                przeglądarce.
+              </span>
+            </span>
+          </label>
+          <input
+            type="search"
+            aria-label="Szukaj KR"
+            placeholder="Szukaj KR, obiekt, dział…"
+            value={panelKrSzukaj}
+            onChange={(e) => setPanelKrSzukaj(e.target.value)}
+            style={op.searchInput}
+          />
+          <HelpLinijka wlaczony={trybHelp}>
+            Ogranicza listę projektów po kodzie KR, nazwie obiektu lub dziale — tylko w tym panelu.
+          </HelpLinijka>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "0.35rem",
+              marginBottom: "0.75rem",
+              fontSize: "0.68rem",
+              color: "#94a3b8",
+            }}
+          >
+            <span title="Automatyczne alerty">Alerty: {listaAlertowOperacyjnych.length}</span>
+            <span title="KR z podświetleniem">Uwaga KR: {liczbaTematowUwagi}</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", marginBottom: "0.85rem" }}>
+            {[
+              {
+                id: "dashboard",
+                label: "Panel",
+                fn: przejdzDoDashboard,
+                w: "dashboard",
+                help: "Start aplikacji — liczby, skróty i ogólny obraz sytuacji.",
+              },
+              {
+                id: "kr",
+                label: "KR",
+                fn: przejdzDoKr,
+                w: "kr",
+                help: "Twoje projekty: lista, karty i pulpity — tu dzieje się codzienna praca.",
+              },
+              {
+                id: "podwykonawca",
+                label: "Podwykonawcy",
+                fn: przejdzDoPodwykonawcow,
+                w: "podwykonawca",
+                help: "Katalog firm zewnętrznych — wspólny dla wielu projektów.",
+              },
+              {
+                id: "samochody",
+                label: "Samochody",
+                fn: przejdzDoSamochody,
+                w: "samochody",
+                help: "Flota: polisy, przeglądy, uwagi — i kalendarz kto ma które auto w danym dniu.",
+              },
+              {
+                id: "sprzet",
+                label: "Sprzęt",
+                fn: przejdzDoSprzet,
+                w: "sprzet",
+                help: "Komputery, drukarki, ksera — przeglądy i przypisanie do pracownika.",
+              },
+              {
+                id: "zadania",
+                label: "Zadania ogólne",
+                fn: przejdzDoZadania,
+                w: "zadania",
+                help: "Zadania bez przypięcia do jednego etapu — ogólne terminy i obserwacje.",
+              },
+              {
+                id: "pracownik",
+                label: "Pracownicy",
+                fn: przejdzDoPracownikow,
+                w: "pracownik",
+                help: "Kto jest w systemie pod numerem — żeby wybrać prowadzącego przy projekcie.",
+              },
+              {
+                id: "ostrzezenia",
+                label: "Ostrzeżenia",
+                fn: przejdzDoOstrzezeniaPanel,
+                w: "ostrzezenia",
+                help: "Lista rzeczy, które system oznaczył jako wymagające reakcji.",
+              },
+            ].map((b) => (
+              <div key={b.id}>
+                <button
+                  type="button"
+                  style={{ ...op.navBtn, ...(widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
+                  onClick={() => b.fn()}
+                >
+                  {b.label}
+                </button>
+                <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+              </div>
+            ))}
+            <div>
+              <button type="button" style={{ ...op.navBtn, marginBottom: 0 }} onClick={przejdzDoInfoZagrozen}>
+                Reguły INFO / zagrożenia
+              </button>
+              <HelpLinijka wlaczony={trybHelp}>
+                Treść wyjaśniająca kolory i zasady — do czytania, bez edycji projektów.
+              </HelpLinijka>
+            </div>
+          </div>
+          <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.45rem" }}>Projekty (KR)</div>
+          <HelpLinijka wlaczony={trybHelp}>
+            Kliknij wiersz — otworzy się ten projekt w środkowej części ekranu. Kropka to przybliżony stan (uwaga /
+            spokój).
+          </HelpLinijka>
+          <div style={{ maxHeight: "min(38vh, 420px)", overflowY: "auto", marginBottom: "0.65rem" }}>
+            {panelKrListaFiltrowana.length === 0 ? (
+              <p style={{ ...op.muted, fontSize: "0.76rem", margin: 0 }}>Brak pozycji przy tym filtrze.</p>
+            ) : (
+              panelKrListaFiltrowana.map((row) => {
+                const active =
+                  wybranyKrKlucz != null && String(wybranyKrKlucz).trim() === String(row.kr).trim();
+                return (
+                  <button
+                    key={String(row.kr)}
+                    type="button"
+                    style={op.krListItem(active, kodyKrZWyroznieniemUwagi.has(String(row.kr).trim()))}
+                    onClick={() => wybierzKrWPanelu(row)}
+                  >
+                    <span style={{ minWidth: 0, textAlign: "left" }}>
+                      <strong>{row.kr}</strong>
+                      {row.nazwa_obiektu ? (
+                        <span style={{ display: "block", fontWeight: 500, color: "#94a3b8", fontSize: "0.74rem" }}>
+                          {String(row.nazwa_obiektu).length > 42
+                            ? `${String(row.nazwa_obiektu).slice(0, 40)}…`
+                            : row.nazwa_obiektu}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span style={op.dot(kolorKropkiKrWPanelu(row))} title="Status przybliżony" />
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {widok === "kr" && wybranyRekordKr ? (
+            <div style={{ borderTop: "1px solid rgba(148,163,184,0.12)", paddingTop: "0.75rem" }}>
+              <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.35rem" }}>
+                Sekcje: {wybranyRekordKr.kr}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                {KR_PROJEKT_MENU.map((m) => (
+                  <div key={m.id}>
+                    <button
+                      type="button"
+                      style={{
+                        ...op.navBtn,
+                        fontSize: "0.78rem",
+                        padding: "0.4rem 0.55rem",
+                        marginBottom: 0,
+                      }}
+                      onClick={() => przejdzDoSekcjiKr(wybranyRekordKr, m.id)}
+                    >
+                      {m.label}
+                    </button>
+                    <HelpLinijka wlaczony={trybHelp}>{m.help}</HelpLinijka>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </aside>
+      </div>
     </div>
   );
 }

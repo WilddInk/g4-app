@@ -128,3 +128,49 @@ CREATE POLICY "auth_delete_kr_zlecenie_pw"
   ON public.kr_zlecenie_podwykonawcy FOR DELETE TO authenticated USING (true);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_zlecenie_podwykonawcy TO authenticated;
+
+-- samochod / sprzet / samochod_rezerwacja
+DROP POLICY IF EXISTS "auth_select_samochod" ON public.samochod;
+DROP POLICY IF EXISTS "auth_insert_samochod" ON public.samochod;
+DROP POLICY IF EXISTS "auth_update_samochod" ON public.samochod;
+DROP POLICY IF EXISTS "auth_delete_samochod" ON public.samochod;
+
+CREATE POLICY "auth_select_samochod" ON public.samochod FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_samochod" ON public.samochod FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_samochod" ON public.samochod FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_delete_samochod" ON public.samochod FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.samochod TO authenticated;
+
+DROP POLICY IF EXISTS "auth_select_sprzet" ON public.sprzet;
+DROP POLICY IF EXISTS "auth_insert_sprzet" ON public.sprzet;
+DROP POLICY IF EXISTS "auth_update_sprzet" ON public.sprzet;
+DROP POLICY IF EXISTS "auth_delete_sprzet" ON public.sprzet;
+
+CREATE POLICY "auth_select_sprzet" ON public.sprzet FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_sprzet" ON public.sprzet FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_sprzet" ON public.sprzet FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_delete_sprzet" ON public.sprzet FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.sprzet TO authenticated;
+
+DROP POLICY IF EXISTS "auth_select_samochod_rezerwacja" ON public.samochod_rezerwacja;
+DROP POLICY IF EXISTS "auth_insert_samochod_rezerwacja" ON public.samochod_rezerwacja;
+DROP POLICY IF EXISTS "auth_update_samochod_rezerwacja" ON public.samochod_rezerwacja;
+DROP POLICY IF EXISTS "auth_delete_samochod_rezerwacja" ON public.samochod_rezerwacja;
+
+CREATE POLICY "auth_select_samochod_rezerwacja" ON public.samochod_rezerwacja FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_samochod_rezerwacja" ON public.samochod_rezerwacja FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_samochod_rezerwacja" ON public.samochod_rezerwacja FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_delete_samochod_rezerwacja" ON public.samochod_rezerwacja FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.samochod_rezerwacja TO authenticated;
+
+-- kr_faktura_do_zaplaty (tabela musi już istnieć — najpierw kr-faktura-do-zaplaty.sql)
+DROP POLICY IF EXISTS "auth_select_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+DROP POLICY IF EXISTS "auth_insert_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+DROP POLICY IF EXISTS "auth_update_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+DROP POLICY IF EXISTS "auth_delete_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+
+CREATE POLICY "auth_select_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_delete_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_faktura_do_zaplaty TO authenticated;

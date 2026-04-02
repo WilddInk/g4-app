@@ -223,3 +223,56 @@ CREATE POLICY "anon_delete_kr_zlecenie_pw"
   USING (true);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_zlecenie_podwykonawcy TO anon;
+
+-- Flota: samochody, sprzęt, rezerwacje (samochody-sprzet-rezerwacje.sql)
+ALTER TABLE public.samochod ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sprzet ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.samochod_rezerwacja ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "anon_select_samochod" ON public.samochod;
+DROP POLICY IF EXISTS "anon_insert_samochod" ON public.samochod;
+DROP POLICY IF EXISTS "anon_update_samochod" ON public.samochod;
+DROP POLICY IF EXISTS "anon_delete_samochod" ON public.samochod;
+
+CREATE POLICY "anon_select_samochod" ON public.samochod FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_samochod" ON public.samochod FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_samochod" ON public.samochod FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_delete_samochod" ON public.samochod FOR DELETE TO anon USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.samochod TO anon;
+
+DROP POLICY IF EXISTS "anon_select_sprzet" ON public.sprzet;
+DROP POLICY IF EXISTS "anon_insert_sprzet" ON public.sprzet;
+DROP POLICY IF EXISTS "anon_update_sprzet" ON public.sprzet;
+DROP POLICY IF EXISTS "anon_delete_sprzet" ON public.sprzet;
+
+CREATE POLICY "anon_select_sprzet" ON public.sprzet FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_sprzet" ON public.sprzet FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_sprzet" ON public.sprzet FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_delete_sprzet" ON public.sprzet FOR DELETE TO anon USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.sprzet TO anon;
+
+DROP POLICY IF EXISTS "anon_select_samochod_rezerwacja" ON public.samochod_rezerwacja;
+DROP POLICY IF EXISTS "anon_insert_samochod_rezerwacja" ON public.samochod_rezerwacja;
+DROP POLICY IF EXISTS "anon_update_samochod_rezerwacja" ON public.samochod_rezerwacja;
+DROP POLICY IF EXISTS "anon_delete_samochod_rezerwacja" ON public.samochod_rezerwacja;
+
+CREATE POLICY "anon_select_samochod_rezerwacja" ON public.samochod_rezerwacja FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_samochod_rezerwacja" ON public.samochod_rezerwacja FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_samochod_rezerwacja" ON public.samochod_rezerwacja FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_delete_samochod_rezerwacja" ON public.samochod_rezerwacja FOR DELETE TO anon USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.samochod_rezerwacja TO anon;
+
+-- Faktury kosztowe — zgłoszenia do opłacenia (KR).
+-- WYMAGANE: najpierw uruchom g4-app/supabase/kr-faktura-do-zaplaty.sql (tworzy tabelę) albo cały ten plik kończy się błędem 42P01.
+ALTER TABLE public.kr_faktura_do_zaplaty ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "anon_select_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+DROP POLICY IF EXISTS "anon_insert_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+DROP POLICY IF EXISTS "anon_update_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+DROP POLICY IF EXISTS "anon_delete_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
+
+CREATE POLICY "anon_select_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR SELECT TO anon USING (true);
+CREATE POLICY "anon_insert_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR UPDATE TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "anon_delete_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR DELETE TO anon USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_faktura_do_zaplaty TO anon;
