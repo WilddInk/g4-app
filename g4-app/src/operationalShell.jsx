@@ -1,76 +1,92 @@
 import React from "react";
 
+/** Tokeny kolorystyczne — dashboard / system operacyjny. */
+export const theme = {
+  bg: "#0b0f14",
+  surface: "#111827",
+  sidebar: "#080c10",
+  text: "#e5e7eb",
+  muted: "#9ca3af",
+  success: "#22c55e",
+  action: "#f97316",
+  danger: "#ef4444",
+  border: "rgba(148, 163, 184, 0.1)",
+};
+
 /** Styl panelu operacyjnego — ciemny, „menedżerski”, bez zewnętrznej biblioteki UI. */
 export const op = {
   shellOuter: {
     minHeight: "100vh",
-    background: "linear-gradient(165deg, #0a0e14 0%, #0d1117 38%, #080b10 100%)",
-    color: "#e6edf3",
+    background: theme.bg,
+    color: theme.text,
     fontFamily: 'system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
     WebkitFontSmoothing: "antialiased",
     textAlign: "left",
     boxSizing: "border-box",
   },
-  shellGrid: {
+  shellLayout: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(272px, 320px)",
-    gap: "clamp(1rem, 2vw, 1.75rem)",
-    maxWidth: "1560px",
-    margin: "0 auto",
-    padding: "1rem clamp(0.65rem, 2vw, 1.5rem) 2.75rem",
+    gridTemplateColumns: "240px minmax(0, 1fr)",
+    gridTemplateAreas: '"sidebar main"',
+    minHeight: "100vh",
+    width: "100%",
+    maxWidth: "100%",
+    margin: 0,
     boxSizing: "border-box",
-    alignItems: "start",
+    alignItems: "stretch",
+  },
+  shellSidebar: {
+    gridArea: "sidebar",
+    boxSizing: "border-box",
+    background: theme.sidebar,
+    borderRight: `1px solid ${theme.border}`,
+    padding: "1.25rem 0.9rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+    minHeight: "100vh",
+    overflowY: "auto",
+    alignSelf: "stretch",
   },
   shellMain: {
+    gridArea: "main",
     minWidth: 0,
-    paddingTop: "0.25rem",
-  },
-  shellAside: {
-    position: "sticky",
-    top: "0.85rem",
-    alignSelf: "start",
-    maxHeight: "calc(100vh - 1.7rem)",
-    overflowY: "auto",
-    borderRadius: "20px",
-    padding: "1.15rem 1rem",
-    background: "rgba(17, 24, 32, 0.94)",
-    border: "1px solid rgba(148, 163, 184, 0.11)",
-    boxShadow: "0 24px 48px -12px rgba(0,0,0,0.5)",
-    backdropFilter: "blur(16px)",
-    WebkitBackdropFilter: "blur(16px)",
+    padding: "clamp(1.25rem, 2.5vw, 2rem)",
+    boxSizing: "border-box",
+    background: theme.bg,
   },
   brandKicker: {
-    fontSize: "0.65rem",
+    fontSize: "0.62rem",
     fontWeight: 700,
-    letterSpacing: "0.16em",
+    letterSpacing: "0.14em",
     textTransform: "uppercase",
-    color: "#64748b",
-    margin: "0 0 0.25rem",
+    color: theme.muted,
+    margin: "0 0 0.2rem",
   },
   brandTitle: {
-    fontSize: "clamp(1.2rem, 2.4vw, 1.55rem)",
+    fontSize: "clamp(1.35rem, 2.2vw, 1.75rem)",
     fontWeight: 700,
-    color: "#f8fafc",
-    margin: "0 0 0.35rem",
-    letterSpacing: "-0.025em",
-    lineHeight: 1.2,
+    color: "#ffffff",
+    margin: "0 0 0.4rem",
+    letterSpacing: "-0.03em",
+    lineHeight: 1.15,
   },
   brandSub: {
-    fontSize: "0.84rem",
-    color: "#94a3b8",
-    margin: "0 0 1.1rem",
-    lineHeight: 1.45,
-    maxWidth: "38rem",
+    fontSize: "0.9rem",
+    color: theme.muted,
+    margin: "0 0 1.25rem",
+    lineHeight: 1.55,
+    maxWidth: "44rem",
   },
   searchInput: {
     width: "100%",
-    padding: "0.55rem 0.75rem",
+    padding: "0.6rem 0.75rem",
     borderRadius: "10px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "rgba(148,163,184,0.2)",
-    background: "rgba(15, 23, 42, 0.65)",
-    color: "#f1f5f9",
+    borderColor: theme.border,
+    background: "rgba(17,24,39,0.85)",
+    color: theme.text,
     font: "inherit",
     fontSize: "0.84rem",
     outline: "none",
@@ -81,22 +97,37 @@ export const op = {
     display: "block",
     width: "100%",
     textAlign: "left",
-    padding: "0.55rem 0.72rem",
-    marginBottom: "0.28rem",
+    padding: "0.6rem 0.85rem",
+    marginBottom: "0.2rem",
     borderRadius: "10px",
     border: "1px solid transparent",
     background: "transparent",
-    color: "#e2e8f0",
+    color: theme.text,
     font: "inherit",
-    fontSize: "0.9rem",
+    fontSize: "0.88rem",
     fontWeight: 600,
     cursor: "pointer",
     lineHeight: 1.35,
+    transition: "background 0.15s ease, border-color 0.15s ease, color 0.15s ease",
+  },
+  navBtnHover: {
+    background: "rgba(249,115,22,0.06)",
+    borderColor: "rgba(249,115,22,0.15)",
   },
   navBtnActive: {
-    background: "linear-gradient(135deg, rgba(56,189,248,0.18), rgba(99,102,241,0.12))",
-    borderColor: "rgba(56,189,248,0.35)",
-    color: "#f0f9ff",
+    background: "rgba(249,115,22,0.18)",
+    borderColor: "rgba(249,115,22,0.55)",
+    color: "#fff",
+    boxShadow: "inset 0 0 0 1px rgba(249,115,22,0.25)",
+  },
+  navSectionLabel: {
+    fontSize: "0.68rem",
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: theme.muted,
+    margin: "1rem 0 0.35rem",
+    paddingLeft: "0.35rem",
   },
   krListItem: (active, alertDot) => ({
     display: "flex",
@@ -104,24 +135,26 @@ export const op = {
     justifyContent: "space-between",
     gap: "0.5rem",
     width: "100%",
-    padding: "0.48rem 0.55rem",
-    marginBottom: "0.2rem",
-    borderRadius: "10px",
+    padding: "0.55rem 0.65rem",
+    marginBottom: "0.28rem",
+    borderRadius: "12px",
     border:
       active
-        ? "1px solid rgba(56,189,248,0.45)"
-        : "1px solid rgba(255,255,255,0.06)",
-    background: active ? "rgba(56,189,248,0.1)" : "rgba(15,23,42,0.4)",
-    color: "#e2e8f0",
+        ? "1px solid rgba(249,115,22,0.45)"
+        : `1px solid ${theme.border}`,
+    background: active ? "rgba(249,115,22,0.12)" : theme.surface,
+    color: theme.text,
     font: "inherit",
     fontSize: "0.8rem",
     fontWeight: active ? 700 : 500,
     cursor: "pointer",
     textAlign: "left",
+    transition: "background 0.15s ease, border-color 0.15s ease, transform 0.12s ease",
+    boxShadow: active ? "0 4px 16px -6px rgba(0,0,0,0.35)" : "0 2px 8px -4px rgba(0,0,0,0.25)",
   }),
   dot: (color) => ({
-    width: "7px",
-    height: "7px",
+    width: "8px",
+    height: "8px",
     borderRadius: "50%",
     background: color,
     flexShrink: 0,
@@ -129,97 +162,161 @@ export const op = {
   pillsRow: {
     display: "flex",
     flexWrap: "wrap",
-    gap: "0.4rem",
+    gap: "0.45rem",
     marginBottom: "1rem",
   },
   pill: (active) => ({
-    padding: "0.38rem 0.75rem",
+    padding: "0.4rem 0.85rem",
     borderRadius: "999px",
-    fontSize: "0.76rem",
+    fontSize: "0.78rem",
     fontWeight: 600,
-    border: active
-      ? "1px solid rgba(56,189,248,0.5)"
-      : "1px solid rgba(148,163,184,0.2)",
-    background: active
-      ? "linear-gradient(135deg, rgba(56,189,248,0.2), rgba(99,102,241,0.12))"
-      : "rgba(15,23,42,0.55)",
-    color: active ? "#e0f2fe" : "#94a3b8",
+    border: active ? "1px solid rgba(249,115,22,0.55)" : `1px solid ${theme.border}`,
+    background: active ? "rgba(249,115,22,0.15)" : theme.surface,
+    color: active ? "#fff" : theme.muted,
     cursor: "pointer",
     font: "inherit",
+    transition: "background 0.15s ease, border-color 0.15s ease",
   }),
   heroCard: {
-    borderRadius: "20px",
-    padding: "1.35rem 1.5rem",
+    borderRadius: "12px",
+    padding: "1.25rem 1.35rem",
     marginBottom: "1.35rem",
-    background: "linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.88))",
-    border: "1px solid rgba(148,163,184,0.12)",
-    boxShadow: "0 20px 40px -16px rgba(0,0,0,0.55)",
+    background: theme.surface,
+    border: `1px solid ${theme.border}`,
+    boxShadow: "0 8px 32px -12px rgba(0,0,0,0.45)",
   },
   kpiGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-    gap: "0.85rem",
-    marginBottom: "1.35rem",
+    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+    gap: "1rem",
+    marginBottom: "1.5rem",
   },
   kpiCard: (borderTint) => ({
-    borderRadius: "16px",
-    padding: "1rem 1.05rem",
-    background: "rgba(15,23,42,0.65)",
+    borderRadius: "12px",
+    padding: "1.1rem 1.25rem",
+    background: theme.surface,
     border: `1px solid ${borderTint}`,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+    boxShadow: "0 4px 20px -8px rgba(0,0,0,0.4)",
   }),
   sectionCard: {
-    borderRadius: "18px",
-    padding: "1.2rem 1.35rem",
+    borderRadius: "12px",
+    padding: "1.15rem 1.35rem",
     marginBottom: "1.15rem",
-    background: "rgba(17,24,32,0.72)",
-    border: "1px solid rgba(148,163,184,0.1)",
+    background: theme.surface,
+    border: `1px solid ${theme.border}`,
+    boxShadow: "0 4px 20px -8px rgba(0,0,0,0.35)",
   },
   sectionTitle: {
-    fontSize: "0.95rem",
+    fontSize: "1.05rem",
     fontWeight: 700,
-    color: "#f1f5f9",
-    margin: "0 0 0.85rem",
+    color: "#ffffff",
+    margin: "0 0 0.9rem",
     letterSpacing: "-0.02em",
   },
   badge: (bg, color) => ({
     display: "inline-block",
-    padding: "0.28rem 0.6rem",
-    borderRadius: "8px",
-    fontSize: "0.74rem",
+    padding: "4px 10px",
+    borderRadius: "999px",
+    fontSize: "0.72rem",
     fontWeight: 700,
     textTransform: "uppercase",
-    letterSpacing: "0.03em",
+    letterSpacing: "0.04em",
     background: bg,
     color,
     lineHeight: 1.35,
   }),
-  muted: { color: "#94a3b8", fontSize: "0.84rem", lineHeight: 1.5 },
+  muted: { color: theme.muted, fontSize: "0.875rem", lineHeight: 1.55 },
   alertRow: (severity) => {
     const map = {
-      krytyczny: { bg: "rgba(239,68,68,0.1)", border: "rgba(248,113,113,0.35)", c: "#fecaca" },
-      wazny: { bg: "rgba(234,179,8,0.1)", border: "rgba(250,204,21,0.35)", c: "#fde68a" },
-      info: { bg: "rgba(59,130,246,0.08)", border: "rgba(96,165,250,0.3)", c: "#bfdbfe" },
+      krytyczny: {
+        bg: "rgba(239,68,68,0.1)",
+        border: "rgba(239,68,68,0.35)",
+        c: "#fecaca",
+      },
+      wazny: {
+        bg: "rgba(249,115,22,0.1)",
+        border: "rgba(249,115,22,0.35)",
+        c: "#fdba74",
+      },
+      info: {
+        bg: "rgba(148,163,184,0.08)",
+        border: "rgba(148,163,184,0.2)",
+        c: theme.muted,
+      },
     };
     const t = map[severity] || map.info;
     return {
-      padding: "0.75rem 0.9rem",
+      padding: "0.85rem 1rem",
       borderRadius: "12px",
-      marginBottom: "0.45rem",
+      marginBottom: "0.5rem",
       border: `1px solid ${t.border}`,
       background: t.bg,
       color: t.c,
-      fontSize: "0.82rem",
-      lineHeight: 1.45,
+      fontSize: "0.84rem",
+      lineHeight: 1.5,
     };
   },
 };
 
-export function OpKpiCard({ label, value, hint, border = "rgba(56,189,248,0.22)", onClick, title: kpiTitle }) {
+/** Badge statusu: OK / w toku / zagrożony — kolory z theme. */
+export function OpStatusBadge({ variant = "progress", children }) {
+  const map = {
+    ok: {
+      bg: "rgba(34,197,94,0.15)",
+      color: theme.success,
+      border: "rgba(34,197,94,0.35)",
+    },
+    progress: {
+      bg: "rgba(249,115,22,0.12)",
+      color: theme.action,
+      border: "rgba(249,115,22,0.35)",
+    },
+    danger: {
+      bg: "rgba(239,68,68,0.12)",
+      color: theme.danger,
+      border: "rgba(239,68,68,0.35)",
+    },
+  };
+  const t = map[variant] || map.progress;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "4px 10px",
+        borderRadius: "999px",
+        fontSize: "0.72rem",
+        fontWeight: 700,
+        background: t.bg,
+        color: t.color,
+        border: `1px solid ${t.border}`,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+const kpiAccentValue = {
+  success: theme.success,
+  action: theme.action,
+  danger: theme.danger,
+  default: "#ffffff",
+};
+
+export function OpKpiCard({
+  label,
+  value,
+  hint,
+  border = "rgba(148,163,184,0.12)",
+  accent = "default",
+  onClick,
+  title: kpiTitle,
+}) {
   const interactive = typeof onClick === "function";
   const [hover, setHover] = React.useState(false);
   const [focused, setFocused] = React.useState(false);
   const baseKpi = op.kpiCard(border);
+  const valColor = kpiAccentValue[accent] ?? kpiAccentValue.default;
   const cardStyle = {
     ...baseKpi,
     ...(interactive
@@ -228,9 +325,9 @@ export function OpKpiCard({ label, value, hint, border = "rgba(56,189,248,0.22)"
           outline: "none",
           transform: hover || focused ? "translateY(-2px)" : undefined,
           boxShadow: focused
-            ? `0 0 0 2px rgba(56,189,248,0.55), inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 24px -8px rgba(0,0,0,0.45)`
+            ? `0 0 0 2px rgba(249,115,22,0.45), 0 12px 28px -12px rgba(0,0,0,0.5)`
             : hover
-              ? `inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 24px -8px rgba(0,0,0,0.45)`
+              ? `0 10px 28px -10px rgba(0,0,0,0.45)`
               : baseKpi.boxShadow,
         }
       : {}),
@@ -264,14 +361,31 @@ export function OpKpiCard({ label, value, hint, border = "rgba(56,189,248,0.22)"
       tabIndex={interactive ? 0 : undefined}
       title={kpiTitle ?? (interactive ? `Kliknij: ${label}` : undefined)}
     >
-      <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.35rem", fontWeight: 600 }}>
+      <div
+        style={{
+          ...op.muted,
+          fontSize: "0.75rem",
+          marginBottom: "0.45rem",
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+        }}
+      >
         {label}
       </div>
-      <div style={{ fontSize: "1.55rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.03em" }}>
+      <div
+        style={{
+          fontSize: "clamp(1.85rem, 4vw, 2.35rem)",
+          fontWeight: 800,
+          color: valColor,
+          letterSpacing: "-0.04em",
+          lineHeight: 1.05,
+        }}
+      >
         {value}
       </div>
       {hint ? (
-        <div style={{ ...op.muted, fontSize: "0.7rem", marginTop: "0.35rem" }}>{hint}</div>
+        <div style={{ ...op.muted, fontSize: "0.78rem", marginTop: "0.5rem" }}>{hint}</div>
       ) : null}
     </div>
   );
@@ -280,9 +394,15 @@ export function OpKpiCard({ label, value, hint, border = "rgba(56,189,248,0.22)"
 /** Blok „gotowe pod wdrożenie” — koncepcyjny moduł bez danych z bazy. */
 export function OpFutureModule({ title, children }) {
   return (
-    <div style={{ ...op.sectionCard, borderStyle: "dashed", borderColor: "rgba(148,163,184,0.22)" }}>
+    <div
+      style={{
+        ...op.sectionCard,
+        borderStyle: "dashed",
+        borderColor: "rgba(148,163,184,0.22)",
+      }}
+    >
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.65rem" }}>
-        <span style={op.badge("rgba(99,102,241,0.25)", "#c7d2fe")}>Wersja koncepcyjna</span>
+        <span style={op.badge("rgba(249,115,22,0.2)", "#fdba74")}>Wersja koncepcyjna</span>
         <h3 style={{ ...op.sectionTitle, margin: 0, flex: 1 }}>{title}</h3>
       </div>
       <p style={{ ...op.muted, margin: 0 }}>{children}</p>

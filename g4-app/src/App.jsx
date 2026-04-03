@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { supabase } from "./lib/supabase.js";
-import { op, OpKpiCard, OpFutureModule } from "./operationalShell.jsx";
+import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 
 /**
  * `true` — tylko zalogowani widzą dane (ustaw w .env przy deployu: VITE_REQUIRE_AUTH=true).
@@ -11,7 +11,7 @@ const requireAuth =
   import.meta.env.VITE_REQUIRE_AUTH === "true" ||
   import.meta.env.VITE_REQUIRE_AUTH === "1";
 
-/** Ciemny motyw, czytelna typografia — style inline, bez biblioteki UI. */
+/** Ciemny motyw dashboard — spójny z operationalShell (theme). */
 const s = {
   page: {
     padding: "clamp(0.75rem, 2vw, 1.75rem) clamp(0.75rem, 3vw, 2rem)",
@@ -23,16 +23,17 @@ const s = {
     boxSizing: "border-box",
     fontFamily: 'system-ui, "Segoe UI", Roboto, sans-serif',
     lineHeight: 1.55,
-    color: "#e8e8e8",
-    background: "#070707",
+    color: theme.text,
+    background: theme.bg,
     textAlign: "left",
   },
   h2: {
-    fontSize: "1.15rem",
+    fontSize: "1.2rem",
     marginTop: "2rem",
-    marginBottom: "0.65rem",
-    fontWeight: 600,
+    marginBottom: "0.75rem",
+    fontWeight: 700,
     color: "#ffffff",
+    letterSpacing: "-0.02em",
   },
   code: {
     fontSize: "0.88em",
@@ -44,66 +45,71 @@ const s = {
   },
   form: {
     display: "grid",
-    gap: "0.75rem",
+    gap: "0.85rem",
     maxWidth: "min(28rem, 100%)",
-    padding: "1.15rem",
-    border: "1px solid #2e2e2e",
-    borderRadius: "10px",
-    background: "#101010",
+    padding: "1.25rem 1.35rem",
+    border: `1px solid ${theme.border}`,
+    borderRadius: "12px",
+    background: theme.surface,
     marginBottom: "2rem",
+    boxShadow: "0 4px 24px -10px rgba(0,0,0,0.4)",
   },
   /** Rozbite border / tło — żeby nie mieszać shorthand z `borderColor` / `backgroundColor` przy podświetleniach (React 19). */
   input: {
     padding: "0.55rem 0.65rem",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#3d3d3d",
-    borderRadius: "8px",
+    borderColor: theme.border,
+    borderRadius: "10px",
     font: "inherit",
     boxSizing: "border-box",
     width: "100%",
-    backgroundColor: "#141414",
-    color: "#f5f5f5",
+    backgroundColor: "rgba(11,15,20,0.6)",
+    color: theme.text,
     outline: "none",
   },
   label: {
     display: "grid",
     gap: "0.35rem",
     fontSize: "0.82rem",
-    color: "#a3a3a3",
+    color: theme.muted,
     fontWeight: 500,
   },
   btn: {
-    padding: "0.55rem 1.1rem",
-    borderRadius: "8px",
-    border: "1px solid #d4d4d4",
-    background: "#f5f5f5",
-    color: "#0a0a0a",
+    padding: "0.6rem 1.15rem",
+    borderRadius: "10px",
+    border: `1px solid ${theme.action}`,
+    background: theme.action,
+    color: "#ffffff",
     font: "inherit",
     fontWeight: 600,
     cursor: "pointer",
+    boxShadow: "0 4px 14px -4px rgba(249,115,22,0.45)",
+    transition: "filter 0.15s ease, transform 0.12s ease",
   },
   btnGhost: {
     padding: "0.5rem 0.95rem",
-    borderRadius: "8px",
-    border: "1px solid #525252",
+    borderRadius: "10px",
+    border: `1px solid rgba(249,115,22,0.35)`,
     background: "transparent",
-    color: "#e5e5e5",
+    color: theme.text,
     font: "inherit",
     cursor: "pointer",
+    transition: "background 0.15s ease, border-color 0.15s ease",
   },
   btnRow: { display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.35rem" },
   krBlock: {
-    border: "1px solid #2a2a2a",
+    border: `1px solid ${theme.border}`,
     borderRadius: "12px",
     marginBottom: "1rem",
     overflow: "hidden",
-    background: "#0d0d0d",
+    background: theme.surface,
+    boxShadow: "0 4px 20px -8px rgba(0,0,0,0.35)",
   },
   krHead: {
-    padding: "0.9rem 1.1rem",
-    background: "#141414",
-    borderBottom: "1px solid #2a2a2a",
+    padding: "1rem 1.2rem",
+    background: "rgba(17,24,39,0.95)",
+    borderBottom: `1px solid ${theme.border}`,
     fontWeight: 600,
     color: "#fff",
     display: "flex",
@@ -118,7 +124,7 @@ const s = {
     borderBottom: "1px solid #222",
     color: "#d4d4d4",
   },
-  muted: { color: "#a3a3a3", fontSize: "0.92rem" },
+  muted: { color: theme.muted, fontSize: "0.92rem" },
   /** Teksty o działach KR — błękit na ciemnym tle */
   dzialInfo: {
     color: "#93c5fd",
@@ -131,11 +137,12 @@ const s = {
     width: "100%",
     maxWidth: "100%",
     marginBottom: "1.5rem",
-    padding: "1rem 1.15rem",
-    border: "1px solid #2e2e2e",
+    padding: "1.2rem 1.35rem",
+    border: `1px solid ${theme.border}`,
     borderRadius: "12px",
-    background: "#101010",
+    background: theme.surface,
     boxSizing: "border-box",
+    boxShadow: "0 4px 24px -10px rgba(0,0,0,0.4)",
   },
   krTopTitle: { margin: "0 0 0.6rem", fontSize: "1.05rem", fontWeight: 600, color: "#fff" },
   krTopList: { margin: 0, paddingLeft: "1.2rem", color: "#d4d4d4" },
@@ -223,9 +230,9 @@ const s = {
     overflowX: "auto",
     width: "100%",
     maxWidth: "100%",
-    border: "1px solid #2a2a2a",
+    border: `1px solid ${theme.border}`,
     borderRadius: "12px",
-    background: "#0d0d0d",
+    background: theme.surface,
     marginBottom: "1.5rem",
     boxSizing: "border-box",
     WebkitOverflowScrolling: "touch",
@@ -375,6 +382,14 @@ function tekstTrim(v) {
 
 /** Status etapu uznany za „domknięty” — nie podświetlamy przeterminowania. */
 const ETAP_STATUS_PULPIT_ZAMKNIETE = new Set(["zrealizowane", "rozliczone", "anulowane"]);
+
+/** Wariant badge dla statusu projektu KR (wizualny skrót). */
+function badgeVariantDlaStatusuKr(statusRaw) {
+  const t = String(statusRaw ?? "").trim().toLowerCase();
+  if (t === "zakończone") return "ok";
+  if (t.includes("oczekuje")) return "danger";
+  return "progress";
+}
 
 /** KR wymaga koordynacji (spotkanie / decyzja zleceniodawcy). */
 function pulpitKrRekordWymagaUwagi(rekord) {
@@ -1181,6 +1196,10 @@ export default function App() {
   const [widokPulpitDlaKr, setWidokPulpitDlaKr] = useState(null);
   /** Pulpit: pierwszy klucz sortowania — data; potem typ (ETAP/PW/LOG), potem kolejność dodania. */
   const [pulpitSortDaty, setPulpitSortDaty] = useState("asc");
+  /** Podstrona pulpitu: przegląd (skrót), pełna oś, lub treść jak zakładki karty projektu. */
+  const [pulpitPodstrona, setPulpitPodstrona] = useState("przeglad");
+  /** Drzewo nawigacji pulpitu — „Projekty” rozwinięte domyślnie. */
+  const [pulpitDrzewoRozwinProjekty, setPulpitDrzewoRozwinProjekty] = useState(true);
   /** Prezentacja: zielone podpowiedzi pod przyciskami; zapamiętane w przeglądarce. */
   const [trybHelp, setTrybHelp] = useState(() => {
     try {
@@ -2906,10 +2925,67 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  /** Mapowanie podstrony pulpitu → zakładka `krProjektSekcja` (wspólne UI z kartą projektu). */
+  function pulpitPodstronaDoKrSekcji(pod) {
+    const m = {
+      przeglad: "przeglad",
+      os: "przeglad",
+      faktury: "faktury",
+      podwykonawcy: "podwykonawcy",
+      zlecenia: "zlecenia",
+      dziennik: "zgloszenia",
+      karta: "przeglad",
+      umowa: "umowa",
+      zadania: "zadania_kr",
+      informacja: "ryzyka",
+      terminy: "terminy",
+      zespol: "zespol",
+      rozszerzenia: "rozszerzenia",
+    };
+    return m[pod] ?? "przeglad";
+  }
+
+  function pulpitZastosujMapePodstrony(pod, k, opts) {
+    const kr = String(k).trim();
+    setPulpitPodstrona(pod);
+    setKrProjektSekcja(pulpitPodstronaDoKrSekcji(pod));
+    void fetchDziennikForKr(kr);
+    if (pod === "faktury") void fetchKrFakturyDoZaplatyForKr(kr);
+    if (pod === "podwykonawcy" || pod === "zlecenia") {
+      void fetchKrZleceniaPwForKr(kr);
+      void fetchPodwykonawcy();
+    }
+    if (pod === "umowa" || pod === "informacja") void fetchKrZleceniaPwForKr(kr);
+    if (pod === "zadania") {
+      void fetchZadania();
+      void fetchPracownicy();
+      if (opts?.otworzZadanie != null && opts.otworzZadanie.id != null) {
+        setZadanieEdycjaId(opts.otworzZadanie.id);
+        setZadanieForm(zadanieWierszDoFormu(opts.otworzZadanie));
+      } else {
+        setZadanieEdycjaId(null);
+        setZadanieForm({ ...zadaniePustyForm(), kr: kr });
+      }
+    }
+  }
+
+  function pulpitNavUstawPodstrone(pod, item, opts) {
+    const k = String(item.kr).trim();
+    const kompakt = wybranyKrKlucz == null || String(wybranyKrKlucz).trim() !== k;
+    const tylkoPulpit =
+      pod === "przeglad" || pod === "os" || pod === "karta";
+    if (!tylkoPulpit || !kompakt) {
+      if (!tylkoPulpit) setWybranyKrKlucz(k);
+    }
+    pulpitZastosujMapePodstrony(pod, k, opts);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   /** Pulpit — jedna oś czasu: ETAP, PW, LOG + skrót kontaktów (przycisk przy wierszu KR). */
   function otworzPulpitDlaKr(item, opts) {
     const hub = opts?.hub === true;
     const k = String(item.kr).trim();
+    const podWejscie = opts?.podstrona ?? "przeglad";
     setWidokPulpitDlaKr(k);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
@@ -2928,12 +3004,15 @@ export default function App() {
     void fetchPracownicy();
     void fetchDziennikForKr(k);
     void fetchPodwykonawcy();
+    void fetchZadania();
+    pulpitZastosujMapePodstrony(podWejscie, k, opts);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function powrotZPulpituDoListy() {
     const kHub = wybranyKrKlucz != null ? String(wybranyKrKlucz).trim() : "";
     setWidokPulpitDlaKr(null);
+    setPulpitPodstrona("przeglad");
     setPulpitSortDaty("asc");
     setLogEdycjaId(null);
     setLogForm(logPustyForm());
@@ -3034,6 +3113,41 @@ export default function App() {
   /** Nawigacja zakładkami karty projektu — łączy stany podwidoków z istniejącą logiką. */
   function przejdzDoSekcjiKr(item, sekcjaId, opts) {
     if (!item) return;
+    const k = String(item.kr).trim();
+    const naPulpicie = widokPulpitDlaKr != null && String(widokPulpitDlaKr).trim() === k;
+
+    if (naPulpicie && sekcjaId === "etapy") {
+      setKrProjektSekcja(sekcjaId);
+      otworzKmDlaKr(item, { hub: true });
+      if (opts?.otworzKm != null && opts.otworzKm.id != null) {
+        const kmRow = opts.otworzKm;
+        window.setTimeout(() => wczytajKmDoEdycji(kmRow), 0);
+      }
+      return;
+    }
+
+    if (naPulpicie) {
+      const pillDoPod = {
+        przeglad: "przeglad",
+        os: "os",
+        faktury: "faktury",
+        zadania_kr: "zadania",
+        zlecenia: "zlecenia",
+        podwykonawcy: "podwykonawcy",
+        zgloszenia: "dziennik",
+        umowa: "umowa",
+        terminy: "terminy",
+        ryzyka: "informacja",
+        zespol: "zespol",
+        rozszerzenia: "rozszerzenia",
+      };
+      const pod = pillDoPod[sekcjaId];
+      if (pod) {
+        pulpitNavUstawPodstrone(pod, item, opts);
+        return;
+      }
+    }
+
     setKrProjektSekcja(sekcjaId);
     if (sekcjaId === "przeglad") {
       setWidokKmDlaKr(null);
@@ -3053,7 +3167,6 @@ export default function App() {
       return;
     }
     if (sekcjaId === "zgloszenia") {
-      const k = String(item.kr).trim();
       setWybranyKrKlucz(k);
       setWidokKmDlaKr(null);
       setWidokLogDlaKr(null);
@@ -3065,7 +3178,6 @@ export default function App() {
       return;
     }
     if (sekcjaId === "zlecenia" || sekcjaId === "podwykonawcy") {
-      const k = String(item.kr).trim();
       setWybranyKrKlucz(k);
       setWidokKmDlaKr(null);
       setWidokLogDlaKr(null);
@@ -3079,11 +3191,10 @@ export default function App() {
       return;
     }
     if (sekcjaId === "os") {
-      otworzPulpitDlaKr(item, { hub: true });
+      otworzPulpitDlaKr(item, { hub: true, podstrona: "os" });
       return;
     }
     /** Sekcje tylko w karcie hub (umowa, koszty, terminy…) — jak zgłoszenia: zawsze TRZYMAJ wybrany KR i wyłącz INFO. */
-    const k = String(item.kr).trim();
     const sekcjeTylkoKarta = new Set([
       "faktury",
       "zadania_kr",
@@ -4162,8 +4273,23 @@ export default function App() {
   /** Zakładki „karty projektu” — wspólne dla widoku KR i trybu hub (etapy / LOG / PW / pulpit). */
   function renderKrProjektPills(item) {
     if (!item) return null;
+    const podDoAktywnejPill = {
+      przeglad: "przeglad",
+      os: "os",
+      faktury: "faktury",
+      podwykonawcy: "podwykonawcy",
+      zlecenia: "zlecenia",
+      dziennik: "zgloszenia",
+      karta: "przeglad",
+      umowa: "umowa",
+      zadania: "zadania_kr",
+      informacja: "ryzyka",
+      terminy: "terminy",
+      zespol: "zespol",
+      rozszerzenia: "rozszerzenia",
+    };
     const activeId = widokPulpitDlaKr
-      ? "os"
+      ? podDoAktywnejPill[pulpitPodstrona] ?? "przeglad"
       : widokKmDlaKr
         ? "etapy"
         : widokLogDlaKr
@@ -4192,6 +4318,421 @@ export default function App() {
           </div>
         ))}
       </nav>
+    );
+  }
+
+  /** Lewe drzewo nawigacji pulpitu (jak panel „Projekty” na starcie). */
+  function renderPulpitDrzewoNav(item) {
+    const k = String(item.kr ?? "").trim();
+    const btnLeaf = (pod, label) => {
+      const active = pulpitPodstrona === pod;
+      return (
+        <button
+          type="button"
+          key={pod}
+          onClick={() => pulpitNavUstawPodstrone(pod, item)}
+          style={{
+            display: "block",
+            width: "100%",
+            textAlign: "left",
+            padding: "0.44rem 0.55rem 0.44rem 1.35rem",
+            marginBottom: "0.12rem",
+            border: "none",
+            borderRadius: "8px",
+            cursor: "pointer",
+            fontSize: "0.8rem",
+            background: active ? "rgba(249,115,22,0.14)" : "transparent",
+            color: active ? theme.action : theme.text,
+            borderLeft: active ? `3px solid ${theme.action}` : "3px solid transparent",
+            fontWeight: active ? 650 : 500,
+            transition: "background 0.12s ease, border-color 0.12s ease",
+          }}
+        >
+          {label}
+        </button>
+      );
+    };
+    return (
+      <nav
+        aria-label="Nawigacja pulpitu projektu"
+        style={{
+          background: theme.surface,
+          border: `1px solid ${theme.border}`,
+          borderRadius: "12px",
+          padding: "14px 12px",
+          position: "sticky",
+          top: "0.75rem",
+          maxHeight: "calc(100vh - 6rem)",
+          overflowY: "auto",
+          boxShadow: "0 4px 22px -12px rgba(0,0,0,0.5)",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setPulpitDrzewoRozwinProjekty((v) => !v)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            width: "100%",
+            padding: "0.48rem 0.55rem",
+            marginBottom: "0.4rem",
+            border: "none",
+            borderRadius: "8px",
+            background: "rgba(148,163,184,0.08)",
+            color: theme.text,
+            fontSize: "0.82rem",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          <span>Projekty</span>
+          <span style={{ color: theme.muted, fontSize: "0.75rem" }}>{pulpitDrzewoRozwinProjekty ? "▼" : "▶"}</span>
+        </button>
+        {pulpitDrzewoRozwinProjekty ? (
+          <div style={{ marginBottom: "0.35rem" }}>
+            <div
+              style={{
+                fontSize: "0.78rem",
+                fontWeight: 700,
+                color: theme.muted,
+                padding: "0.3rem 0.5rem 0.45rem 0.65rem",
+                letterSpacing: "0.04em",
+              }}
+            >
+              {k}
+            </div>
+            {btnLeaf("przeglad", "Przegląd — zagrożenia i zadania")}
+            {btnLeaf("os", "Oś czasu (ETAP · PW · LOG)")}
+            {btnLeaf("faktury", "Faktury kosztowe")}
+            {btnLeaf("zlecenia", "Zlecenia PW")}
+            {btnLeaf("podwykonawcy", "Podwykonawcy")}
+            {btnLeaf("dziennik", "Dziennik zdarzeń")}
+            {btnLeaf("zadania", "Zadania")}
+            {btnLeaf("karta", "Karta projektu — dane")}
+            {btnLeaf("umowa", "Umowa")}
+            {btnLeaf("informacja", "Informacja / ryzyka")}
+          </div>
+        ) : null}
+      </nav>
+    );
+  }
+
+  /** Strona startowa pulpitu: alerty i zadania dla jednego KR (bez pełnej osi). */
+  function renderPulpitPrzegladKr(item) {
+    const kr = String(item.kr ?? "").trim();
+    const d0 = dzisiajDataYYYYMMDD();
+    const alerty = listaAlertowOperacyjnych.filter((a) => {
+      const t = a.target;
+      if (!t) return false;
+      if (t.kind === "kr_status" && String(t.kr ?? "").trim() === kr) return true;
+      if (t.kind === "km_etap" && String(t.kr ?? "").trim() === kr) return true;
+      if (t.kind === "pw_zlecenie" && String(t.kr ?? "").trim() === kr) return true;
+      if (t.kind === "zadanie" && String(t.row?.kr ?? "").trim() === kr) return true;
+      return false;
+    });
+    const zadaniaKr = zadaniaList.filter((z) => String(z.kr ?? "").trim() === kr);
+    const zadaniaOtwarte = zadaniaKr.filter((z) => !zadanieCzyUkonczoneStatus(z.status));
+    const krytyczne = alerty.filter((a) => a.severity === "krytyczny").length;
+    const wazne = alerty.filter((a) => a.severity === "wazny").length;
+    const listaEtapow = etapyWedlugKr.get(item.kr) ?? [];
+    const etapyRyzyko = listaEtapow.filter((e) => pulpitKmWymagaUwagi(e, d0)).length;
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "1.35rem" }}>
+        <div>
+          <h2
+            style={{
+              margin: "0 0 0.35rem",
+              fontSize: "1.35rem",
+              fontWeight: 800,
+              color: "#ffffff",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {item.kr}
+            <span
+              style={{
+                display: "block",
+                fontSize: "0.95rem",
+                fontWeight: 600,
+                color: theme.muted,
+                marginTop: "0.4rem",
+              }}
+            >
+              {tekstTrim(item.nazwa_obiektu) || "—"}
+            </span>
+          </h2>
+          <p style={{ ...op.muted, margin: 0, fontSize: "0.86rem", lineHeight: 1.55, maxWidth: "44rem" }}>
+            Najważniejsze na start: zagrożenia operacyjne i otwarte zadania. Pełna oś czasu, finanse (INV) i formularze —
+            w sekcjach po lewej.
+          </p>
+        </div>
+        <div style={op.kpiGrid}>
+          <OpKpiCard
+            label="Alerty (ten projekt)"
+            value={alerty.length}
+            hint={alerty.length ? `${krytyczne} krytycznych · ${wazne} ważnych` : "Brak pozycji z listy operacyjnej"}
+            accent={alerty.length ? "danger" : "success"}
+            border={alerty.length ? "rgba(239,68,68,0.28)" : "rgba(34,197,94,0.28)"}
+            onClick={() => pulpitNavUstawPodstrone(alerty.length ? "informacja" : "os", item)}
+            title={alerty.length ? "Panel ryzyk i szczegóły" : "Oś czasu projektu"}
+          />
+          <OpKpiCard
+            label="Etapy z uwagą"
+            value={etapyRyzyko}
+            hint="Ryzyko / plan / status KR"
+            accent={etapyRyzyko ? "danger" : "success"}
+            border={etapyRyzyko ? "rgba(239,68,68,0.25)" : "rgba(34,197,94,0.22)"}
+            onClick={() => pulpitNavUstawPodstrone(etapyRyzyko ? "informacja" : "os", item)}
+          />
+          <OpKpiCard
+            label="Zadania otwarte"
+            value={zadaniaOtwarte.length}
+            hint={`Łącznie przy KR: ${zadaniaKr.length}`}
+            accent={zadaniaOtwarte.length ? "action" : "success"}
+            border="rgba(249,115,22,0.26)"
+            onClick={() => pulpitNavUstawPodstrone("zadania", item)}
+          />
+          <OpKpiCard
+            label="Pulpit operacyjny"
+            value="Oś"
+            hint="Chronologia ETAP · PW · LOG"
+            accent="action"
+            border="rgba(249,115,22,0.22)"
+            onClick={() => pulpitNavUstawPodstrone("os", item)}
+          />
+        </div>
+        <div
+          style={{
+            ...op.sectionCard,
+            borderStyle: "solid",
+            borderColor: "rgba(148,163,184,0.15)",
+            padding: "1.1rem 1.25rem",
+          }}
+        >
+          <h3 style={{ ...op.sectionTitle, marginTop: 0, fontSize: "0.95rem" }}>Zagrożenia i alerty dla tego KR</h3>
+          {alerty.length === 0 ? (
+            <p style={{ ...op.muted, margin: 0, fontSize: "0.88rem" }}>
+              <OpStatusBadge variant="ok">OK</OpStatusBadge>
+              <span style={{ marginLeft: "0.5rem" }}>Brak wpisów z automatycznej listy operacyjnej.</span>
+            </p>
+          ) : (
+            <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+              {alerty.map((a, i) => (
+                <li key={i}>
+                  <button
+                    type="button"
+                    onClick={() => przejdzZAlertuOperacyjnego(a.target)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "0.85rem 1rem",
+                      borderRadius: "12px",
+                      border: `1px solid ${
+                        a.severity === "krytyczny" ? "rgba(239,68,68,0.35)" : "rgba(249,115,22,0.25)"
+                      }`,
+                      background: theme.surface,
+                      color: theme.text,
+                      fontSize: "0.86rem",
+                      lineHeight: 1.45,
+                      cursor: "pointer",
+                      transition: "transform 0.12s ease, box-shadow 0.12s ease",
+                    }}
+                  >
+                    <span style={{ marginRight: "0.45rem", verticalAlign: "middle" }}>
+                      {a.severity === "krytyczny" ? (
+                        <OpStatusBadge variant="danger">Krytyczne</OpStatusBadge>
+                      ) : (
+                        <OpStatusBadge variant="progress">Ważne</OpStatusBadge>
+                      )}
+                    </span>
+                    {a.text}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div
+          style={{
+            ...op.sectionCard,
+            borderStyle: "solid",
+            borderColor: "rgba(148,163,184,0.15)",
+            padding: "1.1rem 1.25rem",
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "0.65rem" }}>
+            <h3 style={{ ...op.sectionTitle, margin: 0, fontSize: "0.95rem" }}>Zadania</h3>
+            <button type="button" style={{ ...s.btnGhost, fontSize: "0.82rem" }} onClick={() => pulpitNavUstawPodstrone("zadania", item)}>
+              Pełna lista i formularz
+            </button>
+          </div>
+          {zadaniaKr.length === 0 ? (
+            <p style={{ ...op.muted, margin: "0.75rem 0 0", fontSize: "0.88rem" }}>Brak zadań przypisanych do tego KR.</p>
+          ) : (
+            <ul style={{ margin: "0.85rem 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              {zadaniaKr.slice(0, 8).map((row) => {
+                const zt = kmTekstDoKomorki(row.zadanie);
+                const plan = dataDoSortuYYYYMMDD(row.data_planowana);
+                const przeterm =
+                  plan &&
+                  plan < d0 &&
+                  !tekstTrim(row.data_realna) &&
+                  !zadanieCzyUkonczoneStatus(row.status);
+                const ukoncz = zadanieCzyUkonczoneStatus(row.status);
+                return (
+                  <li
+                    key={row.id}
+                    style={{
+                      padding: "0.85rem 1rem",
+                      borderRadius: "12px",
+                      border: `1px solid ${przeterm ? "rgba(239,68,68,0.35)" : theme.border}`,
+                      background: theme.surface,
+                      boxShadow: "0 2px 14px -8px rgba(0,0,0,0.35)",
+                    }}
+                  >
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.4rem", marginBottom: "0.35rem" }}>
+                      {ukoncz ? <OpStatusBadge variant="ok">Zakończone</OpStatusBadge> : <OpStatusBadge variant="progress">W toku</OpStatusBadge>}
+                      {przeterm ? <OpStatusBadge variant="danger">Po terminie</OpStatusBadge> : null}
+                      {row.status?.trim() ? (
+                        <span style={{ fontSize: "0.75rem", color: theme.muted }}>{row.status}</span>
+                      ) : null}
+                    </div>
+                    <div style={{ fontWeight: 650, color: "#fff", fontSize: "0.92rem" }} title={zt.title}>
+                      {zt.text}
+                    </div>
+                    <div style={{ fontSize: "0.8rem", color: theme.muted, marginTop: "0.35rem" }}>
+                      Plan: {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"} · Realizacja:{" "}
+                      {row.data_realna ? dataDoInputa(row.data_realna) : "—"}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {zadaniaKr.length > 8 ? (
+            <p style={{ ...op.muted, margin: "0.65rem 0 0", fontSize: "0.78rem" }}>
+              Pokazano 8 z {zadaniaKr.length} — reszta w sekcji „Zadania”.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  /** Kompaktowa karta „Dane projektu” na pulpicie (ta sama treść co wcześniej pod nagłówkiem). */
+  function renderPulpitDaneProjektuCard(r) {
+    const siatka = {
+      display: "grid",
+      gridTemplateColumns: "minmax(5.5rem, auto) 1fr",
+      gap: "0.22rem 0.65rem",
+      alignItems: "start",
+      fontSize: "0.72rem",
+      color: "#d4d4d4",
+    };
+    const dd = { margin: 0, wordBreak: "break-word" };
+    const ok_od = dataDoInputa(r.okres_projektu_od);
+    const ok_do = dataDoInputa(r.okres_projektu_do);
+    const okA = ok_od && /^\d{4}-\d{2}-\d{2}$/.test(ok_od) ? dataPLZFormat(ok_od) : null;
+    const okB = ok_do && /^\d{4}-\d{2}-\d{2}$/.test(ok_do) ? dataPLZFormat(ok_do) : null;
+    const okresWar = okA || okB ? `${okA || "—"} → ${okB || "—"}` : null;
+    const krKartaUwaga = pulpitKrRekordWymagaUwagi(r);
+    return (
+      <div
+        style={{
+          marginBottom: "0.55rem",
+          padding: "0.55rem 0.75rem",
+          borderRadius: "12px",
+          border: krKartaUwaga ? `1px solid rgba(239,68,68,0.45)` : `1px solid ${theme.border}`,
+          borderLeft: krKartaUwaga ? `4px solid ${theme.danger}` : undefined,
+          background: krKartaUwaga ? "rgba(239,68,68,0.08)" : theme.surface,
+        }}
+      >
+        <div
+          style={{
+            fontSize: "0.65rem",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            color: krKartaUwaga ? "#fca5a5" : theme.muted,
+            marginBottom: "0.35rem",
+          }}
+        >
+          Dane projektu
+          {krKartaUwaga ? (
+            <span style={{ marginLeft: "0.5rem", color: theme.danger, fontWeight: 700 }}>— uwaga: status KR</span>
+          ) : null}
+        </div>
+        <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#fafafa", marginBottom: "0.45rem" }}>
+          {tekstTrim(r.nazwa_obiektu) || "—"}
+        </div>
+        <dl style={{ ...siatka, margin: 0 }}>
+          {tekstTrim(r.rodzaj_pracy) ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Rodzaj</dt>
+              <dd style={dd}>{tekstTrim(r.rodzaj_pracy)}</dd>
+            </>
+          ) : null}
+          {tekstTrim(r.dzial) ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Dział</dt>
+              <dd style={{ ...dd, ...s.dzialWartosc }}>{tekstTrim(r.dzial)}</dd>
+            </>
+          ) : null}
+          {tekstTrim(r.status) ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Status</dt>
+              <dd style={{ ...dd, ...s.statusKr }}>{tekstTrim(r.status)}</dd>
+            </>
+          ) : null}
+          {r.data_rozpoczecia ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Start</dt>
+              <dd style={dd}>{etykietaDatyStartu(r.data_rozpoczecia)}</dd>
+            </>
+          ) : null}
+          {podpisOsobyProwadzacej(r.osoba_prowadzaca, mapaProwadzacychId) ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Prowadzący</dt>
+              <dd style={dd}>{podpisOsobyProwadzacej(r.osoba_prowadzaca, mapaProwadzacychId)}</dd>
+            </>
+          ) : null}
+          {tekstTrim(r.zleceniodawca) ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Zleceniodawca</dt>
+              <dd style={dd}>{tekstTrim(r.zleceniodawca)}</dd>
+            </>
+          ) : null}
+          {tekstTrim(r.osoba_odpowiedzialna_zleceniodawcy) ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Kontakt ZL</dt>
+              <dd style={dd}>{tekstTrim(r.osoba_odpowiedzialna_zleceniodawcy)}</dd>
+            </>
+          ) : null}
+          {okresWar ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Okres</dt>
+              <dd style={dd}>{okresWar}</dd>
+            </>
+          ) : null}
+          {tekstTrim(r.link_umowy) ? (
+            <>
+              <dt style={{ ...s.muted, margin: 0 }}>Umowa</dt>
+              <dd style={dd}>
+                <a
+                  href={hrefLinkuZewnetrznego(r.link_umowy)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#7dd3fc" }}
+                >
+                  link
+                </a>
+              </dd>
+            </>
+          ) : null}
+        </dl>
+      </div>
     );
   }
 
@@ -4433,7 +4974,11 @@ export default function App() {
           </div>
 
           <div style={s.btnRow}>
-            <button type="button" style={s.btn} onClick={() => otworzPulpitDlaKr(item, { hub: true })}>
+            <button
+              type="button"
+              style={s.btn}
+              onClick={() => otworzPulpitDlaKr(item, { hub: true, podstrona: "os" })}
+            >
               Oś czasu (pełny pulpit)
             </button>
             <button type="button" style={s.btnGhost} onClick={() => otworzKmDlaKr(item, { hub: true })}>
@@ -5350,7 +5895,7 @@ export default function App() {
 
   return (
     <div style={op.shellOuter}>
-      <div style={op.shellGrid}>
+      <div style={op.shellLayout}>
         <main style={op.shellMain}>
           <header style={{ marginBottom: "1.35rem" }}>
             <p style={op.brandKicker}>PODGLĄD OPERACYJNY · USŁUGI GEODEZYJNE</p>
@@ -5422,68 +5967,91 @@ export default function App() {
             </div>
             <div style={op.kpiGrid}>
               <OpKpiCard
-                label="Aktywne projekty (KR)"
+                label="Projekty (KR)"
                 value={krList.length}
-                hint="Rekordy w tabeli kr"
+                hint="Aktywne karty w systemie"
+                accent="success"
+                border="rgba(34,197,94,0.28)"
                 onClick={przejdzDoKr}
-                title="Kliknij: lista projektów (KR)"
+                title="Kliknij: lista projektów"
               />
               <OpKpiCard
-                label="Tematy wymagające uwagi (KR)"
-                value={liczbaTematowUwagi}
-                hint="Lista KR — zgodnie z regułami podświetleń"
-                border="rgba(248,113,113,0.35)"
-                onClick={przejdzDoKr}
-                title="Kliknij: lista projektów (KR) — tematy z uwagą"
-              />
-              <OpKpiCard
-                label="Otwarte zgłoszenia (globalnie)"
-                value={liczbaOtwartychZgloszenGlobal}
-                hint="Placeholder — do podłączenia zbiorczego zapytania na dziennik_zdarzen"
-                border="rgba(147,197,253,0.28)"
+                label="Zagrożenia i alerty"
+                value={listaAlertowOperacyjnych.length}
+                hint="Automatyczna lista operacyjna"
+                accent="danger"
+                border="rgba(239,68,68,0.32)"
                 onClick={przejdzDoOstrzezeniaPanel}
-                title="Kliknij: Ostrzeżenia (zbiorczy podgląd zdarzeń)"
+                title="Kliknij: raporty / ostrzeżenia"
               />
               <OpKpiCard
-                label="Etapy — wymagające uwagi"
-                value={liczbaOpoznionychEtapow}
-                hint="Etapy: ryzyko / termin / zagrożenie"
-                border="rgba(251,191,36,0.35)"
-                onClick={przejdzDoOstrzezeniaPanel}
-                title="Kliknij: Ostrzeżenia"
-              />
-              <OpKpiCard
-                label="Zlecenia PW po terminie (odbiór)"
-                value={liczbaZlecenDoOdbioru}
-                hint="Zbiorcza lista zleceń PW"
-                border="rgba(248,113,113,0.3)"
-                onClick={przejdzDoPodwykonawcow}
-                title="Kliknij: zlecenia podwykonawców"
-              />
-              <OpKpiCard
-                label="Zadania ogólne w toku (heurystyka)"
-                value={liczbaZadanWToku}
-                hint="Status inny niż domknięcie"
-                border="rgba(52,211,153,0.28)"
+                label="Zadania"
+                value={zadaniaList.length}
+                hint="Łącznie w module zadań"
+                accent="action"
+                border="rgba(249,115,22,0.32)"
                 onClick={przejdzDoZadania}
                 title="Kliknij: zadania"
               />
               <OpKpiCard
-                label="Samochody — zgłoszone naprawy"
-                value={samochodyWymagajaceNaprawyLista.length}
-                hint="Wypełnione pole „wymagane naprawy” we flocie"
-                border="rgba(248,113,113,0.42)"
+                label="Zgłoszenia (otwarte zadania)"
+                value={liczbaZadanWToku}
+                hint="Bez statusu domknięcia — szybki obraz pracy"
+                accent="action"
+                border="rgba(249,115,22,0.22)"
+                onClick={przejdzDoZadania}
+                title="Kliknij: zadania"
+              />
+            </div>
+            <div style={{ ...op.muted, fontSize: "0.78rem", marginTop: "-0.5rem", marginBottom: "1rem" }}>
+              Skróty:{" "}
+              <button
+                type="button"
+                onClick={przejdzDoPodwykonawcow}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: theme.action,
+                  cursor: "pointer",
+                  font: "inherit",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                PW po terminie: {liczbaZlecenDoOdbioru}
+              </button>
+              {" · "}
+              <button
+                type="button"
                 onClick={przejdzDoSamochody}
-                title="Kliknij: flota / samochody"
-              />
-              <OpKpiCard
-                label="Faktury kosztowe — do opłacenia"
-                value={fakturyDoZaplatyOczekujaceList.length}
-                hint="Zgłoszenia pracowników (zakładka Faktury kosztowe przy KR)"
-                border="rgba(251,191,36,0.42)"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: theme.muted,
+                  cursor: "pointer",
+                  font: "inherit",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                Flota (naprawy): {samochodyWymagajaceNaprawyLista.length}
+              </button>
+              {" · "}
+              <button
+                type="button"
                 onClick={przewinDoDashboardFakturyDoOplacenia}
-                title="Kliknij: przewiń do listy faktur do opłacenia na tym panelu"
-              />
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: theme.muted,
+                  cursor: "pointer",
+                  font: "inherit",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                Faktury do opłacenia: {fakturyDoZaplatyOczekujaceList.length}
+              </button>
             </div>
           </div>
 
@@ -9084,21 +9652,14 @@ export default function App() {
                 : "Wróć do tabeli wszystkich projektów."}
             </HelpLinijka>
           </div>
-          {rekordKrPulpit ? renderKrProjektPills(rekordKrPulpit) : null}
-          <h2 id="pulpit-naglowek" style={{ ...s.krTopTitle, fontSize: "0.9rem" }}>
+          <h2 id="pulpit-naglowek" style={{ ...s.krTopTitle, fontSize: "1.05rem" }}>
             Pulpit projektu — KR {widokPulpitDlaKr}
           </h2>
-          <p style={{ ...s.muted, marginBottom: "0.5rem", fontSize: "0.74rem", lineHeight: 1.45 }}>
-            Oś czasu: <strong>najpierw data</strong>, potem ikonka (
-            <strong style={{ color: "#f87171" }}>ETAP</strong>,{" "}
-            <strong style={{ color: "#fbbf24" }}>PW</strong>,{" "}
-            <strong style={{ color: "#38bdf8" }}>LOG</strong>, zielony — start), potem skrót.{" "}
-            <strong style={{ color: "#4ade80" }}>Zielona linia</strong> — dziś.{" "}
-            <strong style={{ color: "#fde68a" }}>Zakładki pod tytułem</strong> (m.in.{" "}
-            <strong style={{ color: "#fde68a" }}>Faktury kosztowe</strong>) — ta sama nawigacja co na karcie projektu,
-            także gdy wszedłaś na pulpit skrótem z listy KR. Skróty:{" "}
-            <strong style={{ color: "#fde68a" }}>UMOWA</strong>, <strong style={{ color: "#c4b5fd" }}>INV</strong>{" "}
-            (finanse FS / rama kosztów na tym ekranie).
+          <p style={{ ...s.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5, maxWidth: "48rem" }}>
+            Nawigacja jak na stronie startowej:{" "}
+            <strong style={{ color: theme.action }}>drzewo po lewej</strong> (Projekty → ten KR). Domyślnie{" "}
+            <strong style={{ color: theme.text }}>przegląd</strong> — zagrożenia i zadania. Pełna oś czasu, FIN (INV) i
+            skróty ETAP / PW / LOG — pozycja <strong style={{ color: theme.action }}>Oś czasu</strong>.
           </p>
           {!rekordKrPulpit ? (
             <div style={s.errBox} role="alert">
@@ -9110,124 +9671,34 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <>
-              {(() => {
-                const r = rekordKrPulpit;
-                const siatka = {
-                  display: "grid",
-                  gridTemplateColumns: "minmax(5.5rem, auto) 1fr",
-                  gap: "0.22rem 0.65rem",
-                  alignItems: "start",
-                  fontSize: "0.72rem",
-                  color: "#d4d4d4",
-                };
-                const dd = { margin: 0, wordBreak: "break-word" };
-                const ok_od = dataDoInputa(r.okres_projektu_od);
-                const ok_do = dataDoInputa(r.okres_projektu_do);
-                const okA = ok_od && /^\d{4}-\d{2}-\d{2}$/.test(ok_od) ? dataPLZFormat(ok_od) : null;
-                const okB = ok_do && /^\d{4}-\d{2}-\d{2}$/.test(ok_do) ? dataPLZFormat(ok_do) : null;
-                const okresWar =
-                  okA || okB ? `${okA || "—"} → ${okB || "—"}` : null;
-                const krKartaUwaga = pulpitKrRekordWymagaUwagi(r);
-                return (
-                  <div
-                    style={{
-                      marginBottom: "0.55rem",
-                      padding: "0.55rem 0.75rem",
-                      borderRadius: "8px",
-                      border: krKartaUwaga ? "1px solid rgba(248,113,113,0.45)" : "1px solid #2a2a2a",
-                      borderLeft: krKartaUwaga ? "4px solid #f87171" : undefined,
-                      background: krKartaUwaga ? "rgba(248,113,113,0.08)" : "#121212",
-                    }}
-                  >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)",
+                gap: "1.35rem",
+                alignItems: "start",
+              }}
+            >
+              {renderPulpitDrzewoNav(rekordKrPulpit)}
+              <div style={{ minWidth: 0 }}>
+                {pulpitPodstrona === "przeglad" ? (
+                  renderPulpitPrzegladKr(rekordKrPulpit)
+                ) : pulpitPodstrona === "karta" ? (
+                  <>
+                    {renderPulpitDaneProjektuCard(rekordKrPulpit)}
+                    <div style={{ marginTop: "0.85rem" }}>
+                      <button type="button" style={s.btn} onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}>
+                        Edytuj kartę projektu (KR)
+                      </button>
+                      <HelpLinijka wlaczony={trybHelp}>
+                        Pełna edycja rekordu w bazie — pola umowy, status, prowadzący.
+                      </HelpLinijka>
+                    </div>
+                  </>
+                ) : pulpitPodstrona === "os" ? (
+                  <>
+                    {renderPulpitDaneProjektuCard(rekordKrPulpit)}
                     <div
-                      style={{
-                        fontSize: "0.65rem",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.06em",
-                        color: krKartaUwaga ? "#fca5a5" : "#737373",
-                        marginBottom: "0.35rem",
-                      }}
-                    >
-                      Dane projektu
-                      {krKartaUwaga ? (
-                        <span style={{ marginLeft: "0.5rem", color: "#f87171", fontWeight: 700 }}>
-                          — uwaga: status KR
-                        </span>
-                      ) : null}
-                    </div>
-                    <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#fafafa", marginBottom: "0.45rem" }}>
-                      {tekstTrim(r.nazwa_obiektu) || "—"}
-                    </div>
-                    <dl style={{ ...siatka, margin: 0 }}>
-                      {tekstTrim(r.rodzaj_pracy) ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Rodzaj</dt>
-                          <dd style={dd}>{tekstTrim(r.rodzaj_pracy)}</dd>
-                        </>
-                      ) : null}
-                      {tekstTrim(r.dzial) ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Dział</dt>
-                          <dd style={{ ...dd, ...s.dzialWartosc }}>{tekstTrim(r.dzial)}</dd>
-                        </>
-                      ) : null}
-                      {tekstTrim(r.status) ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Status</dt>
-                          <dd style={{ ...dd, ...s.statusKr }}>{tekstTrim(r.status)}</dd>
-                        </>
-                      ) : null}
-                      {r.data_rozpoczecia ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Start</dt>
-                          <dd style={dd}>{etykietaDatyStartu(r.data_rozpoczecia)}</dd>
-                        </>
-                      ) : null}
-                      {podpisOsobyProwadzacej(r.osoba_prowadzaca, mapaProwadzacychId) ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Prowadzący</dt>
-                          <dd style={dd}>{podpisOsobyProwadzacej(r.osoba_prowadzaca, mapaProwadzacychId)}</dd>
-                        </>
-                      ) : null}
-                      {tekstTrim(r.zleceniodawca) ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Zleceniodawca</dt>
-                          <dd style={dd}>{tekstTrim(r.zleceniodawca)}</dd>
-                        </>
-                      ) : null}
-                      {tekstTrim(r.osoba_odpowiedzialna_zleceniodawcy) ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Kontakt ZL</dt>
-                          <dd style={dd}>{tekstTrim(r.osoba_odpowiedzialna_zleceniodawcy)}</dd>
-                        </>
-                      ) : null}
-                      {okresWar ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Okres</dt>
-                          <dd style={dd}>{okresWar}</dd>
-                        </>
-                      ) : null}
-                      {tekstTrim(r.link_umowy) ? (
-                        <>
-                          <dt style={{ ...s.muted, margin: 0 }}>Umowa</dt>
-                          <dd style={dd}>
-                            <a
-                              href={hrefLinkuZewnetrznego(r.link_umowy)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ color: "#7dd3fc" }}
-                            >
-                              link
-                            </a>
-                          </dd>
-                        </>
-                      ) : null}
-                    </dl>
-                  </div>
-                );
-              })()}
-              <div
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
@@ -9867,7 +10338,12 @@ export default function App() {
                   );
                 })}
               </ul>
-            </>
+                  </>
+                ) : (
+                  <div style={{ marginTop: "0.15rem" }}>{renderKrKartaSekcja(rekordKrPulpit)}</div>
+                )}
+              </div>
+            </div>
           )}
         </section>
       ) : null}
@@ -10855,128 +11331,115 @@ export default function App() {
           <h2 id="kr-introduced-heading" style={s.krTopTitle}>
             Wprowadzone KR ({krList.length})
           </h2>
-          <p style={{ ...s.muted, marginTop: 0, marginBottom: "0.65rem", fontSize: "0.88rem" }}>
-            Kliknij nagłówek <strong style={{ color: "#fef08a" }}>KR</strong>,{" "}
-            <strong style={{ color: "#7dd3fc" }}>Dział</strong> lub{" "}
-            <strong style={{ color: "#a7f3d0" }}>Status</strong>, by zmienić kolejność (drugi klik — odwrotnie). Bez
-            aktywnego sortowania — kolejność jak z bazy. Przy projekcie użyj{" "}
-            <strong style={{ color: "#fda4af" }}>Pulpit</strong>
-            — tam dane KR, oś czasu (ETAP / PW / LOG) i przyciski edycji.{" "}
-            <strong style={{ color: "#f87171" }}>Różowe tło</strong> wiersza — status „oczekuje na zamawiającego” lub
-            etap z ryzykiem / przeterminowanym planem (reszta uwag tylko na pulpicie). Nowy rekord — poniżej
-            tabeli.
+          <p style={{ ...s.muted, marginTop: 0, marginBottom: "1rem", fontSize: "0.88rem", maxWidth: "52rem" }}>
+            Sortowanie poniżej — drugi klik zmienia kierunek. Bez wybranego sortowania kolejność jak z bazy. Karta z{" "}
+            <strong style={{ color: theme.danger }}>czerwoną ramką</strong> — projekt lub etap wg reguł uwagi. Wejdź w{" "}
+            <strong style={{ color: theme.action }}>Pulpit</strong>, aby zobaczyć oś ETAP / PW / LOG. Nowy rekord —
+            formularz pod listą.
           </p>
-          <div style={s.tableWrap}>
-            <table style={s.table}>
-              <thead>
-                <tr>
-                  <th style={{ ...s.th, color: "#fef08a" }}>
-                    <button
-                      type="button"
-                      style={s.thBtn}
-                      onClick={() => przestawSortKr("kr")}
-                      aria-label="Sortuj po kodzie KR"
-                    >
-                      KR
-                      {krListaSort.key === "kr"
-                        ? krListaSort.dir === "asc"
-                          ? " ▲"
-                          : " ▼"
-                        : ""}
-                    </button>
-                  </th>
-                  <th style={s.th}>Nazwa obiektu</th>
-                  <th style={s.th}>Rodzaj pracy</th>
-                  <th style={{ ...s.th, color: "#7dd3fc" }}>
-                    <button
-                      type="button"
-                      style={s.thBtn}
-                      onClick={() => przestawSortKr("dzial")}
-                      aria-label="Sortuj po dziale"
-                    >
-                      Dział
-                      {krListaSort.key === "dzial"
-                        ? krListaSort.dir === "asc"
-                          ? " ▲"
-                          : " ▼"
-                        : ""}
-                    </button>
-                  </th>
-                  <th style={{ ...s.th, color: "#a7f3d0" }}>
-                    <button
-                      type="button"
-                      style={s.thBtn}
-                      onClick={() => przestawSortKr("status")}
-                      aria-label="Sortuj po statusie"
-                    >
-                      Status
-                      {krListaSort.key === "status"
-                        ? krListaSort.dir === "asc"
-                          ? " ▲"
-                          : " ▼"
-                        : ""}
-                    </button>
-                  </th>
-                  <th style={s.th} />
-                </tr>
-              </thead>
-              <tbody>
-                {krListPosortowana.map((item) => {
-                  const wierszUwaga = kodyKrZWyroznieniemUwagi.has(String(item.kr).trim());
-                  return (
-                  <tr
-                    key={item.kr}
-                    style={
-                      wierszUwaga
-                        ? { background: "rgba(248,113,113,0.07)" }
-                        : undefined
-                    }
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "0.5rem 0.65rem",
+              marginBottom: "1rem",
+              padding: "14px 18px",
+              background: theme.surface,
+              borderRadius: "12px",
+              border: `1px solid ${theme.border}`,
+              boxShadow: "0 4px 16px -8px rgba(0,0,0,0.35)",
+            }}
+          >
+            <span style={{ ...s.muted, fontSize: "0.78rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Sortuj
+            </span>
+            <button type="button" style={{ ...s.btnGhost, fontSize: "0.82rem" }} onClick={() => przestawSortKr("kr")}>
+              Kod KR
+              {krListaSort.key === "kr" ? (krListaSort.dir === "asc" ? " ▲" : " ▼") : ""}
+            </button>
+            <button type="button" style={{ ...s.btnGhost, fontSize: "0.82rem" }} onClick={() => przestawSortKr("dzial")}>
+              Dział
+              {krListaSort.key === "dzial" ? (krListaSort.dir === "asc" ? " ▲" : " ▼") : ""}
+            </button>
+            <button type="button" style={{ ...s.btnGhost, fontSize: "0.82rem" }} onClick={() => przestawSortKr("status")}>
+              Status
+              {krListaSort.key === "status" ? (krListaSort.dir === "asc" ? " ▲" : " ▼") : ""}
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+            {krListPosortowana.map((item) => {
+              const wierszUwaga = kodyKrZWyroznieniemUwagi.has(String(item.kr).trim());
+              const st = item.status?.trim();
+              return (
+                <div
+                  key={item.kr}
+                  style={{
+                    borderRadius: "12px",
+                    padding: "18px 20px",
+                    background: theme.surface,
+                    border: `1px solid ${wierszUwaga ? "rgba(239,68,68,0.4)" : theme.border}`,
+                    boxShadow: "0 4px 22px -10px rgba(0,0,0,0.4)",
+                    transition: "border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease",
+                  }}
+                  onMouseEnter={(ev) => {
+                    const el = ev.currentTarget;
+                    el.style.boxShadow = "0 10px 32px -10px rgba(0,0,0,0.5)";
+                    el.style.transform = "translateY(-2px)";
+                  }}
+                  onMouseLeave={(ev) => {
+                    const el = ev.currentTarget;
+                    el.style.boxShadow = "0 4px 22px -10px rgba(0,0,0,0.4)";
+                    el.style.transform = "none";
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      justifyContent: "space-between",
+                      gap: "1rem",
+                      alignItems: "flex-start",
+                    }}
                   >
-                    <td style={s.td}>
-                      <strong style={{ color: wierszUwaga ? "#fecaca" : "#fff" }}>{item.kr}</strong>
-                      {wierszUwaga ? (
-                        <span
-                          title="Status KR lub etap wymaga uwagi — szczegóły na pulpicie"
-                          style={{
-                            marginLeft: "0.35rem",
-                            color: "#f87171",
-                            fontSize: "0.75rem",
-                            fontWeight: 700,
-                          }}
-                        >
-                          !
-                        </span>
-                      ) : null}
-                    </td>
-                    <td style={s.td}>{item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "—"}</td>
-                    <td style={s.td}>{item.rodzaj_pracy?.trim() ? item.rodzaj_pracy : "—"}</td>
-                    <td style={{ ...s.td, ...s.dzialWartosc }}>
-                      {item.dzial?.trim() ? item.dzial : "—"}
-                    </td>
-                    <td style={{ ...s.td, ...s.statusKr }}>
-                      {item.status?.trim() ? item.status : "—"}
-                    </td>
-                    <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button
-                        type="button"
+                    <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                      <div
                         style={{
-                          ...s.btnGhost,
-                          padding: "0.4rem 0.85rem",
-                          fontSize: "0.82rem",
-                          fontWeight: 600,
-                          color: "#fecdd3",
-                          borderColor: "rgba(253,164,175,0.55)",
+                          display: "flex",
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                          gap: "0.45rem",
+                          marginBottom: "0.45rem",
                         }}
-                        onClick={() => otworzPulpitDlaKr(item)}
                       >
-                        Pulpit
-                      </button>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <span style={{ fontSize: "1.2rem", fontWeight: 800, color: "#ffffff", letterSpacing: "-0.03em" }}>
+                          {item.kr}
+                        </span>
+                        {wierszUwaga ? <OpStatusBadge variant="danger">Uwaga</OpStatusBadge> : null}
+                        {st ? <OpStatusBadge variant={badgeVariantDlaStatusuKr(st)}>{st}</OpStatusBadge> : null}
+                      </div>
+                      <div style={{ fontSize: "1rem", color: theme.text, fontWeight: 650, marginBottom: "0.35rem", lineHeight: 1.35 }}>
+                        {item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "—"}
+                      </div>
+                      <div style={{ fontSize: "0.88rem", color: theme.muted, lineHeight: 1.55 }}>
+                        <span style={{ color: theme.action, fontWeight: 600 }}>
+                          {item.rodzaj_pracy?.trim() ? item.rodzaj_pracy : "—"}
+                        </span>
+                        {item.dzial?.trim() ? (
+                          <span>
+                            {" "}
+                            · <span style={{ color: theme.text }}>{item.dzial}</span>
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <button type="button" style={{ ...s.btn, flexShrink: 0, alignSelf: "center" }} onClick={() => otworzPulpitDlaKr(item)}>
+                      Pulpit projektu
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       ) : widok === "kr" &&
@@ -11135,8 +11598,20 @@ export default function App() {
       ) : null}
         </main>
 
-        <aside style={op.shellAside} aria-label="Nawigacja operacyjna">
-          <div style={{ ...op.brandKicker, marginBottom: "0.5rem" }}>Sterowanie</div>
+        <aside style={op.shellSidebar} aria-label="Nawigacja główna">
+          <div style={{ ...op.brandKicker, marginBottom: "0.15rem" }}>G4 · Geodezja</div>
+          <div
+            style={{
+              fontSize: "1rem",
+              fontWeight: 800,
+              color: "#ffffff",
+              letterSpacing: "-0.03em",
+              marginBottom: "1rem",
+              lineHeight: 1.2,
+            }}
+          >
+            Operacje
+          </div>
           <label
             style={{
               display: "flex",
@@ -11144,7 +11619,7 @@ export default function App() {
               gap: "0.45rem",
               cursor: "pointer",
               fontSize: "0.8rem",
-              color: "#cbd5e1",
+              color: theme.text,
               marginBottom: "0.55rem",
               lineHeight: 1.35,
             }}
@@ -11156,8 +11631,8 @@ export default function App() {
               style={{ marginTop: "0.2rem", flexShrink: 0 }}
             />
             <span>
-              <strong style={{ color: "#4ade80" }}>Tryb HELP</strong>
-              <span style={{ display: "block", fontSize: "0.72rem", color: "#94a3b8", fontWeight: 400 }}>
+              <strong style={{ color: theme.success }}>Tryb HELP</strong>
+              <span style={{ display: "block", fontSize: "0.72rem", color: theme.muted, fontWeight: 400 }}>
                 Włącz krótkie podpowiedzi pod przyciskami (zielone). Wyłącz po prezentacji — ustawienie zostaje w
                 przeglądarce.
               </span>
@@ -11181,69 +11656,84 @@ export default function App() {
               gap: "0.35rem",
               marginBottom: "0.75rem",
               fontSize: "0.68rem",
-              color: "#94a3b8",
+              color: theme.muted,
             }}
           >
             <span title="Automatyczne alerty">Alerty: {listaAlertowOperacyjnych.length}</span>
             <span title="KR z podświetleniem">Uwaga KR: {liczbaTematowUwagi}</span>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", marginBottom: "0.85rem" }}>
+          <div style={{ ...op.navSectionLabel }}>Menu</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
             {[
               {
                 id: "dashboard",
-                label: "Panel",
+                label: "Dashboard",
                 fn: przejdzDoDashboard,
                 w: "dashboard",
                 help: "Start aplikacji — liczby, skróty i ogólny obraz sytuacji.",
               },
               {
                 id: "kr",
-                label: "KR",
+                label: "Projekty",
                 fn: przejdzDoKr,
                 w: "kr",
-                help: "Twoje projekty: lista, karty i pulpity — tu dzieje się codzienna praca.",
+                help: "Lista kodów KR, karty projektów i pulpity.",
+              },
+              {
+                id: "zadania",
+                label: "Zadania",
+                fn: przejdzDoZadania,
+                w: "zadania",
+                help: "Zadania ogólne — terminy, Kanban, filtr KR.",
               },
               {
                 id: "podwykonawca",
                 label: "Podwykonawcy",
                 fn: przejdzDoPodwykonawcow,
                 w: "podwykonawca",
-                help: "Katalog firm zewnętrznych — wspólny dla wielu projektów.",
-              },
-              {
-                id: "samochody",
-                label: "Samochody",
-                fn: przejdzDoSamochody,
-                w: "samochody",
-                help: "Flota: polisy, przeglądy, uwagi — i kalendarz kto ma które auto w danym dniu.",
+                help: "Katalog firm zewnętrznych.",
               },
               {
                 id: "sprzet",
                 label: "Sprzęt",
                 fn: przejdzDoSprzet,
                 w: "sprzet",
-                help: "Komputery, drukarki, ksera — przeglądy i przypisanie do pracownika.",
-              },
-              {
-                id: "zadania",
-                label: "Zadania ogólne",
-                fn: przejdzDoZadania,
-                w: "zadania",
-                help: "Zadania bez przypięcia do jednego etapu — ogólne terminy i obserwacje.",
-              },
-              {
-                id: "pracownik",
-                label: "Pracownicy",
-                fn: przejdzDoPracownikow,
-                w: "pracownik",
-                help: "Kto jest w systemie pod numerem — żeby wybrać prowadzącego przy projekcie.",
+                help: "Komputery, drukarki, ksera — inwentaryzacja.",
               },
               {
                 id: "ostrzezenia",
-                label: "Ostrzeżenia",
+                label: "Raporty",
                 fn: przejdzDoOstrzezeniaPanel,
                 w: "ostrzezenia",
-                help: "Lista rzeczy, które system oznaczył jako wymagające reakcji.",
+                help: "Alerty operacyjne i lista wymagających reakcji.",
+              },
+            ].map((b) => (
+              <div key={b.id}>
+                <button
+                  type="button"
+                  style={{ ...op.navBtn, ...(widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
+                  onClick={() => b.fn()}
+                >
+                  {b.label}
+                </button>
+                <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+              </div>
+            ))}
+            <div style={op.navSectionLabel}>Zasoby</div>
+            {[
+              {
+                id: "samochody",
+                label: "Pojazdy",
+                fn: przejdzDoSamochody,
+                w: "samochody",
+                help: "Flota, polisy, przeglądy, rezerwacje.",
+              },
+              {
+                id: "pracownik",
+                label: "Zespół",
+                fn: przejdzDoPracownikow,
+                w: "pracownik",
+                help: "Pracownicy i numery ID w systemie.",
               },
             ].map((b) => (
               <div key={b.id}>
@@ -11259,7 +11749,7 @@ export default function App() {
             ))}
             <div>
               <button type="button" style={{ ...op.navBtn, marginBottom: 0 }} onClick={przejdzDoInfoZagrozen}>
-                Reguły INFO / zagrożenia
+                Reguły podświetleń (INFO)
               </button>
               <HelpLinijka wlaczony={trybHelp}>
                 Treść wyjaśniająca kolory i zasady — do czytania, bez edycji projektów.
