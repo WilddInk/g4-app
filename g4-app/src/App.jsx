@@ -1294,14 +1294,23 @@ export default function App() {
     okres_projektu_do: "",
   });
 
-  /** Sortowanie listy KR w tabeli (i kolejności kart poniżej): dział / status albo domyślnie wg numeru KR. */
+  /** Sortowanie listy KR w tabeli (i kolejności kart poniżej): KR / dział / status albo kolejność z bazy. */
   const [krListaSort, setKrListaSort] = useState({ key: null, dir: "asc" });
 
   const krListPosortowana = useMemo(() => {
-    if (krListaSort.key !== "dzial" && krListaSort.key !== "status") {
+    if (krListaSort.key !== "dzial" && krListaSort.key !== "status" && krListaSort.key !== "kr") {
       return krList;
     }
     const dirMnoznik = krListaSort.dir === "asc" ? 1 : -1;
+    if (krListaSort.key === "kr") {
+      return [...krList].sort((x, y) => {
+        const c = String(x.kr).localeCompare(String(y.kr), "pl", {
+          sensitivity: "base",
+          numeric: true,
+        });
+        return c * dirMnoznik;
+      });
+    }
     const pole = krListaSort.key;
     return [...krList].sort((x, y) => {
       const c = porownajTekstSort(x[pole], y[pole]);
@@ -10847,9 +10856,11 @@ export default function App() {
             Wprowadzone KR ({krList.length})
           </h2>
           <p style={{ ...s.muted, marginTop: 0, marginBottom: "0.65rem", fontSize: "0.88rem" }}>
-            Kliknij nagłówek <strong style={{ color: "#7dd3fc" }}>Dział</strong> lub{" "}
+            Kliknij nagłówek <strong style={{ color: "#fef08a" }}>KR</strong>,{" "}
+            <strong style={{ color: "#7dd3fc" }}>Dział</strong> lub{" "}
             <strong style={{ color: "#a7f3d0" }}>Status</strong>, by zmienić kolejność (drugi klik — odwrotnie). Bez
-            sortowania — jak w bazie (numer KR).             Przy projekcie użyj <strong style={{ color: "#fda4af" }}>Pulpit</strong>
+            aktywnego sortowania — kolejność jak z bazy. Przy projekcie użyj{" "}
+            <strong style={{ color: "#fda4af" }}>Pulpit</strong>
             — tam dane KR, oś czasu (ETAP / PW / LOG) i przyciski edycji.{" "}
             <strong style={{ color: "#f87171" }}>Różowe tło</strong> wiersza — status „oczekuje na zamawiającego” lub
             etap z ryzykiem / przeterminowanym planem (reszta uwag tylko na pulpicie). Nowy rekord — poniżej
@@ -10859,7 +10870,21 @@ export default function App() {
             <table style={s.table}>
               <thead>
                 <tr>
-                  <th style={s.th}>KR</th>
+                  <th style={{ ...s.th, color: "#fef08a" }}>
+                    <button
+                      type="button"
+                      style={s.thBtn}
+                      onClick={() => przestawSortKr("kr")}
+                      aria-label="Sortuj po kodzie KR"
+                    >
+                      KR
+                      {krListaSort.key === "kr"
+                        ? krListaSort.dir === "asc"
+                          ? " ▲"
+                          : " ▼"
+                        : ""}
+                    </button>
+                  </th>
                   <th style={s.th}>Nazwa obiektu</th>
                   <th style={s.th}>Rodzaj pracy</th>
                   <th style={{ ...s.th, color: "#7dd3fc" }}>
