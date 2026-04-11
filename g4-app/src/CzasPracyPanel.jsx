@@ -171,17 +171,34 @@ export function CzasPracyPanel({
   const [busy, setBusy] = useState(false);
 
   const [modal, setModal] = useState(null);
-  /** @type {{ id?: string, data: string, kr: string, typ: string, czas_od: string, czas_do: string, uwagi_dodatkowe: string } | null} */
+  /** @type {{ id?: string, data: string, kr: string, typ: string, czas_od: string, czas_do: string, uwagi_dodatkowe: string, wykonywane_zadanie: string } | null} */
   const [form, setForm] = useState(null);
 
   const [stForm, setStForm] = useState({ data_od: "", data_do: "", stawka_za_godzine: "", uwagi: "" });
   const [stMsg, setStMsg] = useState(null);
+  /** Teksty zapisane wcześniej przy czasie pracy (per wybrany pracownik). */
+  const [szablonyZadan, setSzablonyZadan] = useState([]);
+  /** Wiersze z tabeli zadania — do podpowiedzi (ogólne + dopasowane do KR w formularzu). */
+  const [zadaniaDlaCzasu, setZadaniaDlaCzasu] = useState([]);
 
   const pierwszyOstatniDzien = useMemo(() => {
     const pierwszy = new Date(rok, miesiac, 1);
     const ostatni = new Date(rok, miesiac + 1, 0);
     return { pierwszy, ostatni, odIso: dataIsoZDate(pierwszy), doIso: dataIsoZDate(ostatni) };
   }, [rok, miesiac]);
+
+  const propozycjeZadaniaCzasu = useMemo(() => {
+    if (!form) return [];
+    const kr = String(form.kr ?? "").trim();
+    const zb = new Set(szablonyZadan.map((t) => String(t).trim()).filter(Boolean));
+    for (const z of zadaniaDlaCzasu) {
+      const txt = String(z.zadanie ?? "").trim();
+      if (!txt) continue;
+      const zkr = String(z.kr ?? "").trim();
+      if (!zkr || zkr === kr) zb.add(txt);
+    }
+    return [...zb].sort((a, b) => a.localeCompare(b, "pl", { sensitivity: "base" }));
+  }, [form, szablonyZadan, zadaniaDlaCzasu]);
 
   const kalendarzKomorki = useMemo(() => {
     const { pierwszy, ostatni } = pierwszyOstatniDzien;
@@ -300,6 +317,25 @@ export function CzasPracyPanel({
       if (e1) throw e1;
       setWpisy(w ?? []);
 
+      {
+        const { data: szabl, error: esz } = await supabase
+          .from("czas_pracy_zadanie_szablon")
+          .select("tekst")
+          .eq("pracownik_nr", nr);
+        if (!esz && szabl) {
+          setSzablonyZadan(
+            [...new Set(szabl.map((r) => r.tekst).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pl"))
+          );
+        } else {
+          setSzablonyZadan([]);
+        }
+      }
+      {
+        const { data: zadRows, error: ez } = await supabase.from("zadania").select("zadanie, kr").limit(3000);
+        if (!ez && zadRows) setZadaniaDlaCzasu(zadRows);
+        else setZadaniaDlaCzasu([]);
+      }
+
       if (mozeZarzadzacStawkami) {
         const { data: s, error: e2 } = await supabase
           .from("pracownik_stawka_okres")
@@ -357,6 +393,7 @@ export function CzasPracyPanel({
       czas_od: "08:00",
       czas_do: "11:00",
       uwagi_dodatkowe: "",
+      wykonywane_zadanie: "",
     });
   }
 
@@ -382,6 +419,7 @@ export function CzasPracyPanel({
       czas_od: czasOd,
       czas_do: czasDo,
       uwagi_dodatkowe: uwagiDodatkowe,
+      wykonywane_zadanie: String(w.wykonywane_zadanie ?? "").trim(),
     });
   }
 
@@ -408,6 +446,7 @@ export function CzasPracyPanel({
       godziny: godzWyliczone,
       nadgodziny: 0,
       uwagi: zlozUwagiZZakresu(od, dol, form.uwagi_dodatkowe) || null,
+      wykonywane_zadanie: String(form.wykonywane_zadanie ?? "").trim() || null,
     };
     if (grupaTypu(payload.typ) === "nieobecnosc") {
       payload.kr = "";
@@ -420,6 +459,13 @@ export function CzasPracyPanel({
       } else {
         const { error } = await supabase.from("czas_pracy_wpis").insert([payload]);
         if (error) throw error;
+      }
+      const zadTxt = String(form.wykonywane_zadanie ?? "").trim();
+      if (zadTxt) {
+        const { error: ez } = await supabase
+          .from("czas_pracy_zadanie_szablon")
+          .upsert({ pracownik_nr: nr, tekst: zadTxt }, { onConflict: "pracownik_nr,tekst" });
+        if (ez) console.warn("Szablon zadania (opcjonalnie):", ez.message);
       }
       setForm(null);
       await load();
@@ -886,6 +932,9 @@ export function CzasPracyPanel({
                             >
                               {w.typ?.replace(/_/g, " ")?.slice(0, 14)}
                               {String(w.kr ?? "").trim() ? ` · ${w.kr}` : ""}
+                              {String(w.wykonywane_zadanie ?? "").trim()
+                                ? ` · ${String(w.wykonywane_zadanie).trim().slice(0, 12)}`
+                                : ""}
                             </span>
                           ))}
                           {lista.length > 3 ? (
@@ -929,7 +978,7 @@ export function CzasPracyPanel({
               border: `1px solid ${theme.border}`,
               borderRadius: "12px",
               padding: "1.1rem",
-              maxWidth: "26rem",
+              maxWidth: "min(32rem, 100%)",
               width: "100%",
               maxHeight: "90vh",
               overflow: "auto",
@@ -964,11 +1013,15 @@ export function CzasPracyPanel({
                             textDecoration: "underline",
                           }}
                         >
-                          {w.typ} {String(w.kr ?? "").trim() ? `· ${w.kr}` : ""} — {(Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0)} h
+                          {w.typ} {String(w.kr ?? "").trim() ? `· ${w.kr}` : ""}
+                          {String(w.wykonywane_zadanie ?? "").trim() ? ` · ${String(w.wykonywane_zadanie).trim().slice(0, 40)}` : ""}{" "}
+                          — {(Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0)} h
                         </button>
                       ) : (
                         <span>
-                          {w.typ} {String(w.kr ?? "").trim() ? `· ${w.kr}` : ""} — {(Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0)} h
+                          {w.typ} {String(w.kr ?? "").trim() ? `· ${w.kr}` : ""}
+                          {String(w.wykonywane_zadanie ?? "").trim() ? ` · ${String(w.wykonywane_zadanie).trim().slice(0, 40)}` : ""}{" "}
+                          — {(Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0)} h
                         </span>
                       )}
                     </li>
@@ -1013,6 +1066,27 @@ export function CzasPracyPanel({
                         </option>
                       ))}
                   </select>
+                </label>
+                <label style={lbl}>
+                  Wykonywane zadanie (opcjonalnie)
+                  <input
+                    type="text"
+                    list="cp-wyk-zadanie-datalist"
+                    value={form.wykonywane_zadanie}
+                    onChange={(e) => setForm({ ...form, wykonywane_zadanie: e.target.value })}
+                    style={inp}
+                    placeholder="Wybierz z listy lub wpisz własne — zapisane trafią na podpowiedzi"
+                    autoComplete="off"
+                  />
+                  <datalist id="cp-wyk-zadanie-datalist">
+                    {propozycjeZadaniaCzasu.map((t) => (
+                      <option key={t} value={t} />
+                    ))}
+                  </datalist>
+                  <span style={{ fontSize: "0.76rem", color: theme.muted, marginTop: "0.2rem" }}>
+                    Lista łączy <strong>zadania</strong> z modułu Zadania (ogólne + ten sam KR co wyżej) oraz Twoje wcześniejsze
+                    wpisy.
+                  </span>
                 </label>
                 <div style={{ ...lbl, marginBottom: "0.65rem" }}>
                   <span>Blok czasu (kilka wpisów w tym samym dniu = kilka bloków)</span>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { supabase } from "./lib/supabase.js";
+import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 
 /** URL powrotu z linku w e-mailu Supabase (reset hasła). Musi być na liście Redirect URLs w panelu. */
 function adresPowrotuZMailaAuth() {
@@ -201,9 +202,26 @@ export function AuthScreen({ trybNoweHasloPoLinkuZEmaila = false, onNoweHasloZap
     onNoweHasloZapisane?.();
   }
 
+  const pasekWersji = (
+    <PasekWersjiG4
+      style={{
+        position: "absolute",
+        top: "clamp(0.65rem, 2vw, 1rem)",
+        left: "clamp(0.75rem, 2vw, 1.75rem)",
+        right: "clamp(0.75rem, 2vw, 1.75rem)",
+        textAlign: "center",
+        fontSize: "0.72rem",
+        color: "#8a8a8a",
+        letterSpacing: "0.02em",
+        zIndex: 1,
+      }}
+    />
+  );
+
   if (trybNoweHasloPoLinkuZEmaila) {
     return (
-      <div style={a.page}>
+      <div style={{ ...a.page, position: "relative" }}>
+        {pasekWersji}
         <div style={a.card}>
           <h1 style={a.title}>Nowe hasło</h1>
           <p style={a.hint}>Link z wiadomości e-mail jest ważny przez krótki czas. Ustal nowe hasło do konta.</p>
@@ -249,7 +267,8 @@ export function AuthScreen({ trybNoweHasloPoLinkuZEmaila = false, onNoweHasloZap
   }
 
   return (
-    <div style={a.page}>
+    <div style={{ ...a.page, position: "relative" }}>
+      {pasekWersji}
       <div style={a.card}>
         <h1 style={a.title}>{widokResetu ? "Reset hasła" : "Logowanie"}</h1>
         <p style={a.hint}>

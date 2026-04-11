@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AuthScreen } from "./AuthScreen.jsx";
-import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
+import { CzasPracyPanel, CZAS_TYP_WPISU } from "./CzasPracyPanel.jsx";
+import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 import { supabase } from "./lib/supabase.js";
 import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 
@@ -11,6 +12,11 @@ import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operation
 const requireAuth =
   import.meta.env.VITE_REQUIRE_AUTH === "true" ||
   import.meta.env.VITE_REQUIRE_AUTH === "1";
+
+function grupaTypuCzasuWpisu(typ) {
+  const row = CZAS_TYP_WPISU.find((t) => t.value === typ);
+  return row?.grupa ?? "inne";
+}
 
 /** Ciemny motyw dashboard — spójny z operationalShell (theme). */
 const s = {
@@ -1407,6 +1413,11 @@ const KR_PROJEKT_MENU = [
     help: "Zgłoszenia do księgowości: komu zapłacić, konto, brutto, link do faktury. FS sprzedaż — przy etapach i INV.",
   },
   {
+    id: "koszty",
+    label: "Koszty",
+    help: "Godziny pracy zarejestrowane na ten KR (pole KR w module Czas pracy). Kierownik i admin widzą zespół; pracownik — tylko siebie (RLS).",
+  },
+  {
     id: "zadania_kr",
     label: "Zadania",
     help: "Zadania ogólne przypisane do tego KR — ten sam moduł co Zadania ogólne w menu, z ustalonym projektem.",
@@ -1558,6 +1569,15 @@ export default function App() {
   /** Zgłoszenia faktur kosztowych do opłacenia — lista przy otwartym KR (zakładka Faktury kosztowe). */
   const [krFakturyDoZaplatyList, setKrFakturyDoZaplatyList] = useState([]);
   const [krFakturyDoZaplatyFetchError, setKrFakturyDoZaplatyFetchError] = useState(null);
+  /** Wpisy czasu pracy z przypisanym KR — zakładka Koszty na karcie projektu. */
+  const [krCzasPracyWpisyList, setKrCzasPracyWpisyList] = useState([]);
+  const [krCzasPracyWpisyFetchError, setKrCzasPracyWpisyFetchError] = useState(null);
+  /** Suma roboczogodzin (tylko typy „praca”) dla KR na pulpicie projektu — przegląd. */
+  const [pulpitRoboczogodziny, setPulpitRoboczogodziny] = useState({
+    suma: null,
+    err: null,
+    loading: false,
+  });
   /** Wszystkie zgłoszenia ze statusem „do_zaplaty” — panel główny / księgowość. */
   const [fakturyDoZaplatyOczekujaceList, setFakturyDoZaplatyOczekujaceList] = useState([]);
   const [fakturyDoZaplatyOczekujaceFetchError, setFakturyDoZaplatyOczekujaceFetchError] = useState(null);
@@ -1999,6 +2019,57 @@ export default function App() {
       return;
     }
     setKrFakturyDoZaplatyList(data ?? []);
+  }
+
+  async function fetchCzasPracyWpisyDlaKr(krKod) {
+    const k = String(krKod ?? "").trim();
+    if (!k) {
+      setKrCzasPracyWpisyList([]);
+      setKrCzasPracyWpisyFetchError(null);
+      return;
+    }
+    setKrCzasPracyWpisyFetchError(null);
+    const { data, error } = await supabase
+      .from("czas_pracy_wpis")
+      .select("id, pracownik_nr, data, kr, typ, godziny, nadgodziny, uwagi, wykonywane_zadanie")
+      .eq("kr", k)
+      .order("data", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(800);
+
+    if (error) {
+      console.error("Błąd pobierania czasu pracy dla KR:", error);
+      setKrCzasPracyWpisyFetchError(error.message);
+      setKrCzasPracyWpisyList([]);
+      return;
+    }
+    setKrCzasPracyWpisyList(data ?? []);
+    void fetchRoboczogodzinyPulpitDlaKr(k);
+  }
+
+  /** Roboczogodziny na pulpicie: suma godzin z wpisów, gdzie typ należy do grupy „praca” (jak w module Czas pracy). */
+  async function fetchRoboczogodzinyPulpitDlaKr(krKod) {
+    const k = String(krKod ?? "").trim();
+    if (!k) {
+      setPulpitRoboczogodziny({ suma: null, err: null, loading: false });
+      return;
+    }
+    setPulpitRoboczogodziny((prev) => ({ ...prev, loading: true, err: null }));
+    const { data, error } = await supabase
+      .from("czas_pracy_wpis")
+      .select("typ, godziny, nadgodziny")
+      .eq("kr", k);
+
+    if (error) {
+      console.error("Błąd pobierania roboczogodzin dla pulpitu:", error);
+      setPulpitRoboczogodziny({ suma: null, err: error.message, loading: false });
+      return;
+    }
+    const suma = (data ?? []).reduce((acc, w) => {
+      if (grupaTypuCzasuWpisu(w.typ) !== "praca") return acc;
+      return acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0);
+    }, 0);
+    setPulpitRoboczogodziny({ suma, err: null, loading: false });
   }
 
   async function fetchFakturyDoZaplatyOczekujace() {
@@ -3676,6 +3747,7 @@ export default function App() {
       przeglad: "przeglad",
       os: "przeglad",
       faktury: "faktury",
+      koszty: "koszty",
       podwykonawcy: "podwykonawcy",
       zlecenia: "zlecenia",
       dziennik: "zgloszenia",
@@ -3696,6 +3768,11 @@ export default function App() {
     setKrProjektSekcja(pulpitPodstronaDoKrSekcji(pod));
     void fetchDziennikForKr(kr);
     if (pod === "faktury") void fetchKrFakturyDoZaplatyForKr(kr);
+    if (pod === "koszty") {
+      void fetchCzasPracyWpisyDlaKr(kr);
+      void fetchPracownicy();
+    }
+    void fetchRoboczogodzinyPulpitDlaKr(kr);
     if (pod === "podwykonawcy" || pod === "zlecenia") {
       void fetchKrZleceniaPwForKr(kr);
       void fetchPodwykonawcy();
@@ -3744,6 +3821,7 @@ export default function App() {
     setLogEdycjaId(null);
     setLogForm(logPustyForm());
     setDziennikFetchError(null);
+    setPulpitRoboczogodziny({ suma: null, err: null, loading: true });
     void fetchKR();
     void fetchEtapy();
     void fetchPracownicy();
@@ -3757,6 +3835,7 @@ export default function App() {
   function powrotZPulpituDoListy() {
     const kHub = wybranyKrKlucz != null ? String(wybranyKrKlucz).trim() : "";
     setWidokPulpitDlaKr(null);
+    setPulpitRoboczogodziny({ suma: null, err: null, loading: false });
     setPulpitPodstrona("przeglad");
     setPulpitSortDaty("asc");
     setLogEdycjaId(null);
@@ -3876,6 +3955,7 @@ export default function App() {
         przeglad: "przeglad",
         os: "os",
         faktury: "faktury",
+        koszty: "koszty",
         zadania_kr: "zadania",
         zlecenia: "zlecenia",
         podwykonawcy: "podwykonawcy",
@@ -3942,6 +4022,7 @@ export default function App() {
     /** Sekcje tylko w karcie hub (umowa, koszty, terminy…) — jak zgłoszenia: zawsze TRZYMAJ wybrany KR i wyłącz INFO. */
     const sekcjeTylkoKarta = new Set([
       "faktury",
+      "koszty",
       "zadania_kr",
       "umowa",
       "terminy",
@@ -3959,6 +4040,10 @@ export default function App() {
       void fetchDziennikForKr(k);
       void fetchKrZleceniaPwForKr(k);
       if (sekcjaId === "faktury") void fetchKrFakturyDoZaplatyForKr(k);
+      if (sekcjaId === "koszty") {
+        void fetchCzasPracyWpisyDlaKr(k);
+        void fetchPracownicy();
+      }
       if (sekcjaId === "zadania_kr") {
         void fetchZadania();
         void fetchPracownicy();
@@ -5027,6 +5112,7 @@ export default function App() {
       przeglad: "przeglad",
       os: "os",
       faktury: "faktury",
+      koszty: "koszty",
       podwykonawcy: "podwykonawcy",
       zlecenia: "zlecenia",
       dziennik: "zgloszenia",
@@ -5155,6 +5241,7 @@ export default function App() {
             {btnLeaf("przeglad", "Przegląd — zagrożenia i zadania")}
             {btnLeaf("os", "Oś czasu (ETAP · PW · LOG)")}
             {btnLeaf("faktury", "Faktury kosztowe")}
+            {btnLeaf("koszty", "Koszty — czas pracy")}
             {btnLeaf("zlecenia", "Zlecenia PW")}
             {btnLeaf("podwykonawcy", "Podwykonawcy")}
             {btnLeaf("dziennik", "Dziennik zdarzeń")}
@@ -5187,6 +5274,18 @@ export default function App() {
     const wazne = alerty.filter((a) => a.severity === "wazny").length;
     const listaEtapow = etapyWedlugKr.get(item.kr) ?? [];
     const etapyRyzyko = listaEtapow.filter((e) => pulpitKmWymagaUwagi(e, d0)).length;
+    const rg = pulpitRoboczogodziny;
+    const rgWart =
+      rg.loading || rg.suma == null
+        ? rg.loading
+          ? "…"
+          : "—"
+        : rg.suma.toLocaleString("pl-PL", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+    const rgHint = rg.err
+      ? `Błąd: ${rg.err}`
+      : rg.loading
+        ? "Wczytywanie z modułu Czas pracy…"
+        : "Suma godzin (typ praca) z wpisów na ten KR";
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "1.35rem" }}>
@@ -5245,6 +5344,21 @@ export default function App() {
             accent={zadaniaOtwarte.length ? "action" : "success"}
             border="rgba(249,115,22,0.26)"
             onClick={() => pulpitNavUstawPodstrone("zadania", item)}
+          />
+          <OpKpiCard
+            label="Roboczogodziny"
+            value={rg.err ? "!" : rgWart}
+            hint={rgHint}
+            accent={rg.err ? "danger" : (Number(rg.suma) || 0) > 0 ? "action" : "success"}
+            border={
+              rg.err
+                ? "rgba(239,68,68,0.28)"
+                : (Number(rg.suma) || 0) > 0
+                  ? "rgba(251,191,36,0.3)"
+                  : "rgba(34,197,94,0.22)"
+            }
+            onClick={() => pulpitNavUstawPodstrone("koszty", item)}
+            title="Szczegóły: zakładka Koszty — czas pracy na tym KR"
           />
           <OpKpiCard
             label="Pulpit operacyjny"
@@ -6103,6 +6217,140 @@ export default function App() {
       );
     }
 
+    if (sekcja === "koszty") {
+      const krK = String(item.kr ?? "").trim();
+      const nazwaPrac = (nr) => {
+        const n = String(nr ?? "").trim();
+        if (!n) return "—";
+        const p = pracownicyPosortowani.find((x) => String(x.nr ?? "").trim() === n);
+        return p?.imie_nazwisko?.trim() ? `${n} — ${p.imie_nazwisko.trim()}` : n;
+      };
+      const sumaWszystkich = krCzasPracyWpisyList.reduce(
+        (acc, w) => acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0),
+        0
+      );
+      const sumaPracy = krCzasPracyWpisyList.reduce((acc, w) => {
+        if (grupaTypuCzasuWpisu(w.typ) !== "praca") return acc;
+        return acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0);
+      }, 0);
+      return (
+        <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
+          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Koszty — czas pracy na KR {krK}</h3>
+          <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
+            Wpisy z modułu <strong>Czas pracy</strong>, w których przy wpisie wybrano ten kod KR. Suma „godziny pracy”
+            liczy tylko typy pracy (bez urlopów itd.); „łącznie” obejmuje wszystkie wpisy w tabeli.
+          </p>
+          <div style={{ ...s.btnRow, marginBottom: "1rem" }}>
+            <button type="button" style={s.btnGhost} onClick={() => przejdzDoCzasPracy()}>
+              Otwórz moduł Czas pracy
+            </button>
+            <button type="button" style={s.btnGhost} onClick={() => void fetchCzasPracyWpisyDlaKr(krK)}>
+              Odśwież listę
+            </button>
+          </div>
+          {krCzasPracyWpisyFetchError ? (
+            <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
+              <strong>Nie wczytano czasu pracy.</strong> {krCzasPracyWpisyFetchError}
+              <br />
+              <span style={{ fontSize: "0.88em" }}>
+                Uruchom migracje <code style={s.code}>czas-pracy-stawki-i-wpisy.sql</code> oraz{" "}
+                <code style={s.code}>czas-pracy-wpis-rls-role.sql</code>.
+              </span>
+            </div>
+          ) : null}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "0.65rem",
+              marginBottom: "1rem",
+              fontSize: "0.82rem",
+              color: "#e2e8f0",
+            }}
+          >
+            <div
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "10px",
+                border: "1px solid rgba(56,189,248,0.35)",
+                background: "rgba(56,189,248,0.08)",
+              }}
+            >
+              Godziny pracy (typ „praca”): <strong>{sumaPracy.toFixed(2)} h</strong>
+            </div>
+            <div
+              style={{
+                padding: "0.5rem 0.75rem",
+                borderRadius: "10px",
+                border: "1px solid rgba(148,163,184,0.25)",
+                background: "rgba(15,23,42,0.45)",
+              }}
+            >
+              Łącznie (wszystkie typy): <strong>{sumaWszystkich.toFixed(2)} h</strong>
+            </div>
+          </div>
+          {krCzasPracyWpisyList.length === 0 ? (
+            <p style={{ ...op.muted, marginBottom: "1rem" }}>
+              Brak wpisów z tym KR — w module Czas pracy dodaj blok z wybranym kodem projektu (pole KR).
+            </p>
+          ) : (
+            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Data</th>
+                    <th style={s.th}>Pracownik</th>
+                    <th style={s.th}>Typ</th>
+                    <th style={s.th}>Zadanie</th>
+                    <th style={s.th}>Godz.</th>
+                    <th style={s.th}>Uwagi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {krCzasPracyWpisyList.map((row) => {
+                    const h = (Number(row.godziny) || 0) + (Number(row.nadgodziny) || 0);
+                    const typLbl = String(row.typ ?? "—").replace(/_/g, " ");
+                    return (
+                      <tr key={row.id}>
+                        <td style={s.td}>{row.data ? dataDoInputa(row.data) : "—"}</td>
+                        <td style={s.td}>{nazwaPrac(row.pracownik_nr)}</td>
+                        <td style={s.td}>
+                          <span
+                            style={{
+                              ...op.badge(
+                                grupaTypuCzasuWpisu(row.typ) === "nieobecnosc"
+                                  ? "rgba(244,114,182,0.2)"
+                                  : grupaTypuCzasuWpisu(row.typ) === "praca"
+                                    ? "rgba(251,191,36,0.18)"
+                                    : "rgba(148,163,184,0.15)",
+                                grupaTypuCzasuWpisu(row.typ) === "nieobecnosc"
+                                  ? "#f9a8d4"
+                                  : "#fde68a"
+                              ),
+                              fontSize: "0.75rem",
+                            }}
+                          >
+                            {typLbl}
+                          </span>
+                        </td>
+                        <td style={{ ...s.td, maxWidth: "14rem", wordBreak: "break-word", fontSize: "0.8rem" }}>
+                          {String(row.wykonywane_zadanie ?? "").trim() ? row.wykonywane_zadanie.trim() : "—"}
+                        </td>
+                        <td style={{ ...s.td, fontVariantNumeric: "tabular-nums" }}>{h.toFixed(2)}</td>
+                        <td style={{ ...s.td, maxWidth: "18rem", wordBreak: "break-word" }}>
+                          {row.uwagi?.trim() ? row.uwagi.trim() : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     if (sekcja === "faktury") {
       const krK = String(item.kr ?? "").trim();
       return (
@@ -6691,7 +6939,18 @@ export default function App() {
       <div style={op.shellLayout}>
         <main style={op.shellMain}>
           <header style={{ marginBottom: "1.35rem" }}>
-            <h1 style={op.brandTitle}>G4 Geodezja · Panel przepływu informacji</h1>
+            <PasekWersjiG4
+              style={{
+                ...op.muted,
+                fontSize: "0.75rem",
+                marginBottom: "0.35rem",
+                letterSpacing: "0.02em",
+              }}
+            />
+            <h1 style={op.brandTitle}>
+              <span style={{ color: theme.danger }}>G</span>
+              4 Geodezja · Panel przepływu informacji
+            </h1>
           </header>
           {requireAuth && session?.user ? (
             <div style={{ width: "100%", marginBottom: "0.75rem" }}>
