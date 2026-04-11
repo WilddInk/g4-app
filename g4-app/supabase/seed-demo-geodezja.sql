@@ -123,12 +123,12 @@ SELECT * FROM (VALUES
 WHERE NOT EXISTS (SELECT 1 FROM public.kr k WHERE k.kr = v.kr);
 
 -- ---------------------------------------------------------------------------
--- Kamienie milowe (etapy) — ZRID, drogi, ryzyka, terminy
+-- Etapy (public.etapy) — ZRID, drogi, ryzyka, terminy
 -- Bez kolumn typ_odniesienia / data_odniesienia / offset_miesiecy — dodaje je
 -- kamienie-milowe-odniesienie-offset.sql + kamienie-milowe-typ-odniesienia.sql.
 -- Po ich uruchomieniu możesz w UI uzupełnić kotwice lub dodać UPDATE w osobnym skrypcie.
 -- ---------------------------------------------------------------------------
-INSERT INTO public.kamienie_milowe (
+INSERT INTO public.etapy (
   kr, data_planowana, etap, status,
   osoba_odpowiedzialna, uwagi, osiagniete, zagrozenie, zagrozenie_opis
 )
@@ -151,7 +151,7 @@ SELECT * FROM (VALUES
   ('PODZIAL-GDN-2025', '2026-01-15', 'Operaty podziału + załączniki do KW', 'w trakcie', '04', 'Jeden ze współwłaścicieli w trakcie negocjacji.', false, true, 'Możliwy spór graniczny — rozważyć protokół komisyjny.')
 ) AS v(kr, data_planowana, etap, status, osoba_odpowiedzialna, uwagi, osiagniete, zagrozenie, zagrozenie_opis)
 WHERE NOT EXISTS (
-  SELECT 1 FROM public.kamienie_milowe km
+  SELECT 1 FROM public.etapy km
   WHERE km.kr = v.kr AND km.etap = v.etap
 );
 
@@ -399,9 +399,9 @@ DECLARE
   e_zrid bigint;
   e_mpzp bigint;
 BEGIN
-  SELECT id INTO e_zrid FROM public.kamienie_milowe
+  SELECT id INTO e_zrid FROM public.etapy
   WHERE kr = 'ZRID-2025-DW1523' AND etap = 'Wpływ pełnomocnictw i kompletów' LIMIT 1;
-  SELECT id INTO e_mpzp FROM public.kamienie_milowe
+  SELECT id INTO e_mpzp FROM public.etapy
   WHERE kr = 'MPZP-TARN-2024' AND etap = 'MSW w skali 1:500 + kryptonimy K1..K4' LIMIT 1;
 
   IF e_zrid IS NOT NULL THEN

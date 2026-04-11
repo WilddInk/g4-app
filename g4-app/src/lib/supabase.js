@@ -7,6 +7,9 @@ import { createClient } from "@supabase/supabase-js";
  * Klucz anon z tego samego projektu: Settings → API → anon (public).
  * W `.env`: VITE_SUPABASE_ANON_KEY=...
  *
+ * Reset hasła: opcjonalnie `VITE_AUTH_REDIRECT_URL` (pełny URL strony logowania), musi być dopisany w Supabase
+ * → Authentication → URL Configuration → Redirect URLs.
+ *
  * Jeśli w panelu widać dane, a w aplikacji nie — zwykle przyczyna to:
  * (1) inny ref w URL niż w panelu, (2) klucz anon z innego projektu,
  * (3) RLS na tabeli `kr` bez polityki SELECT dla `anon`.

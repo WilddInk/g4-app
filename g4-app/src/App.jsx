@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AuthScreen } from "./AuthScreen.jsx";
+import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { supabase } from "./lib/supabase.js";
 import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 
@@ -272,7 +273,7 @@ const s = {
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
-  /** Tabela etapów (kamienie_milowe) — mniejsza czcionka, więcej kolumn na ekranie. */
+  /** Tabela etapów (`public.etapy`) — mniejsza czcionka, więcej kolumn na ekranie. */
   kmTable: {
     width: "100%",
     borderCollapse: "collapse",
@@ -407,7 +408,7 @@ function pulpitKmPlanPrzeterminowany(row, dziśYYYYMMDD) {
   return true;
 }
 
-/** ETAP (wiersz w kamienie_milowe): zagrożenie, opis ryzyka lub plan po terminie przy etapie jeszcze „otwartym”. */
+/** ETAP (wiersz w `etapy`): zagrożenie, opis ryzyka lub plan po terminie przy etapie jeszcze „otwartym”. */
 function pulpitKmWymagaUwagi(row, dziśYYYYMMDD) {
   if (row.zagrozenie === "tak" || row.zagrozenie === true) return true;
   if (tekstTrim(row.zagrozenie_opis)) return true;
@@ -645,6 +646,263 @@ const DZIAL_W_BAZIE = {
   prawny: "dział prawny",
   inzynieryjny: "dział inżynieryjny",
 };
+
+/** Zgodnie z CHECK w pracownik-kolumny-auth-dzial-check.sql — kolumna pracownik.dzial. */
+const PRACOWNIK_DZIAL_ETYKIETA = {
+  administracja: "Administracja",
+  dzial_prawny: "Dział prawny",
+  dzial_inzynieryjny: "Dział inżynierski",
+  dzial_nieruchomosci: "Dział nieruchomości",
+  dzial_terenowy: "Dział terenowy",
+};
+
+function etykietaDzialuPracownika(kod) {
+  const k = kod != null ? String(kod).trim() : "";
+  if (!k) return "";
+  return PRACOWNIK_DZIAL_ETYKIETA[k] ?? k;
+}
+
+/** Wiersze z listy Box (wiele na osobę) — pracownik-dokument-box-import.sql */
+const PRACOWNIK_DOKUMENT_TYP_BOX_IMPORT = "zaimportowane_box";
+
+const PRACOWNIK_FIRMA_Z_KODU = {
+  A: "G4 Geodezja Michał Jakubowski",
+  B: "G4 Geodezja Monika Jakubowska",
+  C: "G4 Geodezja spółka z o.o.",
+};
+
+/** Porównanie ID z nazwy pliku (np. 001) z kolumną pracownik.nr (np. 01). */
+function nrPlikuPasujeDoPracownika(nrZPliku, nrWbazie) {
+  const a = String(nrZPliku ?? "").trim();
+  const b = String(nrWbazie ?? "").trim();
+  if (!a || !b) return false;
+  const ia = parseInt(a, 10);
+  const ib = parseInt(b, 10);
+  if (!Number.isNaN(ia) && !Number.isNaN(ib)) return ia === ib;
+  return a === b;
+}
+
+/**
+ * Linia: „HR---B---001-…---data” + tab/spacja + https://…box.com/…
+ * Zwraca { ok, url, nazwa_pliku, firma_kod, pracownik_nr_raw, … } lub { ok:false, blad }.
+ */
+function parseWierszeListyBoxHr(text) {
+  const lines = String(text)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const rows = [];
+  for (const line of lines) {
+    const m = line.match(/https?:\/\/[^\s]+/i);
+    if (!m) {
+      rows.push({ ok: false, blad: "Brak adresu http(s) w linii", raw: line });
+      continue;
+    }
+    const url = m[0].replace(/[),.;]+$/u, "");
+    const i = line.indexOf(m[0]);
+    const nazwa = line.slice(0, i).trim().replace(/[\t ]+$/u, "");
+    const parts = nazwa
+      .split("---")
+      .map((s) => s.trim())
+      .filter((p) => p.length > 0);
+    let firma_kod = null;
+    let pracownik_nr_raw = null;
+    if (parts.length >= 3 && /^hr$/i.test(parts[0]) && /^[ABC]$/i.test(parts[1])) {
+      firma_kod = parts[1].toUpperCase();
+      pracownik_nr_raw = parts[2];
+    }
+    rows.push({
+      ok: true,
+      nazwa_pliku: nazwa || url,
+      url,
+      firma_kod,
+      pracownik_nr_raw,
+      firma_etykieta: firma_kod ? PRACOWNIK_FIRMA_Z_KODU[firma_kod] ?? null : null,
+      raw: line,
+    });
+  }
+  return rows;
+}
+
+/**
+ * Segment kategorii z nazwy HR---C---011-HomikAnna---Nieobecności---… (czwarty po ---,
+ * zaraz po części z numerem i nazwiskiem/imieniem). Dla innych formatów — null.
+ */
+function kategoriaZNazwyPlikuBox(nazwa) {
+  const parts = String(nazwa ?? "")
+    .split("---")
+    .map((s) => s.trim())
+    .filter((p) => p.length > 0);
+  if (parts.length < 4) return null;
+  if (!/^hr$/i.test(parts[0]) || !/^[ABC]$/i.test(parts[1])) return null;
+  const kat = parts[3];
+  return kat && kat.length > 0 ? kat : null;
+}
+
+/** Etykieta sekcji w UI (np. DaneOsobowe → Dane Osobowe). */
+function etykietaKategoriiImportu(k) {
+  const t = String(k ?? "").trim();
+  if (!t) return "Inne";
+  if (t === "Inne") return "Inne";
+  return t
+    .replace(/([a-ząćęłńóśźż])([A-ZĄĆĘŁŃÓŚŹŻ])/g, "$1 $2")
+    .replace(/_/g, " ");
+}
+
+function kategoriaImportuDlaWiersza(row) {
+  const zBazy = row?.kategoria_importu != null ? String(row.kategoria_importu).trim() : "";
+  if (zBazy) return zBazy;
+  return kategoriaZNazwyPlikuBox(row?.nazwa_pliku) ?? "Inne";
+}
+
+function firmaKodZWierszaDokumentu(row) {
+  return row?.firma_kod != null ? String(row.firma_kod).trim().toUpperCase() : "";
+}
+
+function etykietaFirmyImportuBox(kod) {
+  const k = kod != null ? String(kod).trim().toUpperCase() : "";
+  if (!k) return "Bez kodu firmy";
+  return PRACOWNIK_FIRMA_Z_KODU[k] ?? `Firma — kod „${k}”`;
+}
+
+/** Kolejność A, B, C, potem pozostałe kody, na końcu brak kodu. */
+function sortujKodyFirmDlaBoxa(kody) {
+  const pri = { A: 1, B: 2, C: 3 };
+  return [...kody].sort((a, b) => {
+    const pa = a ? pri[a] : null;
+    const pb = b ? pri[b] : null;
+    if (pa != null && pb != null) return pa - pb;
+    if (pa != null) return -1;
+    if (pb != null) return 1;
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b, "pl", { sensitivity: "base", numeric: true });
+  });
+}
+
+/** Najpóźniejsza data RRRR-MM-DD występująca w nazwie (np. wiele dat — bierzemy max). */
+function najnowszaDataIsoZNazwyPlikuBox(nazwa) {
+  const raw = String(nazwa ?? "");
+  const re = /\d{4}-\d{2}-\d{2}/g;
+  let max = null;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const s = m[0];
+    if (!max || s > max) max = s;
+  }
+  return max;
+}
+
+/** Dzień do sortu/filtru: pierwszeństwo ma data z nazwy; inaczej data importu (`created_at`). */
+function dzienReferencyjnyDlaWierszaBox(row) {
+  const zNazwy = najnowszaDataIsoZNazwyPlikuBox(row?.nazwa_pliku);
+  if (zNazwy) return zNazwy;
+  return dataDoSortuYYYYMMDD(row?.created_at);
+}
+
+function sortujWierszeBoxOdNajnowszych(rows) {
+  return [...rows].sort((a, b) => {
+    const da = dzienReferencyjnyDlaWierszaBox(a);
+    const db = dzienReferencyjnyDlaWierszaBox(b);
+    if (da && db) {
+      const c = db.localeCompare(da);
+      if (c !== 0) return c;
+    } else if (da && !db) return -1;
+    else if (!da && db) return 1;
+    const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+    const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+    return tb - ta;
+  });
+}
+
+function czyWierszBoxWPasujeDoFiltruDat(row, dataOd, dataDo) {
+  const od = String(dataOd ?? "").trim();
+  const ddo = String(dataDo ?? "").trim();
+  if (!od && !ddo) return true;
+  const d = dzienReferencyjnyDlaWierszaBox(row);
+  if (!d) return false;
+  if (od && d < od) return false;
+  if (ddo && d > ddo) return false;
+  return true;
+}
+
+function idSekcjiKategoriiDokumentow(kategoria) {
+  const src = String(kategoria ?? "").trim().toLowerCase();
+  const cleaned = src
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `dok-kat-${cleaned || "inne"}`;
+}
+
+/** Kolory segmentów nazwy HR---A---…------… (--- białe; A/B/C czerwone; nr+imię niebieskie; typ zielony; daty niebieskie). */
+const NAZWA_PLIKU_BOX_KOL = {
+  sep: "#f8fafc",
+  firmaKod: "#f87171",
+  pracownik: "#7dd3fc",
+  typ: "#86efac",
+  data: "#38bdf8",
+};
+
+function fragmentyKolorowejNazwyPlikuBox(nazwa) {
+  const raw = String(nazwa ?? "");
+  const out = [];
+  if (!raw) return [{ text: "—", color: NAZWA_PLIKU_BOX_KOL.sep }];
+
+  const parts = raw.split("---");
+  const czyFormatHr =
+    parts.length >= 4 &&
+    /^hr$/i.test((parts[0] ?? "").trim()) &&
+    /^[ABC]$/i.test((parts[1] ?? "").trim());
+
+  const dopiszSep = () => out.push({ text: "---", color: NAZWA_PLIKU_BOX_KOL.sep });
+
+  const dopiszReszteZDatami = (segment) => {
+    if (segment === "") return;
+    const re = /\d{4}-\d{2}-\d{2}/g;
+    let last = 0;
+    let m;
+    let znaleziono = false;
+    while ((m = re.exec(segment)) !== null) {
+      znaleziono = true;
+      if (m.index > last) {
+        out.push({ text: segment.slice(last, m.index), color: NAZWA_PLIKU_BOX_KOL.sep });
+      }
+      out.push({ text: m[0], color: NAZWA_PLIKU_BOX_KOL.data });
+      last = m.index + m[0].length;
+    }
+    if (znaleziono && last < segment.length) {
+      out.push({ text: segment.slice(last), color: NAZWA_PLIKU_BOX_KOL.sep });
+    }
+    if (!znaleziono) {
+      out.push({ text: segment, color: NAZWA_PLIKU_BOX_KOL.sep });
+    }
+  };
+
+  if (!czyFormatHr) {
+    dopiszReszteZDatami(raw);
+    return out;
+  }
+
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) dopiszSep();
+    const seg = parts[i];
+    if (i === 0) {
+      out.push({ text: seg, color: NAZWA_PLIKU_BOX_KOL.sep });
+    } else if (i === 1) {
+      out.push({ text: seg, color: NAZWA_PLIKU_BOX_KOL.firmaKod });
+    } else if (i === 2) {
+      out.push({ text: seg, color: NAZWA_PLIKU_BOX_KOL.pracownik });
+    } else if (i === 3) {
+      out.push({ text: seg, color: NAZWA_PLIKU_BOX_KOL.typ });
+    } else {
+      dopiszReszteZDatami(seg);
+    }
+  }
+  return out;
+}
 
 /** Zgodnie z CHECK w supabase/kr-add-status.sql — muszą być identyczne jak w bazie. */
 const KR_STATUS_W_BAZIE = [
@@ -1071,6 +1329,56 @@ function kmTekstDoKomorki(val) {
 }
 
 const STORAGE_TRYB_HELP = "g4_tryb_help";
+/** Zapamiętanie podglądu „jako inny pracownik” (tylko dla app_role admin). */
+const STORAGE_ADMIN_PODGLAD_NR = "g4_admin_podglad_pracownik_nr";
+
+/**
+ * Konto z JWT vs efektywny pracownik do list „Moje …” / pulpitu.
+ * Podgląd innej osoby włączany wyłącznie przy app_role admin + wybranym `adminPodgladPracownikNr`.
+ */
+function obliczPracownikWidokuDlaSesji(pracownicy, session, adminPodgladPracownikNr) {
+  const uid = session?.user?.id;
+  const pracownikSesja =
+    uid == null
+      ? null
+      : pracownicy.find((p) => p.auth_user_id != null && String(p.auth_user_id) === String(uid)) ?? null;
+  const czyAdminAktywny = Boolean(
+    pracownikSesja &&
+      pracownikSesja.is_active !== false &&
+      String(pracownikSesja.app_role ?? "").trim() === "admin",
+  );
+  let pracownikWidokEfektywny = pracownikSesja;
+  if (czyAdminAktywny) {
+    const want = String(adminPodgladPracownikNr ?? "").trim();
+    if (want) {
+      const znaleziony = pracownicy.find((p) => String(p.nr ?? "").trim() === want);
+      if (znaleziony) pracownikWidokEfektywny = znaleziony;
+    }
+  }
+  return { pracownikSesja, pracownikWidokEfektywny, czyAdminAktywny };
+}
+
+/** Kto widzi/edytuje pole „wymagane naprawy” przy flocie (zgodnie z pracownik.odpowiedzialny_flota + role). */
+function pracownikWidziNaprawyFloty(p) {
+  if (!p) return false;
+  const role = String(p.app_role ?? "").trim();
+  if (role === "admin" || role === "kierownik") return true;
+  return p.odpowiedzialny_flota === true;
+}
+
+/** Wartości `pracownik.app_role` (CHECK w bazie) — etykiety UI. */
+const APP_ROLE_OPCJE = [
+  { value: "uzytkownik", label: "Pracownik" },
+  { value: "kierownik", label: "Kierownik" },
+  { value: "admin", label: "Administrator" },
+];
+
+/** `pracownik.forma_zatrudnienia` — po migracji `pracownik-forma-zatrudnienia.sql`. */
+const FORMA_ZATRUDNIENIA_OPCJE = [
+  { value: "uop", label: "UoP" },
+  { value: "uz", label: "Um. zlecenie" },
+  { value: "inne", label: "Inna" },
+];
 
 /** Podpowiedź pod przyciskiem — tylko przy włączonym trybie HELP (prezentacja). */
 const stylHelpPodPrzycisk = {
@@ -1175,6 +1483,8 @@ function kmWierszDoFormu(row) {
 export default function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
+  /** Po linku „reset hasła” z e-maila — najpierw wymuś ustawienie nowego hasła w AuthScreen. */
+  const [wymusNoweHasloPoReset, setWymusNoweHasloPoReset] = useState(false);
 
   /** Widok modułu: panel startowy | KR | pracownik | zadania | … */
   const [widok, setWidok] = useState("dashboard");
@@ -1184,7 +1494,7 @@ export default function App() {
   const [panelKrSzukaj, setPanelKrSzukaj] = useState("");
   /** Otwarty rekord KR (szczegóły + etapy); null = główny ekran z samą listą. */
   const [wybranyKrKlucz, setWybranyKrKlucz] = useState(null);
-  /** Widok etapów (tabela kamienie_milowe) dla wybranego kodu KR (z listy głównej). */
+  /** Widok etapów (tabela `etapy`) dla wybranego kodu KR (z listy głównej). */
   const [widokKmDlaKr, setWidokKmDlaKr] = useState(null);
   /** Dziennik zdarzeń (LOG) dla jednego KR — tabela dziennik_zdarzen. */
   const [widokLogDlaKr, setWidokLogDlaKr] = useState(null);
@@ -1198,7 +1508,7 @@ export default function App() {
   const [pulpitSortDaty, setPulpitSortDaty] = useState("asc");
   /** Podstrona pulpitu: przegląd (skrót), pełna oś, lub treść jak zakładki karty projektu. */
   const [pulpitPodstrona, setPulpitPodstrona] = useState("przeglad");
-  /** Drzewo nawigacji pulpitu — „Projekty” rozwinięte domyślnie. */
+  /** Drzewo nawigacji pulpitu — gałąź KR rozwinięta domyślnie. */
   const [pulpitDrzewoRozwinProjekty, setPulpitDrzewoRozwinProjekty] = useState(true);
   /** Prezentacja: zielone podpowiedzi pod przyciskami; zapamiętane w przeglądarce. */
   const [trybHelp, setTrybHelp] = useState(() => {
@@ -1276,6 +1586,25 @@ export default function App() {
   const [pracownicy, setPracownicy] = useState([]);
   const [pracFetchError, setPracFetchError] = useState(null);
   const [pracLoading, setPracLoading] = useState(false);
+  const [mojeDokumentyList, setMojeDokumentyList] = useState([]);
+  const [mojeDokumentyFetchError, setMojeDokumentyFetchError] = useState(null);
+  const [mojeDokEdycja, setMojeDokEdycja] = useState({ arkusz: "" });
+  const [mojeDokSaveMsg, setMojeDokSaveMsg] = useState(null);
+  const [mojeDokBulkWklejka, setMojeDokBulkWklejka] = useState("");
+  const [mojeDokBulkMsg, setMojeDokBulkMsg] = useState(null);
+  /** Kategorie listy Box — domyślnie zwinięte; klawisz rozwija sekcję po prawej. */
+  const [mojeDokKategorieRozwiniete, setMojeDokKategorieRozwiniete] = useState(() => new Set());
+  /** Filtr listy Box: zakres po dniu referencyjnym (nazwa pliku → max data, inaczej import). */
+  const [mojeDokFiltrDataOd, setMojeDokFiltrDataOd] = useState("");
+  const [mojeDokFiltrDataDo, setMojeDokFiltrDataDo] = useState("");
+  /** Dla roli admin: `pracownik.nr` — podgląd aplikacji jak dla wybranej osoby (bez wylogowania). */
+  const [adminPodgladPracownikNr, setAdminPodgladPracownikNr] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_ADMIN_PODGLAD_NR) ?? "";
+    } catch {
+      return "";
+    }
+  });
 
   const [newKr, setNewKr] = useState("");
   const [newNazwaObiektu, setNewNazwaObiektu] = useState("");
@@ -1295,6 +1624,8 @@ export default function App() {
   const [newPracDzial, setNewPracDzial] = useState("");
   const [newPracEmail, setNewPracEmail] = useState("");
   const [newPracTelefon, setNewPracTelefon] = useState("");
+  const [newPracAppRole, setNewPracAppRole] = useState("uzytkownik");
+  const [newPracForma, setNewPracForma] = useState("uop");
 
   /** Który rekord KR jest w trybie edycji (klucz główny `kr`). */
   const [editingKrKey, setEditingKrKey] = useState(null);
@@ -1365,7 +1696,7 @@ export default function App() {
 
   async function fetchEtapy() {
     const { data, error } = await supabase
-      .from("kamienie_milowe")
+      .from("etapy")
       .select("*")
       .order("id", { ascending: true });
 
@@ -1396,6 +1727,140 @@ export default function App() {
       return;
     }
     setPracownicy(data ?? []);
+  }
+
+  async function zapiszMojeDokumenty() {
+    const uid = session?.user?.id;
+    if (!uid) return;
+    const { pracownikSesja, pracownikWidokEfektywny, czyAdminAktywny } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    if (!pracownikSesja?.nr || !pracownikWidokEfektywny?.nr) return;
+    if (!czyAdminAktywny) {
+      setMojeDokSaveMsg("Tylko rola administratora może zapisywać skrót do arkusza.");
+      return;
+    }
+    const nr = String(pracownikWidokEfektywny.nr).trim();
+    setMojeDokSaveMsg(null);
+    const arkusz = mojeDokEdycja.arkusz.trim() || null;
+    const { error: eUpd } = await supabase.from("pracownik").update({ link_google_arkusz: arkusz }).eq("nr", nr);
+    if (eUpd) {
+      setMojeDokSaveMsg(String(eUpd.message));
+      return;
+    }
+    await fetchPracownicy();
+    const { data, error: e2 } = await supabase.from("pracownik_dokument").select("*").eq("pracownik_nr", nr);
+    if (e2) {
+      setMojeDokSaveMsg(String(e2.message));
+      return;
+    }
+    setMojeDokumentyList(data ?? []);
+    setMojeDokSaveMsg("Zapisano.");
+  }
+
+  async function importujWklejoneZListyBox() {
+    const uid = session?.user?.id;
+    if (!uid) return;
+    const { pracownikSesja, pracownikWidokEfektywny, czyAdminAktywny } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    if (!pracownikSesja?.nr || !pracownikWidokEfektywny?.nr) return;
+    if (!czyAdminAktywny) {
+      setMojeDokBulkMsg("Błąd: import z Box jest dostępny tylko dla administratora.");
+      return;
+    }
+    const nr = String(pracownikWidokEfektywny.nr).trim();
+    setMojeDokBulkMsg(null);
+    const parsed = parseWierszeListyBoxHr(mojeDokBulkWklejka);
+    const bledy = parsed.filter((r) => !r.ok);
+    const okRows = parsed.filter((r) => r.ok);
+    if (okRows.length === 0) {
+      setMojeDokBulkMsg(
+        bledy.length
+          ? `Nie znaleziono poprawnych linii z URL. ${bledy.map((b) => b.blad).join("; ")}`
+          : "Wklej co najmniej jedną linię (nazwa + link).",
+      );
+      return;
+    }
+    const dopasowane = okRows.filter((r) =>
+      r.pracownik_nr_raw != null && r.pracownik_nr_raw !== ""
+        ? nrPlikuPasujeDoPracownika(r.pracownik_nr_raw, nr)
+        : false,
+    );
+    const pomija = okRows.filter(
+      (r) =>
+        r.pracownik_nr_raw == null ||
+        r.pracownik_nr_raw === "" ||
+        !nrPlikuPasujeDoPracownika(r.pracownik_nr_raw, nr),
+    );
+    let wstawiono = 0;
+    let pominietoDuplikat = 0;
+    for (const r of dopasowane) {
+      const { data: istn } = await supabase
+        .from("pracownik_dokument")
+        .select("id")
+        .eq("pracownik_nr", nr)
+        .eq("url", r.url)
+        .maybeSingle();
+      if (istn?.id) {
+        pominietoDuplikat++;
+        continue;
+      }
+      const { error } = await supabase.from("pracownik_dokument").insert({
+        pracownik_nr: nr,
+        typ: PRACOWNIK_DOKUMENT_TYP_BOX_IMPORT,
+        url: r.url,
+        nazwa_pliku: r.nazwa_pliku,
+        firma_kod: r.firma_kod,
+      });
+      if (error) {
+        setMojeDokBulkMsg(`Błąd: ${error.message}`);
+        return;
+      }
+      wstawiono++;
+    }
+    const { data: lista } = await supabase.from("pracownik_dokument").select("*").eq("pracownik_nr", nr);
+    setMojeDokumentyList(lista ?? []);
+    const frag = [
+      `Dodano ${wstawiono} nowych linków.`,
+      pominietoDuplikat ? `Pominięto duplikaty URL: ${pominietoDuplikat}.` : null,
+      pomija.length
+        ? `Nie zaimportowano ${pomija.length} linii (inny ID w nazwie niż docelowy „${nr}” lub brak formatu HR---A---…).`
+        : null,
+      bledy.length ? `Błędne linie (bez URL): ${bledy.length}.` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    setMojeDokBulkMsg(frag);
+    setMojeDokBulkWklejka("");
+  }
+
+  async function usunZaimportowanyDokumentBox(id) {
+    const uid = session?.user?.id;
+    if (!uid || id == null) return;
+    const { pracownikSesja, pracownikWidokEfektywny, czyAdminAktywny } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    if (!pracownikSesja?.nr || !pracownikWidokEfektywny?.nr) return;
+    if (!czyAdminAktywny) {
+      setMojeDokBulkMsg("Błąd: usuwanie wpisów z listy Box jest dostępne tylko dla administratora.");
+      return;
+    }
+    const nr = String(pracownikWidokEfektywny.nr).trim();
+    setMojeDokBulkMsg(null);
+    const { error } = await supabase.from("pracownik_dokument").delete().eq("id", id).eq("pracownik_nr", nr);
+    if (error) {
+      setMojeDokBulkMsg(`Błąd: ${error.message}`);
+      return;
+    }
+    setMojeDokumentyList((prev) => prev.filter((x) => x.id !== id));
+    setMojeDokBulkMsg("Usunięto wpis.");
   }
 
   async function fetchZadania() {
@@ -1433,7 +1898,7 @@ export default function App() {
   async function fetchSamochody() {
     setSamochodyFetchError(null);
     const { data, error } = await supabase
-      .from("samochod")
+      .from("samochod_lista")
       .select("*")
       .order("nazwa", { ascending: true });
 
@@ -1618,7 +2083,7 @@ export default function App() {
     }
     setKrFakturySprzedazFetchError(null);
     const { data: etapyIdsRows, error: e1 } = await supabase
-      .from("kamienie_milowe")
+      .from("etapy")
       .select("id")
       .eq("kr", k);
 
@@ -1815,6 +2280,64 @@ export default function App() {
     void fetchPracownicy();
   }
 
+  function przejdzDoCzasPracy() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setWidok("czas_pracy");
+    void fetchPracownicy();
+    void fetchKR();
+  }
+
+  function przejdzDoMojeDokumenty() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setKrProjektSekcja("przeglad");
+    setMojeDokSaveMsg(null);
+    setWidok("moje_dokumenty");
+    void fetchPracownicy();
+  }
+
+  function przejdzDoZadanDlaNr(nr) {
+    setZadaniaFiltrPracNr(String(nr ?? "").trim());
+    przejdzDoZadania();
+  }
+
   function przejdzDoZadania() {
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
@@ -1840,6 +2363,12 @@ export default function App() {
     setWidok("zadania");
     void fetchZadania();
     void fetchPracownicy();
+  }
+
+  /** Moduł Zadania: filtr „tylko zadania przypisane do kodów KR z listy kart (nie ogólne, nie osierocone kody). */
+  function przejdzDoZadanTylkoZKartamiKr() {
+    setZadaniaFiltrKr("__tylko_z_kr__");
+    przejdzDoZadania();
   }
 
   function przejdzDoPodwykonawcow() {
@@ -1967,15 +2496,26 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.from("pracownik").insert([
-      {
-        nr,
-        imie_nazwisko: imie,
-        dzial: newPracDzial.trim() || null,
-        email: newPracEmail.trim() || null,
-        telefon: newPracTelefon.trim() || null,
-      },
-    ]);
+    const { czyAdminAktywny: jestAdmin } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    const wiersz = {
+      nr,
+      imie_nazwisko: imie,
+      dzial: newPracDzial.trim() || null,
+      email: newPracEmail.trim() || null,
+      telefon: newPracTelefon.trim() || null,
+    };
+    if (jestAdmin) {
+      const ar = String(newPracAppRole ?? "uzytkownik").trim();
+      if (["admin", "kierownik", "uzytkownik"].includes(ar)) wiersz.app_role = ar;
+      const fz = String(newPracForma ?? "uop").trim();
+      if (["uop", "uz", "inne"].includes(fz)) wiersz.forma_zatrudnienia = fz;
+    }
+
+    const { error } = await supabase.from("pracownik").insert([wiersz]);
 
     if (error) {
       console.error(error);
@@ -1992,6 +2532,86 @@ export default function App() {
     setNewPracDzial("");
     setNewPracEmail("");
     setNewPracTelefon("");
+    setNewPracAppRole("uzytkownik");
+    setNewPracForma("uop");
+    await fetchPracownicy();
+  }
+
+  async function ustawFormaZatrudnienia(nr, forma) {
+    const { czyAdminAktywny: jestAdmin } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    if (!jestAdmin) {
+      alert("Tylko administrator może zmieniać formę zatrudnienia.");
+      return;
+    }
+    const f = String(forma ?? "").trim();
+    if (!["uop", "uz", "inne"].includes(f)) return;
+    const { error } = await supabase.from("pracownik").update({ forma_zatrudnienia: f }).eq("nr", nr);
+    if (error) {
+      console.error(error);
+      alert(
+        "Zapis formy zatrudnienia: " +
+          error.message +
+          (String(error.message).includes("column") || String(error.message).includes("schema")
+            ? "\n\nUruchom w Supabase: g4-app/supabase/pracownik-forma-zatrudnienia.sql"
+            : ""),
+      );
+      return;
+    }
+    await fetchPracownicy();
+  }
+
+  async function ustawOdpowiedzialnyFlota(nr, wartosc) {
+    const { czyAdminAktywny: jestAdmin } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    if (!jestAdmin) {
+      alert("Tylko administrator może przypisywać odpowiedzialność za flotę.");
+      return;
+    }
+    const { error } = await supabase
+      .from("pracownik")
+      .update({ odpowiedzialny_flota: wartosc })
+      .eq("nr", nr);
+    if (error) {
+      console.error(error);
+      alert("Zapis „odpowiedzialny za flotę”: " + error.message);
+      return;
+    }
+    await fetchPracownicy();
+  }
+
+  async function ustawAppRolePracownika(nr, appRoleNowa) {
+    const { pracownikSesja, czyAdminAktywny: jestAdmin } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    if (!jestAdmin) {
+      alert("Tylko administrator może zmieniać role użytkowników.");
+      return;
+    }
+    const rola = String(appRoleNowa ?? "").trim();
+    if (!["admin", "kierownik", "uzytkownik"].includes(rola)) return;
+    if (
+      pracownikSesja &&
+      String(pracownikSesja.nr ?? "").trim() === String(nr).trim() &&
+      String(pracownikSesja.app_role ?? "").trim() === "admin" &&
+      rola !== "admin"
+    ) {
+      if (!window.confirm("Zdejmujesz sobie rolę administratora. Kontynuować?")) return;
+    }
+    const { error } = await supabase.from("pracownik").update({ app_role: rola }).eq("nr", nr);
+    if (error) {
+      console.error(error);
+      alert("Zapis roli: " + error.message);
+      return;
+    }
     await fetchPracownicy();
   }
 
@@ -2217,6 +2837,12 @@ export default function App() {
 
   async function zapiszSamochod(e) {
     e.preventDefault();
+    const { pracownikWidokEfektywny: pw } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    const widziFlote = pracownikWidziNaprawyFloty(pw);
     const nazwa = String(samochodForm.nazwa ?? "").trim();
     if (!nazwa) {
       alert("Podaj nazwę pojazdu (np. model + rejestracja).");
@@ -2229,9 +2855,11 @@ export default function App() {
       polisa_wazna_do: String(samochodForm.polisa_wazna_do ?? "").trim() || null,
       przeglad_wazny_do: String(samochodForm.przeglad_wazny_do ?? "").trim() || null,
       uwagi_eksploatacja: String(samochodForm.uwagi_eksploatacja ?? "").trim() || null,
-      wymagane_naprawy: String(samochodForm.wymagane_naprawy ?? "").trim() || null,
       notatki: String(samochodForm.notatki ?? "").trim() || null,
     };
+    if (widziFlote) {
+      payload.wymagane_naprawy = String(samochodForm.wymagane_naprawy ?? "").trim() || null;
+    }
 
     if (samochodEdycjaId != null) {
       const { error } = await supabase.from("samochod").update(payload).eq("id", samochodEdycjaId).select("id");
@@ -2524,7 +3152,10 @@ export default function App() {
     });
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, sess) => {
+    } = supabase.auth.onAuthStateChange((event, sess) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setWymusNoweHasloPoReset(true);
+      }
       setSession(sess);
     });
     return () => {
@@ -2532,6 +3163,17 @@ export default function App() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!requireAuth || !authReady) return;
+    try {
+      const raw = `${window.location.hash}${window.location.search}`;
+      const h = decodeURIComponent(raw);
+      if (h.includes("type=recovery")) setWymusNoweHasloPoReset(true);
+    } catch {
+      /* ignore */
+    }
+  }, [requireAuth, authReady, session?.user?.id]);
 
   useEffect(() => {
     try {
@@ -2557,14 +3199,17 @@ export default function App() {
   useEffect(() => {
     if (!requireAuth) {
       void (async () => {
-        await fetchKR();
-        await fetchEtapy();
-        void fetchPracownicy();
-        void fetchZadania();
-        void fetchPodwykonawcy();
-        void fetchSamochody();
-        void fetchFakturyDoZaplatyOczekujace();
-        setInitialFetchDone(true);
+        try {
+          await fetchKR();
+          await fetchEtapy();
+          void fetchPracownicy();
+          void fetchZadania();
+          void fetchPodwykonawcy();
+          void fetchSamochody();
+          void fetchFakturyDoZaplatyOczekujace();
+        } finally {
+          setInitialFetchDone(true);
+        }
       })();
       return;
     }
@@ -2573,14 +3218,17 @@ export default function App() {
       return;
     }
     void (async () => {
-      await fetchKR();
-      await fetchEtapy();
-      void fetchPracownicy();
-      void fetchZadania();
-      void fetchPodwykonawcy();
-      void fetchSamochody();
-      void fetchFakturyDoZaplatyOczekujace();
-      setInitialFetchDone(true);
+      try {
+        await fetchKR();
+        await fetchEtapy();
+        void fetchPracownicy();
+        void fetchZadania();
+        void fetchPodwykonawcy();
+        void fetchSamochody();
+        void fetchFakturyDoZaplatyOczekujace();
+      } finally {
+        setInitialFetchDone(true);
+      }
     })();
   }, [requireAuth, session?.user?.id]);
 
@@ -2745,6 +3393,103 @@ export default function App() {
   );
 
   const mapaProwadzacychId = useMemo(() => mapaNrPracownika(pracownicy), [pracownicy]);
+
+  const { pracownikSesja: pracownikPowiazanyZSesja, pracownikWidokEfektywny, czyAdminAktywny } =
+    useMemo(
+      () => obliczPracownikWidokuDlaSesji(pracownicy, session, adminPodgladPracownikNr),
+      [pracownicy, session, adminPodgladPracownikNr],
+    );
+
+  const czyWidziNaprawyFloty = useMemo(
+    () => pracownikWidziNaprawyFloty(pracownikWidokEfektywny),
+    [pracownikWidokEfektywny],
+  );
+
+  const podgladJakoInny = useMemo(() => {
+    if (!czyAdminAktywny || !pracownikPowiazanyZSesja || !pracownikWidokEfektywny) return false;
+    return (
+      String(pracownikWidokEfektywny.nr ?? "").trim() !== String(pracownikPowiazanyZSesja.nr ?? "").trim()
+    );
+  }, [czyAdminAktywny, pracownikPowiazanyZSesja, pracownikWidokEfektywny]);
+
+  useEffect(() => {
+    if (!pracownikPowiazanyZSesja || czyAdminAktywny || !adminPodgladPracownikNr) return;
+    setAdminPodgladPracownikNr("");
+    try {
+      localStorage.removeItem(STORAGE_ADMIN_PODGLAD_NR);
+    } catch {
+      /* ignore */
+    }
+  }, [pracownikPowiazanyZSesja, czyAdminAktywny, adminPodgladPracownikNr]);
+
+  useEffect(() => {
+    if (!czyAdminAktywny) return;
+    try {
+      const t = adminPodgladPracownikNr.trim();
+      if (t) localStorage.setItem(STORAGE_ADMIN_PODGLAD_NR, t);
+      else localStorage.removeItem(STORAGE_ADMIN_PODGLAD_NR);
+    } catch {
+      /* ignore */
+    }
+  }, [czyAdminAktywny, adminPodgladPracownikNr]);
+
+  const dashboardMojeZadania = useMemo(() => {
+    const nr = pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) return [];
+    return zadaniaList.filter((z) => {
+      const o = String(z.osoba_odpowiedzialna ?? "").trim();
+      const zl = String(z.osoba_zlecajaca ?? "").trim();
+      return o === nr || zl === nr;
+    });
+  }, [zadaniaList, pracownikWidokEfektywny?.nr]);
+
+  const dashboardMojeKr = useMemo(() => {
+    const nr = pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) return [];
+    return krList.filter((k) => String(k.osoba_prowadzaca ?? "").trim() === nr);
+  }, [krList, pracownikWidokEfektywny?.nr]);
+
+  const dashboardMojeEtapy = useMemo(() => {
+    const nr = pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) return [];
+    return etapy.filter((e) => String(e.osoba_odpowiedzialna ?? "").trim() === nr);
+  }, [etapy, pracownikWidokEfektywny?.nr]);
+
+  useEffect(() => {
+    if (widok !== "moje_dokumenty") return;
+    const p = pracownikWidokEfektywny;
+    const nr = p?.nr != null ? String(p.nr).trim() : "";
+    const arkuszBase = p?.link_google_arkusz != null ? String(p.link_google_arkusz) : "";
+    if (!nr) {
+      setMojeDokumentyList([]);
+      setMojeDokumentyFetchError(null);
+      setMojeDokEdycja({ arkusz: arkuszBase });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      setMojeDokumentyFetchError(null);
+      const { data, error } = await supabase.from("pracownik_dokument").select("*").eq("pracownik_nr", nr);
+      if (cancelled) return;
+      if (error) {
+        setMojeDokumentyFetchError(error.message);
+        setMojeDokumentyList([]);
+        return;
+      }
+      const list = data ?? [];
+      setMojeDokumentyList(list);
+      setMojeDokEdycja({ arkusz: arkuszBase });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [widok, pracownikWidokEfektywny?.nr, pracownikWidokEfektywny?.link_google_arkusz]);
+
+  useEffect(() => {
+    setMojeDokKategorieRozwiniete(new Set());
+    setMojeDokFiltrDataOd("");
+    setMojeDokFiltrDataDo("");
+  }, [widok, pracownikWidokEfektywny?.nr]);
 
   const podwykonawcyPosortowani = useMemo(
     () =>
@@ -3442,7 +4187,7 @@ export default function App() {
 
     if (kmEdycjaId != null) {
       const { error } = await supabase
-        .from("kamienie_milowe")
+        .from("etapy")
         .update(payload)
         .eq("id", kmEdycjaId)
         .select("id");
@@ -3464,7 +4209,7 @@ export default function App() {
         return;
       }
     } else {
-      const { error } = await supabase.from("kamienie_milowe").insert([payload]).select("id");
+      const { error } = await supabase.from("etapy").insert([payload]).select("id");
 
       if (error) {
         console.error(error);
@@ -3491,7 +4236,7 @@ export default function App() {
 
   async function usunKm(id) {
     if (!window.confirm("Usunąć ten wiersz etapu?")) return;
-    const { error } = await supabase.from("kamienie_milowe").delete().eq("id", id);
+    const { error } = await supabase.from("etapy").delete().eq("id", id);
     if (error) {
       console.error(error);
       const msg = String(error.message);
@@ -3890,7 +4635,7 @@ export default function App() {
   /**
    * Zapis pól tabeli `kr`. `staryKrWiersza` — wartość klucza z bazy przy otwarciu edycji (WHERE).
    * `editForm.kr` może być nowym kodem KR; przy zmianie kodu w bazie muszą być zsynchronizowane
-   * powiązania (np. ON UPDATE CASCADE na `kamienie_milowe.kr`), inaczej Postgres zwróci błąd FK.
+   * powiązania (np. ON UPDATE CASCADE na `etapy.kr`), inaczej Postgres zwróci błąd FK.
    */
   async function saveEditKr(staryKrWiersza) {
     const staryKr = String(staryKrWiersza).trim();
@@ -4064,28 +4809,6 @@ export default function App() {
     await fetchKR();
   }
 
-  if (requireAuth) {
-    if (!authReady) {
-      return (
-        <div
-          style={{
-            ...s.page,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: "100vh",
-          }}
-        >
-          <p style={s.muted}>Ładowanie…</p>
-        </div>
-      );
-    }
-
-    if (!session?.user) {
-      return <AuthScreen />;
-    }
-  }
-
   const showEmptyKrHint =
     widok === "kr" &&
     initialFetchDone &&
@@ -4144,15 +4867,36 @@ export default function App() {
     return n;
   }, [krList, kodyKrZWyroznieniemUwagi]);
 
-  const liczbaZadanWToku = useMemo(() => {
-    return zadaniaList.filter((z) => !zadanieCzyUkonczoneStatus(z.status)).length;
-  }, [zadaniaList]);
+  /** Kody KR z aktualnej listy kart — do liczników KPI na widoku KR i filtra „tylko z KR”. */
+  const kodyAktywnychKr = useMemo(
+    () => new Set(krList.map((r) => String(r.kr ?? "").trim()).filter(Boolean)),
+    [krList],
+  );
+
+  const zadaniaTylkoPowiazaneZKr = useMemo(() => {
+    return zadaniaList.filter((z) => {
+      const k = String(z.kr ?? "").trim();
+      return k !== "" && kodyAktywnychKr.has(k);
+    });
+  }, [zadaniaList, kodyAktywnychKr]);
+
+  const liczbaZadanTylkoPowiazanychZKr = zadaniaTylkoPowiazaneZKr.length;
+
+  const liczbaOtwartychZadanTylkoPowiazanychZKr = useMemo(
+    () => zadaniaTylkoPowiazaneZKr.filter((z) => !zadanieCzyUkonczoneStatus(z.status)).length,
+    [zadaniaTylkoPowiazaneZKr],
+  );
 
   const zadaniaPrzefiltrowane = useMemo(() => {
     let list = zadaniaList;
     const fk = String(zadaniaFiltrKr ?? "").trim();
     if (fk === "__bez_kr__") {
       list = list.filter((z) => !tekstTrim(z.kr));
+    } else if (fk === "__tylko_z_kr__") {
+      list = list.filter((z) => {
+        const k = String(z.kr ?? "").trim();
+        return k !== "" && kodyAktywnychKr.has(k);
+      });
     } else if (fk !== "") {
       list = list.filter((z) => String(z.kr ?? "").trim() === fk);
     }
@@ -4164,7 +4908,13 @@ export default function App() {
       if (zadaniaFiltrTylkoOdpowiedzialny) return o === fnr;
       return o === fnr || zl === fnr;
     });
-  }, [zadaniaList, zadaniaFiltrPracNr, zadaniaFiltrTylkoOdpowiedzialny, zadaniaFiltrKr]);
+  }, [
+    zadaniaList,
+    zadaniaFiltrPracNr,
+    zadaniaFiltrTylkoOdpowiedzialny,
+    zadaniaFiltrKr,
+    kodyAktywnychKr,
+  ]);
 
   const zadaniaKanbanBuckets = useMemo(() => {
     const buckets = { oczekuje: [], w_trakcie: [], ukonczone: [], inne: [] };
@@ -4321,7 +5071,7 @@ export default function App() {
     );
   }
 
-  /** Lewe drzewo nawigacji pulpitu (jak panel „Projekty” na starcie). */
+  /** Lewe drzewo nawigacji pulpitu (jak panel KR na starcie). */
   function renderPulpitDrzewoNav(item) {
     const k = String(item.kr ?? "").trim();
     const btnLeaf = (pod, label) => {
@@ -4386,7 +5136,7 @@ export default function App() {
             cursor: "pointer",
           }}
         >
-          <span>Projekty</span>
+          <span>KR</span>
           <span style={{ color: theme.muted, fontSize: "0.75rem" }}>{pulpitDrzewoRozwinProjekty ? "▼" : "▶"}</span>
         </button>
         {pulpitDrzewoRozwinProjekty ? (
@@ -4463,10 +5213,12 @@ export default function App() {
               {tekstTrim(item.nazwa_obiektu) || "—"}
             </span>
           </h2>
-          <p style={{ ...op.muted, margin: 0, fontSize: "0.86rem", lineHeight: 1.55, maxWidth: "44rem" }}>
-            Najważniejsze na start: zagrożenia operacyjne i otwarte zadania. Pełna oś czasu, finanse (INV) i formularze —
-            w sekcjach po lewej.
-          </p>
+          {trybHelp ? (
+            <p style={{ ...op.muted, margin: 0, fontSize: "0.86rem", lineHeight: 1.55, maxWidth: "44rem" }}>
+              Najważniejsze na start: zagrożenia operacyjne i otwarte zadania. Pełna oś czasu, finanse (INV) i formularze
+              — w sekcjach po lewej.
+            </p>
+          ) : null}
         </div>
         <div style={op.kpiGrid}>
           <OpKpiCard
@@ -5714,9 +6466,11 @@ export default function App() {
       return (
         <>
           <h3 style={{ ...op.sectionTitle }}>Panel ryzyk</h3>
-          <p style={{ ...op.muted, margin: "0 0 0.65rem", fontSize: "0.8rem" }}>
-            Kliknij pozycję — przejdziesz do etapów, zgłoszeń (LOG), zleceń PW lub przeglądu projektu.
-          </p>
+          {trybHelp ? (
+            <p style={{ ...op.muted, margin: "0 0 0.65rem", fontSize: "0.8rem" }}>
+              Kliknij pozycję — przejdziesz do etapów, zgłoszeń (LOG), zleceń PW lub przeglądu projektu.
+            </p>
+          ) : null}
           {lista.length === 0 ? (
             <p style={{ ...op.muted, margin: 0 }}>Brak pozycji spełniających reguły ryzyka — utrzymuj tak dalej.</p>
           ) : (
@@ -5893,35 +6647,201 @@ export default function App() {
     return null;
   }
 
+  if (requireAuth) {
+    if (!authReady) {
+      return (
+        <div
+          style={{
+            ...s.page,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: "100vh",
+          }}
+        >
+          <p style={s.muted}>Ładowanie…</p>
+        </div>
+      );
+    }
+
+    if (!session?.user) {
+      return <AuthScreen />;
+    }
+    if (wymusNoweHasloPoReset) {
+      return (
+        <AuthScreen
+          trybNoweHasloPoLinkuZEmaila
+          onNoweHasloZapisane={() => {
+            setWymusNoweHasloPoReset(false);
+            try {
+              const u = new URL(window.location.href);
+              u.hash = "";
+              window.history.replaceState(null, "", u.pathname + u.search);
+            } catch {
+              /* ignore */
+            }
+          }}
+        />
+      );
+    }
+  }
+
   return (
     <div style={op.shellOuter}>
       <div style={op.shellLayout}>
         <main style={op.shellMain}>
           <header style={{ marginBottom: "1.35rem" }}>
-            <p style={op.brandKicker}>PODGLĄD OPERACYJNY · USŁUGI GEODEZYJNE</p>
-            <h1 style={op.brandTitle}>Panel przepływu informacji</h1>
-            <p style={op.brandSub}>
-              Jedno miejsce dla projektów (KR), etapów, zleceń i zgłoszeń. Poniżej dane na żywo z Supabase —
-              układ z myślą o spotkaniu z kierownictwem.
-            </p>
+            <h1 style={op.brandTitle}>G4 Geodezja · Panel przepływu informacji</h1>
           </header>
           {requireAuth && session?.user ? (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: "0.5rem",
-                marginBottom: "0.75rem",
-                flexWrap: "wrap",
-              }}
-            >
-              <span style={{ ...op.muted, fontSize: "0.8rem", alignSelf: "center" }} title={session.user.email ?? ""}>
-                {session.user.email}
-              </span>
-              <button type="button" style={s.btnGhost} onClick={() => void supabase.auth.signOut()}>
-                Wyloguj
-              </button>
+            <div style={{ width: "100%", marginBottom: "0.75rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "0.65rem",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <span
+                  style={{
+                    ...op.muted,
+                    fontSize: "0.8rem",
+                    textAlign: "right",
+                    lineHeight: 1.45,
+                    maxWidth: "min(100%, 22rem)",
+                  }}
+                  title={session.user.email ?? ""}
+                >
+                  <span style={{ display: "block", color: theme.text, fontWeight: 600 }}>
+                    {pracownikPowiazanyZSesja?.imie_nazwisko?.trim()
+                      ? pracownikPowiazanyZSesja.imie_nazwisko.trim()
+                      : session.user.email}
+                  </span>
+                  {pracownikPowiazanyZSesja?.imie_nazwisko?.trim() ? (
+                    <span style={{ display: "block", fontSize: "0.76rem", marginTop: "0.12rem" }}>
+                      {session.user.email}
+                    </span>
+                  ) : null}
+                  {pracownikPowiazanyZSesja ? (
+                    etykietaDzialuPracownika(pracownikPowiazanyZSesja.dzial) ? (
+                      <span
+                        style={{
+                          display: "block",
+                          fontSize: "0.78rem",
+                          marginTop: "0.25rem",
+                          fontWeight: 600,
+                          ...s.dzialWartosc,
+                        }}
+                      >
+                        Dział: {etykietaDzialuPracownika(pracownikPowiazanyZSesja.dzial)}
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          display: "block",
+                          fontSize: "0.76rem",
+                          marginTop: "0.25rem",
+                          color: theme.muted,
+                        }}
+                      >
+                        Dział: nie uzupełniony w Zespół
+                      </span>
+                    )
+                  ) : initialFetchDone ? (
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: "0.72rem",
+                        marginTop: "0.25rem",
+                        color: "#fca5a5",
+                      }}
+                    >
+                      Brak powiązania z kartoteką — ustaw <code style={s.code}>auth_user_id</code> w{" "}
+                      <code style={s.code}>pracownik</code>
+                    </span>
+                  ) : null}
+                </span>
+                {czyAdminAktywny ? (
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.2rem",
+                      fontSize: "0.72rem",
+                      color: theme.muted,
+                      minWidth: "min(16rem, 100%)",
+                    }}
+                  >
+                    Podgląd jako użytkownik
+                    <select
+                      value={adminPodgladPracownikNr}
+                      onChange={(ev) => setAdminPodgladPracownikNr(ev.target.value)}
+                      style={{
+                        padding: "0.4rem 0.5rem",
+                        borderRadius: "8px",
+                        border: `1px solid ${theme.border}`,
+                        background: theme.surface,
+                        color: theme.text,
+                        fontSize: "0.8rem",
+                      }}
+                    >
+                      <option value="">— Ja (normalny widok) —</option>
+                      {pracownicyPosortowani.map((p) => (
+                        <option key={String(p.nr)} value={String(p.nr ?? "").trim()}>
+                          {String(p.imie_nazwisko ?? "").trim() || "—"} (nr {String(p.nr ?? "").trim()})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <button type="button" style={s.btnGhost} onClick={() => void supabase.auth.signOut()}>
+                  Wyloguj
+                </button>
+              </div>
+              {podgladJakoInny ? (
+                <div
+                  role="status"
+                  style={{
+                    marginTop: "0.65rem",
+                    padding: "0.65rem 0.85rem",
+                    borderRadius: "10px",
+                    border: "1px solid rgba(251, 191, 36, 0.45)",
+                    background: "rgba(251, 191, 36, 0.1)",
+                    color: theme.text,
+                    fontSize: "0.84rem",
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: "0.65rem",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span>
+                    <strong>Podgląd roboczy</strong> — widzisz pulpit i dokumenty tak jak{" "}
+                    <strong>
+                      {pracownikWidokEfektywny?.imie_nazwisko?.trim() || "—"} (nr{" "}
+                      {pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "—"})
+                    </strong>
+                    . Nie wylogowujesz się z konta administratora.
+                  </span>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, flexShrink: 0 }}
+                    onClick={() => setAdminPodgladPracownikNr("")}
+                  >
+                    Zakończ podgląd
+                  </button>
+                </div>
+              ) : null}
             </div>
+          ) : null}
+
+          {requireAuth && session?.user && !initialFetchDone ? (
+            <p style={{ ...op.muted, margin: "0 0 1rem", fontSize: "0.9rem" }} role="status">
+              Ładowanie danych z bazy…
+            </p>
           ) : null}
 
       {(widok === "kr" ||
@@ -5960,49 +6880,210 @@ export default function App() {
               }}
             >
               <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Stan operacyjny</h2>
-              <p style={{ ...op.muted, marginBottom: 0, maxWidth: "42rem" }}>
-                Skrót sytuacji w firmie — liczby z aktualnej bazy. Szczegóły ryzyk otwierasz w{" "}
-                <strong style={{ color: "#fde68a" }}>Ostrzeżeniach</strong> lub na kartach projektów.
-              </p>
+              {trybHelp ? (
+                <p style={{ ...op.muted, marginBottom: 0, maxWidth: "42rem" }}>
+                  Skrót sytuacji w firmie — liczby z aktualnej bazy. Szczegóły ryzyk otwierasz w{" "}
+                  <strong style={{ color: "#fde68a" }}>Ostrzeżeniach</strong> lub na kartach projektów.
+                </p>
+              ) : null}
             </div>
-            <div style={op.kpiGrid}>
-              <OpKpiCard
-                label="Projekty (KR)"
-                value={krList.length}
-                hint="Aktywne karty w systemie"
-                accent="success"
-                border="rgba(34,197,94,0.28)"
-                onClick={przejdzDoKr}
-                title="Kliknij: lista projektów"
-              />
-              <OpKpiCard
-                label="Zagrożenia i alerty"
-                value={listaAlertowOperacyjnych.length}
-                hint="Automatyczna lista operacyjna"
-                accent="danger"
-                border="rgba(239,68,68,0.32)"
-                onClick={przejdzDoOstrzezeniaPanel}
-                title="Kliknij: raporty / ostrzeżenia"
-              />
-              <OpKpiCard
-                label="Zadania"
-                value={zadaniaList.length}
-                hint="Łącznie w module zadań"
-                accent="action"
-                border="rgba(249,115,22,0.32)"
-                onClick={przejdzDoZadania}
-                title="Kliknij: zadania"
-              />
-              <OpKpiCard
-                label="Zgłoszenia (otwarte zadania)"
-                value={liczbaZadanWToku}
-                hint="Bez statusu domknięcia — szybki obraz pracy"
-                accent="action"
-                border="rgba(249,115,22,0.22)"
-                onClick={przejdzDoZadania}
-                title="Kliknij: zadania"
-              />
-            </div>
+            {requireAuth && session?.user ? (
+              <div
+                style={{
+                  ...op.sectionCard,
+                  marginBottom: "1rem",
+                  borderStyle: "solid",
+                  borderColor: "rgba(148,163,184,0.15)",
+                }}
+              >
+                <h2 style={{ ...op.sectionTitle, marginTop: 0, fontSize: "1.05rem" }}>
+                  {podgladJakoInny ? "Zakres użytkownika (podgląd)" : "Twój zakres"}
+                </h2>
+                {pracownikPowiazanyZSesja ? (
+                  <>
+                    {trybHelp ? (
+                      <p style={{ ...op.muted, marginTop: 0, marginBottom: "0.85rem", fontSize: "0.86rem" }}>
+                        {podgladJakoInny ? (
+                          <>
+                            Podgląd dla ID{" "}
+                            <strong style={{ color: theme.text }}>
+                              {pracownikWidokEfektywny?.nr != null
+                                ? String(pracownikWidokEfektywny.nr).trim()
+                                : "—"}
+                            </strong>
+                            — zadania (odpowiedzialny / zlecający), KR (osoba prowadząca), etapy (osoba odpowiedzialna).
+                          </>
+                        ) : (
+                          <>
+                            Przypisane do Twojego ID{" "}
+                            <strong style={{ color: theme.text }}>{String(pracownikPowiazanyZSesja.nr).trim()}</strong>:
+                            zadania (jako odpowiedzialny lub zlecający), projekty KR (osoba prowadząca), etapy (osoba
+                            odpowiedzialna).
+                          </>
+                        )}
+                      </p>
+                    ) : null}
+                    <div style={{ ...op.kpiGrid, marginBottom: "1rem" }}>
+                      <OpKpiCard
+                        label="Moje zadania"
+                        value={dashboardMojeZadania.length}
+                        hint="Filtr po Twoim numerze ID"
+                        accent="action"
+                        border="rgba(249,115,22,0.3)"
+                        onClick={() =>
+                          przejdzDoZadanDlaNr(pracownikPowiazanyZSesja ? String(pracownikPowiazanyZSesja.nr).trim() : "")
+                        }
+                        title="Otwórz moduł zadań z filtrem"
+                      />
+                      <OpKpiCard
+                        label="Moje KR (prowadzę)"
+                        value={dashboardMojeKr.length}
+                        hint="Osoba prowadząca = Twoje ID"
+                        accent="success"
+                        border="rgba(34,197,94,0.28)"
+                        onClick={przejdzDoKr}
+                        title="Lista projektów — wybierz swój w panelu"
+                      />
+                      <OpKpiCard
+                        label="Moje etapy"
+                        value={dashboardMojeEtapy.length}
+                        hint="Osoba odpowiedzialna = Twoje ID"
+                        accent="action"
+                        border="rgba(56,189,248,0.25)"
+                        onClick={przejdzDoKr}
+                        title="Szczegóły przy projekcie — zakładka etapów"
+                      />
+                      <OpKpiCard
+                        label="Moje dokumenty"
+                        value="→"
+                        hint="Import z Box (nazwa pliku), skrót do arkusza"
+                        accent="default"
+                        border="rgba(148,163,184,0.2)"
+                        onClick={przejdzDoMojeDokumenty}
+                        title="Panel dokumentów pracownika"
+                      />
+                    </div>
+                    {dashboardMojeZadania.length > 0 ? (
+                      <div style={{ marginBottom: "1rem" }}>
+                        <h3 style={{ ...op.sectionTitle, fontSize: "0.88rem", marginBottom: "0.5rem" }}>
+                          Zadania (skrót)
+                        </h3>
+                        <ul
+                          style={{
+                            margin: 0,
+                            padding: 0,
+                            listStyle: "none",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.4rem",
+                          }}
+                        >
+                          {dashboardMojeZadania.slice(0, 6).map((z) => {
+                            const zt = kmTekstDoKomorki(z.zadanie);
+                            return (
+                              <li key={z.id}>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    przejdzDoZadanDlaNr(
+                                      pracownikWidokEfektywny?.nr != null
+                                        ? String(pracownikWidokEfektywny.nr).trim()
+                                        : "",
+                                    )
+                                  }
+                                  style={{
+                                    display: "block",
+                                    width: "100%",
+                                    textAlign: "left",
+                                    padding: "0.55rem 0.65rem",
+                                    borderRadius: "10px",
+                                    border: `1px solid ${theme.border}`,
+                                    background: theme.surface,
+                                    color: theme.text,
+                                    fontSize: "0.82rem",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {z.kr ? (
+                                    <span style={{ color: theme.action, fontWeight: 700 }}>{String(z.kr).trim()} </span>
+                                  ) : null}
+                                  <span title={zt.title}>{zt.text}</span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {dashboardMojeZadania.length > 6 ? (
+                          <p style={{ ...op.muted, fontSize: "0.75rem", margin: "0.45rem 0 0" }}>
+                            +{dashboardMojeZadania.length - 6} więcej — zobacz w module Zadania.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {dashboardMojeKr.length > 0 ? (
+                      <div style={{ marginBottom: "1rem" }}>
+                        <h3 style={{ ...op.sectionTitle, fontSize: "0.88rem", marginBottom: "0.5rem" }}>
+                          KR, które prowadzisz
+                        </h3>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                          {dashboardMojeKr.slice(0, 8).map((row) => (
+                            <button
+                              key={String(row.kr)}
+                              type="button"
+                              onClick={() => wybierzKrWPanelu(row)}
+                              style={{
+                                ...s.btnGhost,
+                                fontSize: "0.8rem",
+                                padding: "0.35rem 0.65rem",
+                              }}
+                            >
+                              {String(row.kr).trim()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {dashboardMojeEtapy.length > 0 ? (
+                      <div style={{ marginBottom: 0 }}>
+                        <h3 style={{ ...op.sectionTitle, fontSize: "0.88rem", marginBottom: "0.5rem" }}>
+                          Etapy z Twoją odpowiedzialnością
+                        </h3>
+                        <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: "0.82rem", color: theme.muted }}>
+                          {dashboardMojeEtapy.slice(0, 8).map((e) => {
+                            const rek = krList.find((k) => String(k.kr) === String(e.kr));
+                            return (
+                              <li key={e.id} style={{ marginBottom: "0.35rem" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => rek && wybierzKrWPanelu(rek)}
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    padding: 0,
+                                    cursor: rek ? "pointer" : "default",
+                                    color: rek ? theme.action : theme.muted,
+                                    font: "inherit",
+                                    textAlign: "left",
+                                    textDecoration: rek ? "underline" : "none",
+                                  }}
+                                >
+                                  <strong>{String(e.kr).trim()}</strong> — {e.etap ?? "—"}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </>
+                ) : initialFetchDone ? (
+                  <p style={{ ...op.muted, margin: 0, fontSize: "0.86rem" }}>
+                    Nie znaleziono powiązania konta z tabelą <code style={s.code}>pracownik</code>. Ustaw kolumnę{" "}
+                    <code style={s.code}>auth_user_id</code> (UUID z Authentication → Users) przy swoim rekordzie.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div style={{ ...op.muted, fontSize: "0.78rem", marginTop: "-0.5rem", marginBottom: "1rem" }}>
               Skróty:{" "}
               <button
@@ -6020,22 +7101,26 @@ export default function App() {
               >
                 PW po terminie: {liczbaZlecenDoOdbioru}
               </button>
-              {" · "}
-              <button
-                type="button"
-                onClick={przejdzDoSamochody}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: theme.muted,
-                  cursor: "pointer",
-                  font: "inherit",
-                  textDecoration: "underline",
-                  padding: 0,
-                }}
-              >
-                Flota (naprawy): {samochodyWymagajaceNaprawyLista.length}
-              </button>
+              {czyWidziNaprawyFloty ? (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    onClick={przejdzDoSamochody}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: theme.muted,
+                      cursor: "pointer",
+                      font: "inherit",
+                      textDecoration: "underline",
+                      padding: 0,
+                    }}
+                  >
+                    Flota (naprawy): {samochodyWymagajaceNaprawyLista.length}
+                  </button>
+                </>
+              ) : null}
               {" · "}
               <button
                 type="button"
@@ -6074,24 +7159,26 @@ export default function App() {
                 Ostrzeżenia).
               </li>
               <li>
-                Projekty z oznaczeniem uwagi na liście KR: <strong>{liczbaTematowUwagi}</strong>.
+                Karty KR z oznaczeniem uwagi na liście: <strong>{liczbaTematowUwagi}</strong>.
               </li>
               <li>
                 Zlecenia podwykonawcze wymagające domknięcia: <strong>{liczbaZlecenDoOdbioru}</strong>.
               </li>
-              <li>
-                Pojazdy z zapisem o wymaganej naprawie:{" "}
-                <strong
-                  style={{
-                    color: samochodyWymagajaceNaprawyLista.length ? "#fecaca" : "#e2e8f0",
-                  }}
-                >
-                  {samochodyWymagajaceNaprawyLista.length}
-                </strong>
-                {samochodyWymagajaceNaprawyLista.length
-                  ? " — szczegóły w karcie „Flota” poniżej lub w zakładce Samochody."
-                  : "."}
-              </li>
+              {czyWidziNaprawyFloty ? (
+                <li>
+                  Pojazdy z zapisem o wymaganej naprawie:{" "}
+                  <strong
+                    style={{
+                      color: samochodyWymagajaceNaprawyLista.length ? "#fecaca" : "#e2e8f0",
+                    }}
+                  >
+                    {samochodyWymagajaceNaprawyLista.length}
+                  </strong>
+                  {samochodyWymagajaceNaprawyLista.length
+                    ? " — szczegóły w karcie „Flota” poniżej lub w zakładce Samochody."
+                    : "."}
+                </li>
+              ) : null}
               <li>
                 Faktury kosztowe oczekujące na przelew:{" "}
                 <strong
@@ -6180,6 +7267,7 @@ export default function App() {
                 </ul>
               )}
             </div>
+            {czyWidziNaprawyFloty ? (
             <div
               style={{
                 ...op.sectionCard,
@@ -6231,6 +7319,7 @@ export default function App() {
                 </button>
               ) : null}
             </div>
+            ) : null}
             <div style={op.sectionCard}>
               <h3 style={op.sectionTitle}>Terminy zagrożone</h3>
               {listaAlertowOperacyjnych.filter((a) => a.severity === "krytyczny").length === 0 ? (
@@ -6276,7 +7365,7 @@ export default function App() {
               </p>
             </div>
             <div style={op.sectionCard}>
-              <h3 style={op.sectionTitle}>Projekty wymagające decyzji</h3>
+              <h3 style={op.sectionTitle}>KR wymagające decyzji</h3>
               {krList.filter((r) => pulpitKrRekordWymagaUwagi(r)).length === 0 ? (
                 <p style={{ ...op.muted, margin: 0 }}>Brak KR ze statusem „oczekuje na zamawiającego”.</p>
               ) : (
@@ -6566,6 +7655,640 @@ export default function App() {
         </div>
       ) : null}
 
+      {widok === "czas_pracy" ? (
+        <CzasPracyPanel
+          supabase={supabase}
+          krList={krList}
+          pracownicy={pracownicyPosortowani}
+          pracownikSesja={pracownikPowiazanyZSesja}
+          pracownikWidokEfektywny={pracownikWidokEfektywny}
+          wymagaKonta={requireAuth}
+        />
+      ) : null}
+
+      {widok === "moje_dokumenty" ? (
+        <>
+          <h2 style={{ ...s.h2, marginTop: 0 }}>Moje dokumenty</h2>
+          {podgladJakoInny ? (
+            <p style={{ ...op.muted, fontSize: "0.86rem", maxWidth: "44rem", color: "#fcd34d", marginBottom: "0.65rem" }}>
+              <strong>Podgląd administratora</strong> — edytujesz dokumenty dla{" "}
+              <strong>{pracownikWidokEfektywny?.imie_nazwisko?.trim() || "—"}</strong> (nr{" "}
+              {pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "—"}). Zapis i import
+              trafiają do tej kartoteki (RLS: rola admin).
+            </p>
+          ) : null}
+          {czyAdminAktywny ? (
+            <>
+              <p style={{ ...s.muted, maxWidth: "44rem" }}>
+                Pliki HR dodajesz przez <strong>import listy z Box</strong> — kategoria (np. Nieobecności, BHP) wynika z
+                nazwy pliku (<code style={s.code}>HR---…---Typ---…</code>). Opcjonalnie zapisz <strong>skrót do
+                arkusza</strong> (Google Sheet itd.); aplikacja nie synchronizuje komórek.
+              </p>
+              <p style={{ ...s.muted, fontSize: "0.82rem", maxWidth: "44rem" }}>
+                W bazie: import → <code style={s.code}>pracownik_dokument</code> (<code style={s.code}>typ</code> ={" "}
+                <code style={s.code}>zaimportowane_box</code>), arkusz → <code style={s.code}>pracownik.link_google_arkusz</code>{" "}
+                (<code style={s.code}>pracownik-dokumenty-i-arkusz.sql</code>,{" "}
+                <code style={s.code}>pracownik-dokument-box-import.sql</code>).
+              </p>
+            </>
+          ) : null}
+          {!requireAuth ? (
+            <div style={s.hintBox}>Włącz logowanie (<code style={s.code}>VITE_REQUIRE_AUTH=true</code>), aby korzystać z tego panelu.</div>
+          ) : !session?.user ? (
+            <p style={s.muted}>Zaloguj się.</p>
+          ) : !pracownikPowiazanyZSesja ? (
+            <div style={s.hintBox}>
+              <strong>Brak powiązania konta z rekordem w</strong> <code style={s.code}>pracownik</code> (
+              <code style={s.code}>auth_user_id</code>). Aplikacja dopasowuje zalogowanego użytkownika do kartoteki{" "}
+              <strong>tylko po tej kolumnie</strong> — bez ustawionego UUID z Supabase Auth panel „Moje dokumenty” nie
+              wczyta linków z <code style={s.code}>pracownik_dokument</code>, nawet jeśli administrator wcześniej je
+              zapisał. W SQL Editor uruchom np.{" "}
+              <code style={s.code}>g4-app/supabase/pracownik-auth-user-powiazanie.sql</code> (dopasuj e-mail i
+              imię/nazwisko lub <code style={s.code}>nr</code>).
+            </div>
+          ) : (
+            <>
+              {mojeDokumentyFetchError ? (
+                <div style={s.errBox} role="alert">
+                  Nie udało się wczytać dokumentów: {mojeDokumentyFetchError}
+                  <br />
+                  Uruchom migrację SQL i ponownie <code style={s.code}>rls-policies-authenticated.sql</code> / anon.
+                </div>
+              ) : null}
+              {mojeDokSaveMsg ? (
+                <p style={{ ...s.muted, color: mojeDokSaveMsg === "Zapisano." ? theme.success : "#fca5a5" }}>
+                  {mojeDokSaveMsg}
+                </p>
+              ) : null}
+              {mojeDokBulkMsg ? (
+                <p
+                  style={{
+                    ...s.muted,
+                    marginBottom: "0.65rem",
+                    fontSize: "0.86rem",
+                    color: mojeDokBulkMsg.startsWith("Błąd:") ? "#fca5a5" : "#86efac",
+                  }}
+                >
+                  {mojeDokBulkMsg}
+                </p>
+              ) : null}
+              {czyAdminAktywny ? (
+                <div style={{ ...op.sectionCard, marginBottom: "1rem" }}>
+                  <h3 style={{ ...op.sectionTitle, marginTop: 0, fontSize: "0.95rem" }}>
+                    Wklej wiele plików (lista z Box)
+                  </h3>
+                  <p style={{ ...op.muted, fontSize: "0.82rem", marginTop: 0 }}>
+                    Jedna linia = <strong>pełna nazwa z listy</strong>, potem spacja lub <kbd>Tab</kbd>, potem adres{" "}
+                    <code style={s.code}>https://…box.com/…</code>. Program wycina URL, z nazwy odczytuje firmę (A/B/C) i
+                    numer ID;{" "}
+                    <strong>
+                      {podgladJakoInny
+                        ? "do bazy trafiają tylko wiersze, gdzie ID zgadza się z numerem wybranej osoby (podgląd)"
+                        : "do bazy trafiają tylko wiersze, gdzie ID zgadza się z Twoim"}
+                    </strong>{" "}
+                    <code style={s.code}>pracownik.nr</code> (np. <code style={s.code}>001</code> i{" "}
+                    <code style={s.code}>01</code> są traktowane jak to samo). Duplikaty tego samego URL są pomijane.
+                  </p>
+                  <p style={{ ...op.muted, fontSize: "0.76rem", marginBottom: "0.5rem", lineHeight: 1.45 }}>
+                    <strong>A</strong> — {PRACOWNIK_FIRMA_Z_KODU.A}
+                    <br />
+                    <strong>B</strong> — {PRACOWNIK_FIRMA_Z_KODU.B}
+                    <br />
+                    <strong>C</strong> — {PRACOWNIK_FIRMA_Z_KODU.C}
+                  </p>
+                  <textarea
+                    style={{
+                      ...s.input,
+                      minHeight: "7.5rem",
+                      resize: "vertical",
+                      fontFamily: "ui-monospace, monospace",
+                    }}
+                    placeholder={"HR---B---001-JakubowskaMonika---…\nhttps://g4geodezja.box.com/s/…"}
+                    value={mojeDokBulkWklejka}
+                    onChange={(ev) => setMojeDokBulkWklejka(ev.target.value)}
+                  />
+                  <div style={{ ...s.btnRow, marginTop: "0.65rem" }}>
+                    <button type="button" style={s.btn} onClick={() => void importujWklejoneZListyBox()}>
+                      {podgladJakoInny
+                        ? "Zaimportuj do bazy (dopasuj ID w nazwie do wybranej osoby)"
+                        : "Zaimportuj do bazy (tylko moje ID)"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {czyAdminAktywny ? (
+                <div style={{ ...op.sectionCard, marginBottom: "1rem" }}>
+                  <h3 style={{ ...op.sectionTitle, marginTop: 0, fontSize: "0.95rem" }}>Google Sheet / skrót</h3>
+                  <label style={s.label}>
+                    URL (arkusz, Box, Drive — link „Udostępnij” / kopiuj adres)
+                    <input
+                      style={s.input}
+                      type="text"
+                      inputMode="url"
+                      autoComplete="url"
+                      placeholder="https://docs.google.com/… lub https://…box.com/…"
+                      value={mojeDokEdycja.arkusz}
+                      onChange={(ev) => setMojeDokEdycja((prev) => ({ ...prev, arkusz: ev.target.value }))}
+                    />
+                  </label>
+                  {tekstTrim(mojeDokEdycja.arkusz) ? (
+                    <p style={{ margin: "0.4rem 0 0", fontSize: "0.82rem" }}>
+                      <a
+                        href={hrefLinkuZewnetrznego(mojeDokEdycja.arkusz)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "#7dd3fc", fontWeight: 600 }}
+                      >
+                        Otwórz w nowej karcie ↗
+                      </a>
+                    </p>
+                  ) : null}
+                  <div style={{ ...s.btnRow, marginTop: "0.75rem" }}>
+                    <button type="button" style={s.btn} onClick={() => void zapiszMojeDokumenty()}>
+                      Zapisz skrót
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                (() => {
+                  const maArkusz = !!tekstTrim(mojeDokEdycja.arkusz);
+                  const maPlikiBoxImport = mojeDokumentyList.some(
+                    (row) => row.typ === PRACOWNIK_DOKUMENT_TYP_BOX_IMPORT,
+                  );
+                  if (!maArkusz && !maPlikiBoxImport) {
+                    return (
+                      <p
+                        style={{
+                          ...op.muted,
+                          margin: "0 0 1rem 0",
+                          fontSize: "0.84rem",
+                          maxWidth: "44rem",
+                        }}
+                      >
+                        Brak zaimportowanych plików z Box i skrótu do arkusza. Gdy administrator coś doda, linki pojawią
+                        się tutaj.
+                      </p>
+                    );
+                  }
+                  if (!maArkusz && maPlikiBoxImport) {
+                    return null;
+                  }
+                  return (
+                    <ul
+                      style={{
+                        listStyle: "none",
+                        margin: "0 0 1rem 0",
+                        padding: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.85rem",
+                      }}
+                    >
+                      {maArkusz ? (
+                        <li
+                          key="__arkusz__"
+                          style={{
+                            padding: "0.65rem 0.75rem",
+                            borderRadius: "10px",
+                            border: `1px solid ${theme.border}`,
+                            background: theme.surface,
+                          }}
+                        >
+                          <div style={{ fontSize: "0.8rem", fontWeight: 600, color: theme.text, marginBottom: "0.35rem" }}>
+                            Arkusz Google / skrót
+                          </div>
+                          <a
+                            href={hrefLinkuZewnetrznego(mojeDokEdycja.arkusz)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: "#7dd3fc", fontWeight: 600, fontSize: "0.84rem" }}
+                          >
+                            Otwórz w nowej karcie ↗
+                          </a>
+                        </li>
+                      ) : null}
+                    </ul>
+                  );
+                })()
+              )}
+              <div style={{ ...op.sectionCard }}>
+                {mojeDokumentyList.filter((r) => r.typ === PRACOWNIK_DOKUMENT_TYP_BOX_IMPORT).length === 0 ? (
+                  <p style={{ ...op.muted, margin: 0, fontSize: "0.84rem" }}>
+                    Pusto
+                    {!czyAdminAktywny ? (
+                      <> — dokumenty z listy Box dodaje administrator.</>
+                    ) : podgladJakoInny ? (
+                      <> — ten użytkownik nie ma zaimportowanych pozycji z Box.</>
+                    ) : (
+                      <>
+                        {" "}
+                        — użyj importu powyżej (po migracji <code style={s.code}>pracownik-dokument-box-import.sql</code>
+                        ).
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  (() => {
+                    const boxRowsWszystkie = mojeDokumentyList.filter(
+                      (row) => row.typ === PRACOWNIK_DOKUMENT_TYP_BOX_IMPORT,
+                    );
+                    const boxRows = boxRowsWszystkie.filter((r) =>
+                      czyWierszBoxWPasujeDoFiltruDat(r, mojeDokFiltrDataOd, mojeDokFiltrDataDo),
+                    );
+                    const grupy = new Map();
+                    for (const r of boxRows) {
+                      const k = kategoriaImportuDlaWiersza(r);
+                      if (!grupy.has(k)) grupy.set(k, []);
+                      grupy.get(k).push(r);
+                    }
+                    const kolejnoscKategorii = [...grupy.keys()].sort((a, b) =>
+                      a.localeCompare(b, "pl", { sensitivity: "base", numeric: true }),
+                    );
+                    const filtrAktywny =
+                      tekstTrim(mojeDokFiltrDataOd) !== "" || tekstTrim(mojeDokFiltrDataDo) !== "";
+                    if (boxRows.length === 0) {
+                      return (
+                        <div>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              alignItems: "flex-end",
+                              gap: "0.65rem 1rem",
+                              marginBottom: "1rem",
+                              padding: "0.65rem 0.75rem",
+                              borderRadius: "10px",
+                              border: `1px solid ${theme.border}`,
+                              background: theme.surface,
+                            }}
+                          >
+                            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                              <div style={{ ...op.muted, fontSize: "0.78rem", marginBottom: "0.35rem" }}>
+                                Okres (dzień referencyjny: <strong>najpóźniejsza data z nazwy</strong>, inaczej dzień importu)
+                              </div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.65rem", alignItems: "flex-end" }}>
+                                <label style={{ ...s.label, marginBottom: 0, fontSize: "0.8rem" }}>
+                                  Od
+                                  <input
+                                    style={{ ...s.input, maxWidth: "11rem" }}
+                                    type="date"
+                                    value={mojeDokFiltrDataOd}
+                                    onChange={(ev) => setMojeDokFiltrDataOd(ev.target.value)}
+                                  />
+                                </label>
+                                <label style={{ ...s.label, marginBottom: 0, fontSize: "0.8rem" }}>
+                                  Do
+                                  <input
+                                    style={{ ...s.input, maxWidth: "11rem" }}
+                                    type="date"
+                                    value={mojeDokFiltrDataDo}
+                                    onChange={(ev) => setMojeDokFiltrDataDo(ev.target.value)}
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  style={{ ...s.btnGhost, fontSize: "0.78rem", padding: "0.35rem 0.6rem" }}
+                                  onClick={() => {
+                                    setMojeDokFiltrDataOd("");
+                                    setMojeDokFiltrDataDo("");
+                                  }}
+                                >
+                                  Wyczyść okres
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          <p style={{ ...op.muted, margin: 0, fontSize: "0.84rem" }}>
+                            {filtrAktywny ? (
+                              <>
+                                <strong>Brak plików</strong> w wybranym przedziale (
+                                {mojeDokFiltrDataOd || "…"} — {mojeDokFiltrDataDo || "…"}). Zmień daty lub wyczyść filtr
+                                — w bazie jest {boxRowsWszystkie.length}{" "}
+                                {boxRowsWszystkie.length === 1 ? "pozycja" : "pozycji"}.
+                              </>
+                            ) : (
+                              <>Brak pozycji do wyświetlenia.</>
+                            )}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "flex-end",
+                            gap: "0.65rem 1rem",
+                            marginBottom: "1rem",
+                            padding: "0.65rem 0.75rem",
+                            borderRadius: "10px",
+                            border: `1px solid ${theme.border}`,
+                            background: theme.surface,
+                          }}
+                        >
+                          <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+                            <div style={{ ...op.muted, fontSize: "0.78rem", marginBottom: "0.35rem" }}>
+                              Okres (dzień referencyjny: <strong>najpóźniejsza data z nazwy</strong>, inaczej dzień importu).
+                              Lista od <strong>najnowszych</strong>.
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.65rem", alignItems: "flex-end" }}>
+                              <label style={{ ...s.label, marginBottom: 0, fontSize: "0.8rem" }}>
+                                Od
+                                <input
+                                  style={{ ...s.input, maxWidth: "11rem" }}
+                                  type="date"
+                                  value={mojeDokFiltrDataOd}
+                                  onChange={(ev) => setMojeDokFiltrDataOd(ev.target.value)}
+                                />
+                              </label>
+                              <label style={{ ...s.label, marginBottom: 0, fontSize: "0.8rem" }}>
+                                Do
+                                <input
+                                  style={{ ...s.input, maxWidth: "11rem" }}
+                                  type="date"
+                                  value={mojeDokFiltrDataDo}
+                                  onChange={(ev) => setMojeDokFiltrDataDo(ev.target.value)}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, fontSize: "0.78rem", padding: "0.35rem 0.6rem" }}
+                                onClick={() => {
+                                  setMojeDokFiltrDataOd("");
+                                  setMojeDokFiltrDataDo("");
+                                }}
+                              >
+                                Wyczyść okres
+                              </button>
+                            </div>
+                          </div>
+                          {filtrAktywny ? (
+                            <div
+                              style={{
+                                fontSize: "0.76rem",
+                                color: theme.muted,
+                                whiteSpace: "nowrap",
+                                alignSelf: "center",
+                              }}
+                            >
+                              Widzisz {boxRows.length} z {boxRowsWszystkie.length}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div
+                        style={{
+                          display: "grid",
+                          gap: "1rem",
+                          gridTemplateColumns: "minmax(170px, 220px) minmax(0, 1fr)",
+                          alignItems: "start",
+                        }}
+                      >
+                        <aside
+                          style={{
+                            position: "sticky",
+                            top: "0.75rem",
+                            alignSelf: "start",
+                            border: `1px solid ${theme.border}`,
+                            background: theme.bgSoft,
+                            borderRadius: "10px",
+                            padding: "0.6rem",
+                          }}
+                        >
+                          <div style={{ fontSize: "0.76rem", color: theme.muted, marginBottom: "0.5rem" }}>Kategorie</div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                            {kolejnoscKategorii.map((kat) => {
+                              const targetId = idSekcjiKategoriiDokumentow(kat);
+                              const wcisniety = mojeDokKategorieRozwiniete.has(kat);
+                              return (
+                                <button
+                                  key={kat}
+                                  type="button"
+                                  aria-pressed={wcisniety}
+                                  title={wcisniety ? "Zwiń" : "Rozwiń"}
+                                  style={{
+                                    width: "100%",
+                                    cursor: "pointer",
+                                    borderRadius: "8px",
+                                    fontSize: "0.82rem",
+                                    letterSpacing: "0.02em",
+                                    textAlign: "left",
+                                    padding: "0.55rem 0.65rem",
+                                    lineHeight: 1.35,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: "0.5rem",
+                                    outline: "none",
+                                    WebkitTapHighlightColor: "transparent",
+                                    ...(wcisniety
+                                      ? {
+                                          border: "2px solid #38bdf8",
+                                          background:
+                                            "linear-gradient(180deg, rgba(56,189,248,0.28) 0%, rgba(15,23,42,0.92) 55%)",
+                                          color: "#f0f9ff",
+                                          fontWeight: 800,
+                                          boxShadow:
+                                            "inset 0 2px 8px rgba(0,0,0,0.45), 0 0 0 1px rgba(56,189,248,0.25), inset 0 1px 0 rgba(255,255,255,0.12)",
+                                          transform: "translateY(1px)",
+                                        }
+                                      : {
+                                          border: "2px solid rgba(148,163,184,0.55)",
+                                          background:
+                                            "linear-gradient(180deg, rgba(71,85,105,0.55) 0%, rgba(30,41,59,0.92) 100%)",
+                                          color: "#f1f5f9",
+                                          fontWeight: 600,
+                                          boxShadow:
+                                            "0 2px 0 rgba(255,255,255,0.14) inset, 0 5px 0 #0f172a, 0 8px 20px rgba(0,0,0,0.4)",
+                                        }),
+                                  }}
+                                  onClick={() => {
+                                    setMojeDokKategorieRozwiniete((prev) => {
+                                      const next = new Set(prev);
+                                      const rozwija = !next.has(kat);
+                                      if (rozwija) next.add(kat);
+                                      else next.delete(kat);
+                                      requestAnimationFrame(() => {
+                                        if (rozwija) {
+                                          const el = document.getElementById(targetId);
+                                          if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                                        }
+                                      });
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <span style={{ flex: "1 1 auto", minWidth: 0, textAlign: "left" }}>
+                                    {etykietaKategoriiImportu(kat)}
+                                  </span>
+                                  <span
+                                    aria-hidden
+                                    style={{
+                                      flex: "0 0 auto",
+                                      fontSize: "0.68rem",
+                                      fontWeight: 800,
+                                      letterSpacing: 0,
+                                      color: wcisniety ? "#7dd3fc" : "#94a3b8",
+                                      lineHeight: 1,
+                                    }}
+                                  >
+                                    {wcisniety ? "▼" : "▶"}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </aside>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "1.15rem", minWidth: 0 }}>
+                          {trybHelp && kolejnoscKategorii.filter((kat) => mojeDokKategorieRozwiniete.has(kat)).length === 0 ? (
+                            <p
+                              style={{
+                                ...op.muted,
+                                margin: 0,
+                                fontSize: "0.84rem",
+                                maxWidth: "36rem",
+                                padding: "0.75rem 0",
+                              }}
+                            >
+                              Wszystkie kategorie są zwinięte. Kliknij <strong>klawisz</strong> po lewej, aby rozwinąć
+                              listę dokumentów.
+                            </p>
+                          ) : null}
+                          {kolejnoscKategorii.filter((kat) => mojeDokKategorieRozwiniete.has(kat)).map((kat) => {
+                            const wierszeKat = grupy.get(kat);
+                            const firmyMap = new Map();
+                            for (const r of wierszeKat) {
+                              const fk = firmaKodZWierszaDokumentu(r);
+                              if (!firmyMap.has(fk)) firmyMap.set(fk, []);
+                              firmyMap.get(fk).push(r);
+                            }
+                            const kolejnoscFirm = sortujKodyFirmDlaBoxa([...firmyMap.keys()]);
+                            return (
+                              <section key={kat} id={idSekcjiKategoriiDokumentow(kat)}>
+                                <h3
+                                  style={{
+                                    ...op.sectionTitle,
+                                    fontSize: "0.95rem",
+                                    marginTop: 0,
+                                    marginBottom: "0.5rem",
+                                    color: theme.text,
+                                  }}
+                                >
+                                  {etykietaKategoriiImportu(kat)}
+                                </h3>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+                                  {kolejnoscFirm.map((fk) => (
+                                    <div key={fk || "__brak_kodu__"}>
+                                      <h4
+                                        style={{
+                                          fontSize: "0.88rem",
+                                          fontWeight: 700,
+                                          color: theme.text,
+                                          margin: "0 0 0.45rem 0",
+                                          lineHeight: 1.35,
+                                        }}
+                                      >
+                                        {etykietaFirmyImportuBox(fk)}
+                                      </h4>
+                                      <ul
+                                        style={{
+                                          margin: 0,
+                                          padding: 0,
+                                          listStyle: "none",
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          gap: "0.55rem",
+                                        }}
+                                      >
+                                        {sortujWierszeBoxOdNajnowszych(firmyMap.get(fk)).map((r) => (
+                                          <li
+                                            key={r.id}
+                                            style={{
+                                              padding: "0.65rem 0.75rem",
+                                              borderRadius: "10px",
+                                              border: `1px solid ${theme.border}`,
+                                              background: theme.surface,
+                                            }}
+                                          >
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                flexWrap: "wrap",
+                                                alignItems: "flex-start",
+                                                gap: "0.5rem 0.85rem",
+                                                rowGap: "0.35rem",
+                                              }}
+                                            >
+                                              <div
+                                                style={{
+                                                  fontSize: "0.84rem",
+                                                  lineHeight: 1.45,
+                                                  wordBreak: "break-word",
+                                                  flex: "1 1 140px",
+                                                  minWidth: 0,
+                                                }}
+                                              >
+                                                {fragmentyKolorowejNazwyPlikuBox(r.nazwa_pliku).map((fr, fi) => (
+                                                  <span key={fi} style={{ color: fr.color }}>
+                                                    {fr.text}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                              <div
+                                                style={{
+                                                  display: "flex",
+                                                  flexWrap: "wrap",
+                                                  gap: "0.5rem",
+                                                  alignItems: "center",
+                                                  flexShrink: 0,
+                                                }}
+                                              >
+                                                <a
+                                                  href={hrefLinkuZewnetrznego(r.url)}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  style={{
+                                                    color: "#7dd3fc",
+                                                    fontWeight: 600,
+                                                    fontSize: "0.82rem",
+                                                    whiteSpace: "nowrap",
+                                                  }}
+                                                >
+                                                  Otwórz w Box ↗
+                                                </a>
+                                                {czyAdminAktywny ? (
+                                                  <button
+                                                    type="button"
+                                                    style={{ ...s.btnGhost, fontSize: "0.78rem", padding: "0.25rem 0.5rem" }}
+                                                    onClick={() => void usunZaimportowanyDokumentBox(r.id)}
+                                                  >
+                                                    Usuń z listy
+                                                  </button>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ))}
+                                </div>
+                              </section>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+            </>
+          )}
+        </>
+      ) : null}
+
       {widok === "pracownik" ? (
         <>
           <h2 style={{ ...s.h2, marginTop: 0 }}>Pracownicy</h2>
@@ -6574,6 +8297,16 @@ export default function App() {
             to identyfikator używany w KR (osoba prowadząca itd.). Nowego pracownika dodasz formularzem
             pod tabelą.
           </p>
+          {czyAdminAktywny ? (
+            <p style={{ ...s.muted, fontSize: "0.86rem", maxWidth: "48rem", marginBottom: "0.75rem" }}>
+              <strong style={{ color: "#e5e7eb" }}>Administrator:</strong> w kolumnie{" "}
+              <strong style={{ color: "#7dd3fc" }}>Forma</strong> ustawiasz{" "}
+              <strong>umowę o pracę / umowę zlecenie / inną</strong> — to steruje rozliczeniem normy i nadgodzin w
+              module <strong>Czas pracy</strong>. Zmiana zapisuje się od razu (wymaga kolumny{" "}
+              <code style={s.code}>forma_zatrudnienia</code> — migracja{" "}
+              <code style={s.code}>pracownik-forma-zatrudnienia.sql</code>).
+            </p>
+          ) : null}
 
           {pracLoading ? (
             <p style={s.muted}>Ładowanie…</p>
@@ -6596,6 +8329,21 @@ export default function App() {
                     <th style={s.th}>nr (ID)</th>
                     <th style={s.th}>Imię i nazwisko</th>
                     <th style={{ ...s.th, color: "#7dd3fc" }}>Dział</th>
+                    {czyAdminAktywny ? (
+                      <th style={{ ...s.th, whiteSpace: "nowrap" }} title="Uprawnienia w aplikacji — tylko administrator">
+                        Rola
+                      </th>
+                    ) : null}
+                    {czyAdminAktywny ? (
+                      <th style={{ ...s.th, textAlign: "center", whiteSpace: "nowrap" }} title="Odpowiedzialność za flotę — tylko administrator">
+                        Flota
+                      </th>
+                    ) : null}
+                    {czyAdminAktywny ? (
+                      <th style={{ ...s.th, whiteSpace: "nowrap", color: "#7dd3fc" }} title="UoP vs um. zlecenie — moduł Czas pracy; edycja tylko administrator">
+                        Forma zatrudnienia
+                      </th>
+                    ) : null}
                     <th style={s.th}>E-mail</th>
                     <th style={s.th}>Telefon</th>
                   </tr>
@@ -6608,6 +8356,58 @@ export default function App() {
                       </td>
                       <td style={s.td}>{p.imie_nazwisko}</td>
                       <td style={{ ...s.td, ...s.dzialWartosc }}>{p.dzial ?? "—"}</td>
+                      {czyAdminAktywny ? (
+                        <td style={s.td}>
+                          <select
+                            value={String(p.app_role ?? "uzytkownik").trim() || "uzytkownik"}
+                            onChange={(ev) => void ustawAppRolePracownika(p.nr, ev.target.value)}
+                            style={{
+                              ...s.input,
+                              fontSize: "0.82rem",
+                              padding: "0.35rem 0.45rem",
+                              maxWidth: "11rem",
+                            }}
+                            aria-label={`Rola: ${p.imie_nazwisko ?? p.nr}`}
+                          >
+                            {APP_ROLE_OPCJE.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      ) : null}
+                      {czyAdminAktywny ? (
+                        <td style={{ ...s.td, textAlign: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={p.odpowiedzialny_flota === true}
+                            onChange={(ev) => void ustawOdpowiedzialnyFlota(p.nr, ev.target.checked)}
+                            title="Odpowiedzialny za flotę (naprawy)"
+                          />
+                        </td>
+                      ) : null}
+                      {czyAdminAktywny ? (
+                        <td style={s.td}>
+                          <select
+                            value={String(p.forma_zatrudnienia ?? "uop").trim() || "uop"}
+                            onChange={(ev) => void ustawFormaZatrudnienia(p.nr, ev.target.value)}
+                            style={{
+                              ...s.input,
+                              fontSize: "0.78rem",
+                              padding: "0.3rem 0.4rem",
+                              maxWidth: "9.5rem",
+                            }}
+                            aria-label={`Forma zatrudnienia: ${p.imie_nazwisko ?? p.nr}`}
+                          >
+                            {FORMA_ZATRUDNIENIA_OPCJE.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      ) : null}
                       <td style={s.td}>{p.email ?? "—"}</td>
                       <td style={s.td}>{p.telefon ?? "—"}</td>
                     </tr>
@@ -6651,6 +8451,34 @@ export default function App() {
               value={newPracDzial}
               onChange={(ev) => setNewPracDzial(ev.target.value)}
             />
+            {czyAdminAktywny ? (
+              <label style={s.label}>
+                Rola w aplikacji
+                <select
+                  style={s.input}
+                  value={newPracAppRole}
+                  onChange={(ev) => setNewPracAppRole(ev.target.value)}
+                >
+                  {APP_ROLE_OPCJE.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {czyAdminAktywny ? (
+              <label style={s.label}>
+                Forma zatrudnienia (norma i nadgodziny w „Czas pracy”)
+                <select style={s.input} value={newPracForma} onChange={(ev) => setNewPracForma(ev.target.value)}>
+                  {FORMA_ZATRUDNIENIA_OPCJE.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <input
               style={s.input}
               type="email"
@@ -6676,24 +8504,28 @@ export default function App() {
         <>
           <div style={op.heroCard}>
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Zadania ogólne</h2>
-            <p style={{ ...op.muted, marginBottom: "0.35rem", maxWidth: "44rem" }}>
-              Zadania <strong>ogólne</strong> i <strong>przy konkretnym KR</strong> — pole <strong>Projekt (KR)</strong> w
-              formularzu wiąże kartkę Kanban z projektem; puste = zadanie poza KR.{" "}
-              <strong>Przydział:</strong> osoba odpowiedzialna (wykonanie) i opcjonalnie zlecająca. Kategoria w tabeli to{" "}
-              <strong>heurystyka</strong> z treści i działu.
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.15rem" }}>
-              {["Samochody", "Komputery", "Sprzęt", "Biuro", "Organizacyjne"].map((kat) => (
-                <span key={kat} style={op.badge("rgba(71,85,105,0.35)", "#cbd5e1")}>
-                  {kat}
-                </span>
-              ))}
-            </div>
-            <p style={{ ...op.muted, margin: 0, fontSize: "0.76rem" }}>
-              Tabela <code style={s.code}>zadania</code> — kolumna <code style={s.code}>kr</code> (SQL:{" "}
-              <code style={s.code}>zadania-kolumna-kr.sql</code>). Filtr <strong>Projekt (KR)</strong> działa w tabeli i
-              Kanbanie. Osoby z zakładki <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
-            </p>
+            {trybHelp ? (
+              <>
+                <p style={{ ...op.muted, marginBottom: "0.35rem", maxWidth: "44rem" }}>
+                  Zadania <strong>ogólne</strong> i <strong>przy konkretnym KR</strong> — pole <strong>Projekt (KR)</strong>{" "}
+                  w formularzu wiąże kartkę Kanban z projektem; puste = zadanie poza KR. <strong>Przydział:</strong> osoba
+                  odpowiedzialna (wykonanie) i opcjonalnie zlecająca. Kategoria w tabeli to <strong>heurystyka</strong> z
+                  treści i działu.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.15rem" }}>
+                  {["Samochody", "Komputery", "Sprzęt", "Biuro", "Organizacyjne"].map((kat) => (
+                    <span key={kat} style={op.badge("rgba(71,85,105,0.35)", "#cbd5e1")}>
+                      {kat}
+                    </span>
+                  ))}
+                </div>
+                <p style={{ ...op.muted, margin: 0, fontSize: "0.76rem" }}>
+                  Tabela <code style={s.code}>zadania</code> — kolumna <code style={s.code}>kr</code> (SQL:{" "}
+                  <code style={s.code}>zadania-kolumna-kr.sql</code>). Filtr <strong>Projekt (KR)</strong> działa w tabeli i
+                  Kanbanie. Osoby z zakładki <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
+                </p>
+              </>
+            ) : null}
           </div>
 
           <div
@@ -6791,6 +8623,7 @@ export default function App() {
                 onChange={(ev) => setZadaniaFiltrKr(ev.target.value)}
               >
                 <option value="">— wszystkie / dowolny KR —</option>
+                <option value="__tylko_z_kr__">— tylko z przypisanym KR (karty z listy) —</option>
                 <option value="__bez_kr__">— tylko bez KR (ogólne) —</option>
                 {[...krList]
                   .sort((a, b) =>
@@ -6835,9 +8668,11 @@ export default function App() {
                 Wynik: {zadaniaPrzefiltrowane.length}
                 {zadaniaFiltrKr === "__bez_kr__"
                   ? " (bez KR)"
-                  : zadaniaFiltrKr
-                    ? ` (KR ${zadaniaFiltrKr})`
-                    : ""}
+                  : zadaniaFiltrKr === "__tylko_z_kr__"
+                    ? " (tylko zadania z polem KR — karty w systemie)"
+                    : zadaniaFiltrKr
+                      ? ` (KR ${zadaniaFiltrKr})`
+                      : ""}
                 {zadaniaFiltrPracNr
                   ? zadaniaFiltrTylkoOdpowiedzialny
                     ? " · tylko wykonawca"
@@ -7366,12 +9201,12 @@ export default function App() {
       {widok === "podwykonawca" ? (
         <>
           <h2 style={{ ...s.h2, marginTop: 0 }}>PW — podwykonawcy</h2>
-          <p style={{ ...s.muted, marginBottom: "0.75rem" }}>
-            Tabela <code style={s.code}>podwykonawca</code>: nazwa firmy, osoba kontaktowa, telefon.
-            Skrót <strong style={{ color: "#d4d4d4" }}>PW</strong> w menu to katalog firm. Zlecenia przy
-            konkretnym KR dodajesz na liście projektów → przycisk <strong>PW</strong> przy wierszu (nie zakładka{" "}
-            <strong>PW</strong>).
-          </p>
+          {trybHelp ? (
+            <p style={{ ...s.muted, marginBottom: "0.75rem" }}>
+              Skrót <strong style={{ color: "#d4d4d4" }}>PW</strong> w menu to katalog firm. Zlecenia przy konkretnym KR
+              dodajesz na liście projektów przez przycisk <strong>PW</strong> przy danym wierszu projektu.
+            </p>
+          ) : null}
 
           <h3
             style={{
@@ -7383,10 +9218,12 @@ export default function App() {
           >
             Aktualne zlecenia PW (wszystkie KR)
           </h3>
-          <p style={{ ...s.muted, marginBottom: "0.65rem", fontSize: "0.82rem" }}>
-            Tabela <code style={s.code}>kr_zlecenie_podwykonawcy</code> — podgląd zbiorczy. Edytuj lub usuń z
-            tej tabeli albo z wiersza projektu na liście KR (przycisk <strong>PW</strong>).
-          </p>
+          {trybHelp ? (
+            <p style={{ ...s.muted, marginBottom: "0.65rem", fontSize: "0.82rem" }}>
+              To jest podgląd zbiorczy wszystkich zleceń PW. Możesz je edytować lub usuwać tutaj albo z poziomu listy KR
+              (przycisk <strong>PW</strong>).
+            </p>
+          ) : null}
           {pwZleceniaWszystkieFetchError ? (
             <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
               <strong>Nie udało się wczytać zleceń PW.</strong> {pwZleceniaWszystkieFetchError}
@@ -7853,12 +9690,12 @@ export default function App() {
         <>
           <div style={op.heroCard}>
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Samochody</h2>
-            <p style={{ ...op.muted, marginBottom: 0, maxWidth: "46rem", lineHeight: 1.5 }}>
-              Lista pojazdów: ważność polisy i przeglądu, uwagi o działaniu oraz co do naprawy. Pełniejsza ewidencja
-              ubezpieczeń (np. osobna tabela) może być dodana później. <strong>Kalendarz</strong> — kliknij komórkę,
-              żeby ustawić lub poprawić przypisanie: który samochód, który dzień, który pracownik (kolor zależy od
-              numeru ID).
-            </p>
+            {trybHelp ? (
+              <p style={{ ...op.muted, marginBottom: 0, maxWidth: "46rem", lineHeight: 1.5 }}>
+                Lista pojazdów: ważność polisy i przeglądu, uwagi o działaniu oraz naprawach. W kalendarzu kliknij komórkę,
+                aby ustawić lub poprawić przypisanie: samochód, dzień i pracownik.
+              </p>
+            ) : null}
           </div>
 
           {samochodyList.length === 0 && !samochodyFetchError ? (
@@ -8026,15 +9863,17 @@ export default function App() {
                 rows={2}
               />
             </label>
-            <label style={s.label}>
-              Zgłoszenie — wymagane naprawy
-              <textarea
-                style={{ ...s.input, minHeight: "3.5rem" }}
-                value={samochodForm.wymagane_naprawy}
-                onChange={(ev) => setSamochodForm((f) => ({ ...f, wymagane_naprawy: ev.target.value }))}
-                rows={2}
-              />
-            </label>
+            {czyWidziNaprawyFloty ? (
+              <label style={s.label}>
+                Zgłoszenie — wymagane naprawy
+                <textarea
+                  style={{ ...s.input, minHeight: "3.5rem" }}
+                  value={samochodForm.wymagane_naprawy}
+                  onChange={(ev) => setSamochodForm((f) => ({ ...f, wymagane_naprawy: ev.target.value }))}
+                  rows={2}
+                />
+              </label>
+            ) : null}
             <label style={s.label}>
               Inne notatki
               <textarea
@@ -8401,10 +10240,12 @@ export default function App() {
         <>
           <div style={op.heroCard}>
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Sprzęt</h2>
-            <p style={{ ...op.muted, marginBottom: 0, maxWidth: "44rem", lineHeight: 1.5 }}>
-              Komputery, drukarki, urządzenia wielofunkcyjne — z datą przeglądu / serwisu i opcjonalnym{" "}
-              <strong>przypisaniem do pracownika</strong> (jak w zakładce Pracownicy).
-            </p>
+            {trybHelp ? (
+              <p style={{ ...op.muted, marginBottom: 0, maxWidth: "44rem", lineHeight: 1.5 }}>
+                Komputery, drukarki i urządzenia wielofunkcyjne — z datą przeglądu/serwisu i opcjonalnym przypisaniem do
+                pracownika.
+              </p>
+            ) : null}
           </div>
 
           {sprzetList.length === 0 && !sprzetFetchError ? (
@@ -8612,23 +10453,13 @@ export default function App() {
           >
             Etapy — KR {widokKmDlaKr}
           </h2>
-          <p style={{ ...s.muted, marginBottom: "0.75rem", fontSize: "0.82rem" }}>
-            Wiersze w tabeli <code style={s.code}>kamienie_milowe</code> przypisane do tego KR. Pole{" "}
-            <strong style={{ color: "#e5e5e5" }}>Etap</strong> jest wymagane przy zapisie.{" "}
-            <strong style={{ color: "#a7f3d0" }}>Status</strong> wybierasz z listy (jak status KR —
-            planowane, w trakcie, zrealizowane itd.).{" "}
-            <strong style={{ color: "#e5e5e5" }}>Typ odniesienia</strong> (linia albo zlecenie)
-            wskazuje, czego dotyczy data kotwicy;{" "}
-            <strong style={{ color: "#e5e5e5" }}>data odniesienia</strong> i{" "}
-            <strong style={{ color: "#e5e5e5" }}>offset (miesiące)</strong> służą do naliczania
-            terminu planowego; przy triggerze w bazie (
-            <code style={s.code}>kamienie-milowe-data-planowana-wylicz.sql</code>) data planu ustawi
-            się po zapisie, gdy oba pola są wypełnione.{" "}
-            <strong style={{ color: "#fca5a5" }}>Czerwień w tabeli i formularzu</strong> — te same
-            pola co ostrzeżenie na pulpicie: zagrożenie, opis zagrożenia, przeterminowany plan (przy
-            etapie niezamkniętym), status przy takim planie. Kolumny{" "}
-            <strong style={{ color: "#c4b5fd" }}>FS</strong> — faktury <strong>sprzedażowe</strong> (<code style={s.code}>faktury</code> / <code style={s.code}>etap_id</code>); kosztowe — zakładka „Faktury kosztowe” (brudnopis).
-          </p>
+          {trybHelp ? (
+            <p style={{ ...s.muted, marginBottom: "0.75rem", fontSize: "0.82rem" }}>
+              Etapy przypisane do tego KR. Pole <strong style={{ color: "#e5e5e5" }}>Etap</strong> jest wymagane, a{" "}
+              <strong style={{ color: "#a7f3d0" }}>Status</strong> wybierasz z listy. Czerwień oznacza ryzyko lub braki
+              wymagające reakcji.
+            </p>
+          ) : null}
 
           <div style={s.tableWrap}>
             <table style={s.kmTable}>
@@ -9012,16 +10843,11 @@ export default function App() {
           <h2 id="pw-kr-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
             Zlecenia i podwykonawcy (PW) — KR {widokPwDlaKr}
           </h2>
-          <p style={{ ...s.muted, fontSize: "0.82rem", marginBottom: "0.65rem" }}>
-            Tabela <code style={s.code}>kr_zlecenie_podwykonawcy</code>: podwykonawca z bazy (
-            zakładka <strong style={{ color: "#d4d4d4" }}>PW</strong>) + szczegóły zlecenia przy tym KR.{" "}
-            <strong style={{ color: "#e5e5e5" }}>Weryfikacja</strong> — kto u Was pilnuje sprawdzenia / rozliczenia z
-            PW (<code style={s.code}>pracownik.nr</code>).{" "}
-            <strong style={{ color: "#e5e5e5" }}>Kontakt fakturowy</strong> — po stronie firmy PW. Pełny podgląd
-            read-only — przycisk <strong style={{ color: "#e5e5e5" }}>INFO</strong> na pulpicie projektu.{" "}
-            <strong style={{ color: "#fca5a5" }}>Czerwień</strong> — <strong>termin zlecenia (planowany)</strong> minął,
-            a <strong style={{ color: "#e5e5e5" }}>odebrane</strong> nie jest zaznaczone (jak na pulpicie).
-          </p>
+          {trybHelp ? (
+            <p style={{ ...s.muted, fontSize: "0.82rem", marginBottom: "0.65rem" }}>
+              Zlecenia podwykonawcze dla tego KR. Czerwień oznacza zlecenie po terminie bez potwierdzenia odbioru.
+            </p>
+          ) : null}
           {krZleceniaPwFetchError ? (
             <div style={{ ...s.errBox, marginBottom: "0.75rem" }} role="alert">
               {krZleceniaPwFetchError}
@@ -9399,19 +11225,11 @@ export default function App() {
           <h2 id="log-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
             Zgłoszenia (dziennik zdarzeń) — KR {widokLogDlaKr}
           </h2>
-          <p style={{ ...s.muted, marginBottom: "0.75rem", fontSize: "0.82rem" }}>
-            Wpisy w tabeli <code style={s.code}>dziennik_zdarzen</code> dla tego projektu.{" "}
-            <strong style={{ color: "#e5e5e5" }}>Osoba zgłaszająca</strong> — z bazy{" "}
-            <code style={s.code}>pracownik</code>.{" "}
-            <strong style={{ color: "#e5e5e5" }}>Wymagane działanie</strong> — opis zadania.{" "}
-            <strong style={{ color: "#e5e5e5" }}>Odpowiedzialny</strong> — osoba z bazy ID, której
-            zadanie jest adresowane i która odpowiada za wykonanie.{" "}
-            <strong style={{ color: "#a7f3d0" }}>Status zdarzenia</strong>: w trakcie, ukończone,
-            oczekuje. <em>Data zdarzenia</em> — tylko dzień; puste przy zapisie = dzisiaj.{" "}
-            <strong style={{ color: "#fca5a5" }}>Czerwień</strong> — przy statusie innym niż
-            „ukończone”: brak <strong style={{ color: "#e5e5e5" }}>wymaganego działania</strong> lub brak{" "}
-            <strong style={{ color: "#e5e5e5" }}>osoby odpowiedzialnej</strong>.
-          </p>
+          {trybHelp ? (
+            <p style={{ ...s.muted, marginBottom: "0.75rem", fontSize: "0.82rem" }}>
+              Zgłoszenia dla tego projektu. Czerwień oznacza wpis wymagający uzupełnienia lub domknięcia.
+            </p>
+          ) : null}
 
           {dziennikFetchError ? (
             <div style={s.errBox} role="alert">
@@ -9655,12 +11473,14 @@ export default function App() {
           <h2 id="pulpit-naglowek" style={{ ...s.krTopTitle, fontSize: "1.05rem" }}>
             Pulpit projektu — KR {widokPulpitDlaKr}
           </h2>
-          <p style={{ ...s.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5, maxWidth: "48rem" }}>
-            Nawigacja jak na stronie startowej:{" "}
-            <strong style={{ color: theme.action }}>drzewo po lewej</strong> (Projekty → ten KR). Domyślnie{" "}
-            <strong style={{ color: theme.text }}>przegląd</strong> — zagrożenia i zadania. Pełna oś czasu, FIN (INV) i
-            skróty ETAP / PW / LOG — pozycja <strong style={{ color: theme.action }}>Oś czasu</strong>.
-          </p>
+          {trybHelp ? (
+            <p style={{ ...s.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5, maxWidth: "48rem" }}>
+              Nawigacja jak na stronie startowej:{" "}
+              <strong style={{ color: theme.action }}>drzewo po lewej</strong> (KR → ten projekt). Domyślnie{" "}
+              <strong style={{ color: theme.text }}>przegląd</strong> — zagrożenia i zadania. Pełna oś czasu, FIN (INV) i
+              skróty ETAP / PW / LOG — pozycja <strong style={{ color: theme.action }}>Oś czasu</strong>.
+            </p>
+          ) : null}
           {!rekordKrPulpit ? (
             <div style={s.errBox} role="alert">
               Brak projektu na aktualnej liście — odśwież stronę lub wróć.
@@ -10365,15 +12185,11 @@ export default function App() {
           <h2 id="info-naglowek" style={{ ...s.krTopTitle, fontSize: "0.98rem" }}>
             INFO — KR {widokInfoDlaKr}
           </h2>
-          <p style={{ ...s.muted, marginBottom: "1rem", fontSize: "0.82rem" }}>
-            Podgląd tylko do odczytu: <code style={s.code}>kr</code>, zlecenia{" "}
-            <strong style={{ color: "#e5e5e5" }}>PW</strong>,{" "}
-            <code style={s.code}>kamienie_milowe</code>,{" "}
-            <code style={s.code}>dziennik_zdarzen</code>. Edycja — przyciski{" "}
-            <strong style={{ color: "#e5e5e5" }}>ETAP</strong>, <strong style={{ color: "#e5e5e5" }}>PW</strong>,{" "}
-            <strong style={{ color: "#e5e5e5" }}>LOG</strong>, <strong style={{ color: "#e5e5e5" }}>Edytuj KR</strong> na pulpicie
-            projektu.
-          </p>
+          {trybHelp ? (
+            <p style={{ ...s.muted, marginBottom: "1rem", fontSize: "0.82rem" }}>
+              To ekran podglądu. Edycję wykonasz z poziomu przycisków ETAP, PW, LOG lub Edytuj KR na pulpicie projektu.
+            </p>
+          ) : null}
           {!rekordKrInfo ? (
             <div style={s.errBox} role="alert">
               Brak projektu <strong style={{ color: "#fff" }}>{widokInfoDlaKr}</strong> na aktualnej
@@ -10911,6 +12727,9 @@ export default function App() {
                               fontSize: "0.82rem",
                               color: "#94a3b8",
                               lineHeight: 1.45,
+                              whiteSpace: "nowrap",
+                              overflowX: "auto",
+                              overflowY: "hidden",
                             }}
                           >
                             {item.dzial ? (
@@ -11325,18 +13144,61 @@ export default function App() {
       !widokLogDlaKr &&
       !widokInfoDlaKr &&
       !widokPwDlaKr &&
+      !widokPulpitDlaKr ? (
+        <section style={{ marginBottom: "1.25rem" }} aria-label="Skróty KPI — KR i zadania">
+          <div style={op.kpiGrid}>
+            <OpKpiCard
+              label="KR"
+              value={krList.length}
+              hint="Aktywne karty w systemie"
+              accent="success"
+              border="rgba(34,197,94,0.28)"
+              onClick={przejdzDoKr}
+              title="Kliknij: lista KR"
+            />
+            <OpKpiCard
+              label="Zagrożenia i alerty"
+              value={listaAlertowOperacyjnych.length}
+              hint="Automatyczna lista operacyjna"
+              accent="danger"
+              border="rgba(239,68,68,0.32)"
+              onClick={przejdzDoOstrzezeniaPanel}
+              title="Kliknij: raporty / ostrzeżenia"
+            />
+            <OpKpiCard
+              label="Zadania z KR"
+              value={liczbaZadanTylkoPowiazanychZKr}
+              hint="Przypisane do kodów z listy kart KR (nie zadania ogólne)"
+              accent="action"
+              border="rgba(249,115,22,0.32)"
+              onClick={przejdzDoZadanTylkoZKartamiKr}
+              title="Kliknij: moduł Zadania z filtrem „tylko z KR”"
+            />
+            <OpKpiCard
+              label="Otwarte zadania z KR"
+              value={liczbaOtwartychZadanTylkoPowiazanychZKr}
+              hint="Bez statusu domknięcia — tylko przy kodzie z listy powyżej"
+              accent="action"
+              border="rgba(249,115,22,0.22)"
+              onClick={przejdzDoZadanTylkoZKartamiKr}
+              title="Kliknij: moduł Zadania z filtrem „tylko z KR”"
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {widok === "kr" &&
+      !wybranyKrKlucz &&
+      !widokKmDlaKr &&
+      !widokLogDlaKr &&
+      !widokInfoDlaKr &&
+      !widokPwDlaKr &&
       !widokPulpitDlaKr &&
       krList.length > 0 ? (
         <section style={s.krTopWrap} aria-labelledby="kr-introduced-heading">
           <h2 id="kr-introduced-heading" style={s.krTopTitle}>
             Wprowadzone KR ({krList.length})
           </h2>
-          <p style={{ ...s.muted, marginTop: 0, marginBottom: "1rem", fontSize: "0.88rem", maxWidth: "52rem" }}>
-            Sortowanie poniżej — drugi klik zmienia kierunek. Bez wybranego sortowania kolejność jak z bazy. Karta z{" "}
-            <strong style={{ color: theme.danger }}>czerwoną ramką</strong> — projekt lub etap wg reguł uwagi. Wejdź w{" "}
-            <strong style={{ color: theme.action }}>Pulpit</strong>, aby zobaczyć oś ETAP / PW / LOG. Nowy rekord —
-            formularz pod listą.
-          </p>
           <div
             style={{
               display: "flex",
@@ -11367,7 +13229,7 @@ export default function App() {
               {krListaSort.key === "status" ? (krListaSort.dir === "asc" ? " ▲" : " ▼") : ""}
             </button>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
             {krListPosortowana.map((item) => {
               const wierszUwaga = kodyKrZWyroznieniemUwagi.has(String(item.kr).trim());
               const st = item.status?.trim();
@@ -11375,11 +13237,11 @@ export default function App() {
                 <div
                   key={item.kr}
                   style={{
-                    borderRadius: "12px",
-                    padding: "18px 20px",
+                    borderRadius: "10px",
+                    padding: "12px 14px",
                     background: theme.surface,
                     border: `1px solid ${wierszUwaga ? "rgba(239,68,68,0.4)" : theme.border}`,
-                    boxShadow: "0 4px 22px -10px rgba(0,0,0,0.4)",
+                    boxShadow: "0 2px 12px -10px rgba(0,0,0,0.4)",
                     transition: "border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease",
                   }}
                   onMouseEnter={(ev) => {
@@ -11398,40 +13260,40 @@ export default function App() {
                       display: "flex",
                       flexWrap: "wrap",
                       justifyContent: "space-between",
-                      gap: "1rem",
-                      alignItems: "flex-start",
+                      gap: "0.55rem",
+                      alignItems: "center",
                     }}
                   >
-                    <div style={{ minWidth: 0, flex: "1 1 220px" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          alignItems: "center",
-                          gap: "0.45rem",
-                          marginBottom: "0.45rem",
-                        }}
-                      >
-                        <span style={{ fontSize: "1.2rem", fontWeight: 800, color: "#ffffff", letterSpacing: "-0.03em" }}>
-                          {item.kr}
-                        </span>
-                        {wierszUwaga ? <OpStatusBadge variant="danger">Uwaga</OpStatusBadge> : null}
-                        {st ? <OpStatusBadge variant={badgeVariantDlaStatusuKr(st)}>{st}</OpStatusBadge> : null}
-                      </div>
-                      <div style={{ fontSize: "1rem", color: theme.text, fontWeight: 650, marginBottom: "0.35rem", lineHeight: 1.35 }}>
+                    <div
+                      style={{
+                        minWidth: 0,
+                        flex: "1 1 220px",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: "0.45rem",
+                        fontSize: "0.88rem",
+                        lineHeight: 1.25,
+                      }}
+                    >
+                      <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#ffffff", letterSpacing: "-0.03em" }}>
+                        {item.kr}
+                      </span>
+                      {wierszUwaga ? <OpStatusBadge variant="danger">Uwaga</OpStatusBadge> : null}
+                      {st ? <OpStatusBadge variant={badgeVariantDlaStatusuKr(st)}>{st}</OpStatusBadge> : null}
+                      <span style={{ color: theme.text, fontWeight: 650 }}>
                         {item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "—"}
-                      </div>
-                      <div style={{ fontSize: "0.88rem", color: theme.muted, lineHeight: 1.55 }}>
-                        <span style={{ color: theme.action, fontWeight: 600 }}>
-                          {item.rodzaj_pracy?.trim() ? item.rodzaj_pracy : "—"}
-                        </span>
-                        {item.dzial?.trim() ? (
-                          <span>
-                            {" "}
-                            · <span style={{ color: theme.text }}>{item.dzial}</span>
-                          </span>
-                        ) : null}
-                      </div>
+                      </span>
+                      <span style={{ color: theme.muted }}>·</span>
+                      <span style={{ color: theme.action, fontWeight: 600 }}>
+                        {item.rodzaj_pracy?.trim() ? item.rodzaj_pracy : "—"}
+                      </span>
+                      {item.dzial?.trim() ? (
+                        <>
+                          <span style={{ color: theme.muted }}>·</span>
+                          <span style={{ color: theme.text }}>{item.dzial}</span>
+                        </>
+                      ) : null}
                     </div>
                     <button type="button" style={{ ...s.btn, flexShrink: 0, alignSelf: "center" }} onClick={() => otworzPulpitDlaKr(item)}>
                       Pulpit projektu
@@ -11632,10 +13494,6 @@ export default function App() {
             />
             <span>
               <strong style={{ color: theme.success }}>Tryb HELP</strong>
-              <span style={{ display: "block", fontSize: "0.72rem", color: theme.muted, fontWeight: 400 }}>
-                Włącz krótkie podpowiedzi pod przyciskami (zielone). Wyłącz po prezentacji — ustawienie zostaje w
-                przeglądarce.
-              </span>
             </span>
           </label>
           <input
@@ -11674,10 +13532,10 @@ export default function App() {
               },
               {
                 id: "kr",
-                label: "Projekty",
+                label: "KR",
                 fn: przejdzDoKr,
                 w: "kr",
-                help: "Lista kodów KR, karty projektów i pulpity.",
+                help: "Lista kodów KR, karty i pulpity projektów.",
               },
               {
                 id: "zadania",
@@ -11685,6 +13543,13 @@ export default function App() {
                 fn: przejdzDoZadania,
                 w: "zadania",
                 help: "Zadania ogólne — terminy, Kanban, filtr KR.",
+              },
+              {
+                id: "czas_pracy",
+                label: "Czas pracy",
+                fn: przejdzDoCzasPracy,
+                w: "czas_pracy",
+                help: "Kalendarz godzin, KR, urlopy — sumy miesięczne i szacunek kosztu (stawki).",
               },
               {
                 id: "podwykonawca",
@@ -11721,6 +13586,17 @@ export default function App() {
             ))}
             <div style={op.navSectionLabel}>Zasoby</div>
             {[
+              ...(requireAuth
+                ? [
+                    {
+                      id: "moje_dokumenty",
+                      label: "Moje dokumenty",
+                      fn: przejdzDoMojeDokumenty,
+                      w: "moje_dokumenty",
+                      help: "Pliki z Box (kategoria z nazwy), opcjonalnie skrót do Google Sheet.",
+                    },
+                  ]
+                : []),
               {
                 id: "samochody",
                 label: "Pojazdy",
@@ -11756,7 +13632,7 @@ export default function App() {
               </HelpLinijka>
             </div>
           </div>
-          <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.45rem" }}>Projekty (KR)</div>
+          <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.45rem" }}>KR</div>
           <HelpLinijka wlaczony={trybHelp}>
             Kliknij wiersz — otworzy się ten projekt w środkowej części ekranu. Kropka to przybliżony stan (uwaga /
             spokój).
@@ -11775,12 +13651,20 @@ export default function App() {
                     style={op.krListItem(active, kodyKrZWyroznieniemUwagi.has(String(row.kr).trim()))}
                     onClick={() => wybierzKrWPanelu(row)}
                   >
-                    <span style={{ minWidth: 0, textAlign: "left" }}>
-                      <strong>{row.kr}</strong>
+                    <span style={{ minWidth: 0, textAlign: "left", lineHeight: 1.25 }}>
+                      <strong style={{ fontSize: "0.78rem" }}>{row.kr}</strong>
                       {row.nazwa_obiektu ? (
-                        <span style={{ display: "block", fontWeight: 500, color: "#94a3b8", fontSize: "0.74rem" }}>
-                          {String(row.nazwa_obiektu).length > 42
-                            ? `${String(row.nazwa_obiektu).slice(0, 40)}…`
+                        <span
+                          style={{
+                            display: "block",
+                            fontWeight: 500,
+                            color: "#94a3b8",
+                            fontSize: "0.66rem",
+                            marginTop: "0.04rem",
+                          }}
+                        >
+                          {String(row.nazwa_obiektu).length > 38
+                            ? `${String(row.nazwa_obiektu).slice(0, 36)}…`
                             : row.nazwa_obiektu}
                         </span>
                       ) : null}

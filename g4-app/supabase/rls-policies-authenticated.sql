@@ -21,25 +21,25 @@ CREATE POLICY "auth_update_kr"
 
 GRANT SELECT, INSERT, UPDATE ON public.kr TO authenticated;
 
--- kamienie_milowe
-DROP POLICY IF EXISTS "auth_select_kamienie" ON public.kamienie_milowe;
-DROP POLICY IF EXISTS "auth_insert_kamienie" ON public.kamienie_milowe;
-DROP POLICY IF EXISTS "auth_update_kamienie" ON public.kamienie_milowe;
-DROP POLICY IF EXISTS "auth_delete_kamienie" ON public.kamienie_milowe;
+-- etapy
+DROP POLICY IF EXISTS "auth_select_kamienie" ON public.etapy;
+DROP POLICY IF EXISTS "auth_insert_kamienie" ON public.etapy;
+DROP POLICY IF EXISTS "auth_update_kamienie" ON public.etapy;
+DROP POLICY IF EXISTS "auth_delete_kamienie" ON public.etapy;
 
 CREATE POLICY "auth_select_kamienie"
-  ON public.kamienie_milowe FOR SELECT TO authenticated USING (true);
+  ON public.etapy FOR SELECT TO authenticated USING (true);
 
 CREATE POLICY "auth_insert_kamienie"
-  ON public.kamienie_milowe FOR INSERT TO authenticated WITH CHECK (true);
+  ON public.etapy FOR INSERT TO authenticated WITH CHECK (true);
 
 CREATE POLICY "auth_update_kamienie"
-  ON public.kamienie_milowe FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+  ON public.etapy FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 
 CREATE POLICY "auth_delete_kamienie"
-  ON public.kamienie_milowe FOR DELETE TO authenticated USING (true);
+  ON public.etapy FOR DELETE TO authenticated USING (true);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.kamienie_milowe TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.etapy TO authenticated;
 
 -- pracownik
 DROP POLICY IF EXISTS "auth_select_pracownik" ON public.pracownik;
@@ -51,7 +51,96 @@ CREATE POLICY "auth_select_pracownik"
 CREATE POLICY "auth_insert_pracownik"
   ON public.pracownik FOR INSERT TO authenticated WITH CHECK (true);
 
-GRANT SELECT, INSERT ON public.pracownik TO authenticated;
+DROP POLICY IF EXISTS "auth_update_pracownik" ON public.pracownik;
+
+-- Aktualizacja kartoteki (np. link_google_arkusz) — tylko admin; szczegóły: pracownik-rls-update-tylko-admin.sql
+CREATE POLICY "auth_update_pracownik"
+  ON public.pracownik
+  FOR UPDATE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.pracownik p
+      WHERE p.auth_user_id = auth.uid()
+        AND p.is_active = true
+        AND p.app_role = 'admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.pracownik p
+      WHERE p.auth_user_id = auth.uid()
+        AND p.is_active = true
+        AND p.app_role = 'admin'
+    )
+  );
+
+GRANT SELECT, INSERT, UPDATE ON public.pracownik TO authenticated;
+
+-- pracownik_dokument (linki HR) — jak pracownik-dokument-rls-naprawa.sql: zapis tylko admin
+DROP POLICY IF EXISTS "auth_select_pracownik_dokument" ON public.pracownik_dokument;
+DROP POLICY IF EXISTS "auth_insert_pracownik_dokument" ON public.pracownik_dokument;
+DROP POLICY IF EXISTS "auth_update_pracownik_dokument" ON public.pracownik_dokument;
+DROP POLICY IF EXISTS "auth_delete_pracownik_dokument" ON public.pracownik_dokument;
+
+CREATE POLICY "auth_select_pracownik_dokument"
+  ON public.pracownik_dokument FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "auth_insert_pracownik_dokument"
+  ON public.pracownik_dokument
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.pracownik p
+      WHERE p.auth_user_id = auth.uid()
+        AND p.is_active = true
+        AND p.app_role = 'admin'
+    )
+  );
+
+CREATE POLICY "auth_update_pracownik_dokument"
+  ON public.pracownik_dokument
+  FOR UPDATE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.pracownik p
+      WHERE p.auth_user_id = auth.uid()
+        AND p.is_active = true
+        AND p.app_role = 'admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.pracownik p
+      WHERE p.auth_user_id = auth.uid()
+        AND p.is_active = true
+        AND p.app_role = 'admin'
+    )
+  );
+
+CREATE POLICY "auth_delete_pracownik_dokument"
+  ON public.pracownik_dokument
+  FOR DELETE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.pracownik p
+      WHERE p.auth_user_id = auth.uid()
+        AND p.is_active = true
+        AND p.app_role = 'admin'
+    )
+  );
+
+GRANT SELECT ON public.pracownik_dokument TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.pracownik_dokument TO authenticated;
 
 -- dziennik_zdarzen
 DROP POLICY IF EXISTS "auth_select_dziennik_zdarzen" ON public.dziennik_zdarzen;

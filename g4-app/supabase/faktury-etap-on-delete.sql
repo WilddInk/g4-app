@@ -1,5 +1,5 @@
 -- =============================================================================
--- Usuwanie kamienia milowego (kamienie_milowe) a tabela faktury
+-- Usuwanie kamienia milowego (etapy) a tabela faktury
 -- Błąd: violates foreign key constraint "faktury_etap_id_fkey" on table "faktury"
 --
 -- Postgres domyślnie blokuje DELETE wiersza KM, jeśli faktury wskazują na jego id.
@@ -15,7 +15,7 @@ ALTER TABLE public.faktury DROP CONSTRAINT IF EXISTS faktury_etap_id_fkey;
 
 ALTER TABLE public.faktury
   ADD CONSTRAINT faktury_etap_id_fkey
-  FOREIGN KEY (etap_id) REFERENCES public.kamienie_milowe(id)
+  FOREIGN KEY (etap_id) REFERENCES public.etapy(id)
   ON DELETE SET NULL;
 
 -- --- OPCJA B (ostrożnie): usuń KM → kasują się powiązane faktury -----------------
@@ -25,5 +25,5 @@ ALTER TABLE public.faktury
 -- ALTER TABLE public.faktury DROP CONSTRAINT IF EXISTS faktury_etap_id_fkey;
 -- ALTER TABLE public.faktury
 --   ADD CONSTRAINT faktury_etap_id_fkey
---   FOREIGN KEY (etap_id) REFERENCES public.kamienie_milowe(id)
+--   FOREIGN KEY (etap_id) REFERENCES public.etapy(id)
 --   ON DELETE CASCADE;

@@ -35,40 +35,40 @@ CREATE POLICY "anon_update_kr"
 GRANT SELECT, INSERT, UPDATE ON public.kr TO anon;
 
 -- Etapy: tylko odczyt w obecnej aplikacji
-ALTER TABLE public.kamienie_milowe ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.etapy ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "anon_select_kamienie" ON public.kamienie_milowe;
+DROP POLICY IF EXISTS "anon_select_kamienie" ON public.etapy;
 
 CREATE POLICY "anon_select_kamienie"
-  ON public.kamienie_milowe
+  ON public.etapy
   FOR SELECT
   TO anon
   USING (true);
 
-DROP POLICY IF EXISTS "anon_insert_kamienie" ON public.kamienie_milowe;
-DROP POLICY IF EXISTS "anon_update_kamienie" ON public.kamienie_milowe;
-DROP POLICY IF EXISTS "anon_delete_kamienie" ON public.kamienie_milowe;
+DROP POLICY IF EXISTS "anon_insert_kamienie" ON public.etapy;
+DROP POLICY IF EXISTS "anon_update_kamienie" ON public.etapy;
+DROP POLICY IF EXISTS "anon_delete_kamienie" ON public.etapy;
 
 CREATE POLICY "anon_insert_kamienie"
-  ON public.kamienie_milowe
+  ON public.etapy
   FOR INSERT
   TO anon
   WITH CHECK (true);
 
 CREATE POLICY "anon_update_kamienie"
-  ON public.kamienie_milowe
+  ON public.etapy
   FOR UPDATE
   TO anon
   USING (true)
   WITH CHECK (true);
 
 CREATE POLICY "anon_delete_kamienie"
-  ON public.kamienie_milowe
+  ON public.etapy
   FOR DELETE
   TO anon
   USING (true);
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.kamienie_milowe TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.etapy TO anon;
 
 -- Pracownicy (widok „ID” w aplikacji)
 ALTER TABLE public.pracownik ENABLE ROW LEVEL SECURITY;
@@ -88,6 +88,39 @@ CREATE POLICY "anon_insert_pracownik"
   FOR INSERT
   TO anon
   WITH CHECK (true);
+
+DROP POLICY IF EXISTS "anon_update_pracownik" ON public.pracownik;
+
+CREATE POLICY "anon_update_pracownik"
+  ON public.pracownik
+  FOR UPDATE
+  TO anon
+  USING (true)
+  WITH CHECK (true);
+
+GRANT SELECT, INSERT, UPDATE ON public.pracownik TO anon;
+
+-- Dokumenty HR pracownika (linki — wymaga pracownik-dokumenty-i-arkusz.sql)
+ALTER TABLE public.pracownik_dokument ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "anon_select_pracownik_dokument" ON public.pracownik_dokument;
+DROP POLICY IF EXISTS "anon_insert_pracownik_dokument" ON public.pracownik_dokument;
+DROP POLICY IF EXISTS "anon_update_pracownik_dokument" ON public.pracownik_dokument;
+DROP POLICY IF EXISTS "anon_delete_pracownik_dokument" ON public.pracownik_dokument;
+
+CREATE POLICY "anon_select_pracownik_dokument"
+  ON public.pracownik_dokument FOR SELECT TO anon USING (true);
+
+CREATE POLICY "anon_insert_pracownik_dokument"
+  ON public.pracownik_dokument FOR INSERT TO anon WITH CHECK (true);
+
+CREATE POLICY "anon_update_pracownik_dokument"
+  ON public.pracownik_dokument FOR UPDATE TO anon USING (true) WITH CHECK (true);
+
+CREATE POLICY "anon_delete_pracownik_dokument"
+  ON public.pracownik_dokument FOR DELETE TO anon USING (true);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.pracownik_dokument TO anon;
 
 -- Dziennik zdarzeń (LOG — wpisy dla danego kodu KR)
 -- Uwaga: po zalogowaniu w aplikacji zapytania idą jako rola authenticated — wtedy
