@@ -1,4 +1,7 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": "g4-app/dist"
+  "outputDirectory": "g4-app/dist",
+  "env": {
+    "VITE_REQUIRE_AUTH": "true"
+  }
 }
