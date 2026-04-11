@@ -1,0 +1,5 @@
+# Netlify: buduj z podkatalogu z prawdziwym Vite (g4-app), nie z pustego root package.json
+[build]
+  base = "g4-app"
+  command = "npm ci && npm run build"
+  publish = "dist"

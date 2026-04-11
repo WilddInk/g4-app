@@ -1,4 +1,12 @@
 {
+  "name": "g4-app-repo",
+  "private": true,
+  "scripts": {
+    "build": "npm install --prefix g4-app && npm run build --prefix g4-app",
+    "dev": "npm run dev --prefix g4-app",
+    "preview": "npm run preview --prefix g4-app",
+    "lint": "npm run lint --prefix g4-app"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0"
   }

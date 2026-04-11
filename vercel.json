@@ -1,0 +1,4 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "g4-app/dist"
+}
