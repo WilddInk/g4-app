@@ -22,4 +22,10 @@ const anonKey =
   import.meta.env.VITE_SUPABASE_ANON_KEY ??
   "sb_publishable_egj88SMg2r8pgEhdZl94_g_hWAIBlt0";
 
-export const supabase = createClient(supabaseUrl, anonKey);
+export const supabase = createClient(supabaseUrl, anonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+});

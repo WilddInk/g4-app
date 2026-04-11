@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "./lib/supabase.js";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 
@@ -7,6 +7,31 @@ function adresPowrotuZMailaAuth() {
   const zEnv = import.meta.env.VITE_AUTH_REDIRECT_URL?.trim();
   if (zEnv) return zEnv;
   return `${window.location.origin}${window.location.pathname}`;
+}
+
+/** Gdy Supabase przekieruje z błędem (#error=… lub ?error=…) — czytelny komunikat zamiast pustej strony. */
+function odczytBleduAuthZAdresu() {
+  try {
+    const h = window.location.hash.replace(/^#/, "");
+    const q = window.location.search.replace(/^\?/, "");
+    const p = new URLSearchParams(`${h}&${q}`.replace(/^&+|&+$/g, "&"));
+    const code = p.get("error") || p.get("error_code");
+    const desc = p.get("error_description");
+    if (!code && !desc) return null;
+    const d = desc ? decodeURIComponent(String(desc).replace(/\+/g, " ")) : "";
+    const lower = `${code} ${d}`.toLowerCase();
+    if (lower.includes("redirect") || lower.includes("uri")) {
+      return (
+        "Ten adres strony nie jest dopisany w Supabase. Wejdź w Supabase → Authentication → URL Configuration " +
+        "i w „Redirect URLs” dodaj dokładnie: " +
+        `${window.location.origin}/ oraz ${window.location.origin}/** (albo jeden wiersz z adresem Twojej strony na Vercelu). ` +
+        "Potem wyślij reset hasła jeszcze raz."
+      );
+    }
+    return d || code || "Błąd logowania z linku.";
+  } catch {
+    return null;
+  }
 }
 
 const a = {
@@ -136,6 +161,11 @@ export function AuthScreen({ trybNoweHasloPoLinkuZEmaila = false, onNoweHasloZap
 
   const [hasloNowe, setHasloNowe] = useState("");
   const [hasloNowe2, setHasloNowe2] = useState("");
+
+  useEffect(() => {
+    const zUrl = odczytBleduAuthZAdresu();
+    if (zUrl) setErr(zUrl);
+  }, []);
 
   async function onSubmit(e) {
     e.preventDefault();
