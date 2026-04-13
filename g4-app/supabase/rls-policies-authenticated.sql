@@ -263,3 +263,35 @@ CREATE POLICY "auth_insert_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplat
 CREATE POLICY "auth_update_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "auth_delete_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty FOR DELETE TO authenticated USING (true);
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_faktura_do_zaplaty TO authenticated;
+
+-- Zespoły terenowe (KR) — wymaga: kr-teren-zespoly.sql
+ALTER TABLE public.kr_teren_zespol ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "auth_select_kr_teren_zespol" ON public.kr_teren_zespol;
+DROP POLICY IF EXISTS "auth_insert_kr_teren_zespol" ON public.kr_teren_zespol;
+DROP POLICY IF EXISTS "auth_update_kr_teren_zespol" ON public.kr_teren_zespol;
+DROP POLICY IF EXISTS "auth_delete_kr_teren_zespol" ON public.kr_teren_zespol;
+CREATE POLICY "auth_select_kr_teren_zespol" ON public.kr_teren_zespol FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_kr_teren_zespol" ON public.kr_teren_zespol FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_kr_teren_zespol" ON public.kr_teren_zespol FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_delete_kr_teren_zespol" ON public.kr_teren_zespol FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_teren_zespol TO authenticated;
+
+ALTER TABLE public.kr_teren_zespol_pracownik ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "auth_select_kr_teren_zespol_prac" ON public.kr_teren_zespol_pracownik;
+DROP POLICY IF EXISTS "auth_insert_kr_teren_zespol_prac" ON public.kr_teren_zespol_pracownik;
+DROP POLICY IF EXISTS "auth_delete_kr_teren_zespol_prac" ON public.kr_teren_zespol_pracownik;
+CREATE POLICY "auth_select_kr_teren_zespol_prac" ON public.kr_teren_zespol_pracownik FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_kr_teren_zespol_prac" ON public.kr_teren_zespol_pracownik FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_delete_kr_teren_zespol_prac" ON public.kr_teren_zespol_pracownik FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, DELETE ON public.kr_teren_zespol_pracownik TO authenticated;
+
+ALTER TABLE public.kr_teren_zadanie ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "auth_select_kr_teren_zadanie" ON public.kr_teren_zadanie;
+DROP POLICY IF EXISTS "auth_insert_kr_teren_zadanie" ON public.kr_teren_zadanie;
+DROP POLICY IF EXISTS "auth_update_kr_teren_zadanie" ON public.kr_teren_zadanie;
+DROP POLICY IF EXISTS "auth_delete_kr_teren_zadanie" ON public.kr_teren_zadanie;
+CREATE POLICY "auth_select_kr_teren_zadanie" ON public.kr_teren_zadanie FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_kr_teren_zadanie" ON public.kr_teren_zadanie FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_kr_teren_zadanie" ON public.kr_teren_zadanie FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_delete_kr_teren_zadanie" ON public.kr_teren_zadanie FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_teren_zadanie TO authenticated;

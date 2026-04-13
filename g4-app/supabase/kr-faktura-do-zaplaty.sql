@@ -9,7 +9,9 @@
 
 CREATE TABLE IF NOT EXISTS public.kr_faktura_do_zaplaty (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  kr text NOT NULL,
+  kr text,
+  sprzedawca_nip text,
+  sprzedawca_nazwa text,
   komu text NOT NULL,
   nr_konta text,
   kwota_brutto numeric(14, 2) NOT NULL,
@@ -28,6 +30,8 @@ CREATE INDEX IF NOT EXISTS kr_faktura_do_zaplaty_kr_idx ON public.kr_faktura_do_
 CREATE INDEX IF NOT EXISTS kr_faktura_do_zaplaty_status_idx ON public.kr_faktura_do_zaplaty (status);
 
 COMMENT ON TABLE public.kr_faktura_do_zaplaty IS 'Faktury kosztowe — zgłoszenie do opłacenia (komu, konto, brutto, link)';
+COMMENT ON COLUMN public.kr_faktura_do_zaplaty.sprzedawca_nip IS 'NIP sprzedawcy (słownik po NIP).';
+COMMENT ON COLUMN public.kr_faktura_do_zaplaty.sprzedawca_nazwa IS 'Nazwa sprzedawcy przypisana do NIP.';
 COMMENT ON COLUMN public.kr_faktura_do_zaplaty.komu IS 'Odbiorca przelewu / kontrahent';
 COMMENT ON COLUMN public.kr_faktura_do_zaplaty.nr_konta IS 'Numer konta bankowego';
 COMMENT ON COLUMN public.kr_faktura_do_zaplaty.kwota_brutto IS 'Kwota brutto do zapłaty';

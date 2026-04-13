@@ -7,6 +7,16 @@
 -- Uruchom raz w Supabase SQL Editor.
 -- =============================================================================
 
+-- 0) Metryki konta logowania w tabeli pracownik.
+ALTER TABLE public.pracownik
+  ADD COLUMN IF NOT EXISTS konto_logowania_utworzone_at timestamptz,
+  ADD COLUMN IF NOT EXISTS ostatnie_logowanie_at timestamptz;
+
+COMMENT ON COLUMN public.pracownik.konto_logowania_utworzone_at IS
+  'Data utworzenia konta logowania (auth.users.created_at).';
+COMMENT ON COLUMN public.pracownik.ostatnie_logowanie_at IS
+  'Data ostatniego logowania (auth.users.last_sign_in_at).';
+
 -- 1) Funkcja triggera
 CREATE OR REPLACE FUNCTION public.map_auth_user_to_pracownik()
 RETURNS trigger
@@ -44,9 +54,15 @@ BEGIN
 
   IF v_count = 1 THEN
     UPDATE public.pracownik p
-    SET auth_user_id = NEW.id
+    SET auth_user_id = NEW.id,
+        konto_logowania_utworzone_at = COALESCE(p.konto_logowania_utworzone_at, NEW.created_at),
+        ostatnie_logowanie_at = COALESCE(NEW.last_sign_in_at, p.ostatnie_logowanie_at)
     WHERE p.auth_user_id IS NULL
       AND lower(trim(p.email)) = v_email;
+  ELSE
+    UPDATE public.pracownik p
+    SET ostatnie_logowanie_at = COALESCE(NEW.last_sign_in_at, p.ostatnie_logowanie_at)
+    WHERE p.auth_user_id = NEW.id;
   END IF;
 
   RETURN NEW;
@@ -85,6 +101,12 @@ BEGIN
         WHERE p2.auth_user_id IS NULL
           AND lower(trim(p2.email)) = lower(trim(u.email))
       ) = 1;
+
+    UPDATE public.pracownik p
+    SET konto_logowania_utworzone_at = COALESCE(p.konto_logowania_utworzone_at, u.created_at),
+        ostatnie_logowanie_at = COALESCE(u.last_sign_in_at, p.ostatnie_logowanie_at)
+    FROM auth.users u
+    WHERE p.auth_user_id = u.id;
   END IF;
 END $$;
 
