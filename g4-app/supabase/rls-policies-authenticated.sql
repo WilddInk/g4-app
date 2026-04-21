@@ -253,6 +253,9 @@ CREATE POLICY "auth_delete_samochod_rezerwacja" ON public.samochod_rezerwacja FO
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.samochod_rezerwacja TO authenticated;
 
 -- kr_faktura_do_zaplaty (tabela musi już istnieć — najpierw kr-faktura-do-zaplaty.sql)
+-- UWAGA: otwarte USING(true) nadpisuje bezpieczny zakres z kr-faktura-do-zaplaty-rls-scope.sql.
+-- W produkcji: po tym pliku uruchom g4-app/supabase/kr-faktura-do-zaplaty-rls-scope.sql
+-- (albo usuń poniższe CREATE i trzymaj wyłącznie polityki ze scope).
 DROP POLICY IF EXISTS "auth_select_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
 DROP POLICY IF EXISTS "auth_insert_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;
 DROP POLICY IF EXISTS "auth_update_kr_faktura_do_zaplaty" ON public.kr_faktura_do_zaplaty;

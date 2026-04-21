@@ -125,7 +125,7 @@ export const op = {
     fontWeight: 700,
     letterSpacing: "0.06em",
     textTransform: "uppercase",
-    color: theme.muted,
+    color: theme.action,
     margin: "1rem 0 0.35rem",
     paddingLeft: "0.35rem",
   },

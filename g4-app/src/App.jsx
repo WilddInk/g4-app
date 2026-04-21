@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { FakturaKosztowaEdycjaModal } from "./FakturaKosztowaEdycjaModal.jsx";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
+import { TerenPlanningBoard } from "./TerenPlanningBoard.jsx";
 import { TerenZespolyPanel } from "./TerenZespolyPanel.jsx";
-import { supabase } from "./lib/supabase.js";
+import { ZgloszenieFakturyDoZaplatyFormularz } from "./ZgloszenieFakturyDoZaplatyFormularz.jsx";
+import { supabase, supabaseApiHostname } from "./lib/supabase.js";
 import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 import { requireAuth } from "./config/requireAuth.js";
 import { grupaTypuCzasuWpisu } from "./domain/grupaTypuCzasuWpisu.js";
@@ -14,6 +17,12 @@ import {
   dataPLZFormat,
   tekstTrim,
 } from "./utils/dateText.js";
+import {
+  identyfikatorPodatkowyZnormalizowany,
+  kluczSprzedawcaDoMapy,
+  nazwaSprzedawcyZMapy,
+  nipPolskiCyfry,
+} from "./utils/vatId.js";
 
 /** Status etapu uznany za „domknięty” — nie podświetlamy przeterminowania. */
 const ETAP_STATUS_PULPIT_ZAMKNIETE = new Set(["zrealizowane", "rozliczone", "anulowane"]);
@@ -293,17 +302,23 @@ function sciezkaWindows(raw) {
   return String(raw ?? "").trim().replace(/\//g, "\\");
 }
 
-function pokazKoncowkeTekstu(raw, maxLen = 28) {
-  const s = String(raw ?? "").trim();
-  if (!s) return "—";
-  if (s.length <= maxLen) return s;
-  return `…${s.slice(-maxLen)}`;
-}
-
 function komendaExplorerSelect(rawPath) {
   const p = sciezkaWindows(rawPath);
   if (!p) return "";
   return `explorer /select,"${p}"`;
+}
+
+/** Prezentacja w wąskiej kolumnie: bez zawijania, widać koniec ciągu (jak ścieżka / nazwa pliku). */
+function tekstUcietyKoniecPrezentacja(raw, maxLen) {
+  const t = String(raw ?? "").trim();
+  if (!t) return "—";
+  const n = Math.max(4, Math.floor(maxLen) || 24);
+  if (t.length <= n) return t;
+  return `…${t.slice(-n)}`;
+}
+
+function fakturyKosztoweMaxLenZeSzerPx(szerPx) {
+  return Math.max(6, Math.min(120, Math.floor(Number(szerPx) / 6.5)));
 }
 
 /** Wartości `dzial` w bazie — te same wpisują przyciski w edycji KR. */
@@ -844,27 +859,50 @@ function rezerwacjaPustyForm() {
   };
 }
 
-function fakturaDoZaplatyPustyForm() {
-  return {
-    sprzedawca_nip: "",
-    sprzedawca_nazwa: "",
-    komu: "",
-    nr_konta: "",
-    kwota_brutto: "",
-    link_faktury: "",
-    numer_faktury: "",
-    zgloszil_pracownik_nr: "",
-    notatki: "",
-  };
+/** Dla zapisu: `platnik_id` z wyboru listy albo jednoznaczne dopasowanie `imie_nazwisko`. */
+function platnikIdDoZapisuFaktury(nazwa, platnikIdZWyboru, listaPracownikow) {
+  const zWyboru = tekstTrim(platnikIdZWyboru);
+  if (zWyboru) {
+    const p = listaPracownikow.find((x) => String(x.nr ?? "").trim() === zWyboru);
+    if (p) return zWyboru;
+  }
+  const n = tekstTrim(nazwa).toLowerCase();
+  if (!n) return null;
+  const m = listaPracownikow.filter((x) => tekstTrim(x.imie_nazwisko).toLowerCase() === n);
+  if (m.length === 1) return String(m[0].nr ?? "").trim() || null;
+  return null;
+}
+
+function przygotujPoczatkowyFormularzEdycjiFakturyKosztowej(row, mapaSprzedawcaPoNip, pracownicy) {
+  const form = fakturaKosztowaWierszDoFormu(row);
+  if (!String(form.sprzedawca_nazwa ?? "").trim()) {
+    const nazwaZeSlownika = nazwaSprzedawcyZMapy(
+      mapaSprzedawcaPoNip,
+      form.sprzedawca_nip || row?.legacy_issuer_id,
+    );
+    if (nazwaZeSlownika) form.sprzedawca_nazwa = nazwaZeSlownika;
+  }
+  if (!String(form.legacy_payer_name ?? "").trim() && String(form.platnik_id ?? "").trim()) {
+    const pnr = String(form.platnik_id).trim();
+    const pp = pracownicy.find((x) => String(x.nr ?? "").trim() === pnr);
+    if (pp?.imie_nazwisko) form.legacy_payer_name = String(pp.imie_nazwisko).trim();
+  }
+  return form;
 }
 
 function fakturaKosztowaWierszDoFormu(row) {
+  const komuZBazy = String(row?.komu ?? "").trim();
+  const odbiorcaLegacy = String(row?.legacy_receiver_name ?? "").trim();
+  /** `??` nie pomija pustego stringa — wcześniej pusty legacy zasłaniał wypełnione `komu`. */
+  const komuWyswietlany = komuZBazy || odbiorcaLegacy;
   return {
+    kr: String(row?.kr ?? "").trim(),
     data_faktury: dataDoInputa(row?.data_faktury),
-    sprzedawca_nip: nip10(row?.sprzedawca_nip || row?.legacy_issuer_id),
+    sprzedawca_nip: identyfikatorPodatkowyZnormalizowany(row?.sprzedawca_nip || row?.legacy_issuer_id),
     sprzedawca_nazwa: String(row?.sprzedawca_nazwa ?? "").trim(),
-    komu: String(row?.legacy_receiver_name ?? row?.komu ?? "").trim(),
+    komu: komuWyswietlany,
     legacy_payer_name: String(row?.legacy_payer_name ?? "").trim(),
+    platnik_id: String(row?.platnik_id ?? "").trim(),
     rodzaj_kosztu: String(row?.rodzaj_kosztu ?? "").trim(),
     typ_nazwy: String(row?.typ_nazwy ?? "").trim(),
     kwota_netto: row?.kwota_netto != null ? String(row.kwota_netto).replace(".", ",") : "",
@@ -875,6 +913,34 @@ function fakturaKosztowaWierszDoFormu(row) {
     legacy_pdf_file: String(row?.legacy_pdf_file ?? "").trim(),
     link_faktury: String(row?.link_faktury ?? "").trim(),
     status: String(row?.status ?? "do_zaplaty").trim() || "do_zaplaty",
+  };
+}
+
+/** Normalizacja z tabeli 1:1 (`faktury_kosztowe`) do kluczy oczekiwanych przez istniejący UI. */
+function fakturaKosztowaRowDoUi(row) {
+  const r = row ?? {};
+  const statusZaplata = r.zaplacono === true ? "oplacone" : "do_zaplaty";
+  return {
+    ...r,
+    data_faktury: r.data_faktury ?? r.date ?? null,
+    sprzedawca_nazwa: r.sprzedawca_nazwa ?? r.seller_name ?? null,
+    sprzedawca_nip: r.sprzedawca_nip ?? r.issuer_id ?? null,
+    legacy_issuer_id: r.legacy_issuer_id ?? r.issuer_id ?? null,
+    komu: r.komu ?? r.receiver_name ?? null,
+    legacy_receiver_name: r.legacy_receiver_name ?? r.receiver_name ?? null,
+    legacy_payer_name: r.legacy_payer_name ?? r.payer_name ?? null,
+    numer_faktury: r.numer_faktury ?? r.invoice_number ?? null,
+    kwota_brutto: r.kwota_brutto ?? r.price_brutto ?? null,
+    kwota_netto: r.kwota_netto ?? r.price_netto ?? null,
+    kwota_vat: r.kwota_vat ?? r.vat ?? null,
+    link_faktury: r.link_faktury ?? r.invoice_link ?? null,
+    legacy_pdf_file: r.legacy_pdf_file ?? r.pdf_file ?? null,
+    legacy_nazwa_pliku: r.legacy_nazwa_pliku ?? r.unit_price_name ?? null,
+    rodzaj_kosztu: r.rodzaj_kosztu ?? r.cost_kind ?? null,
+    typ_nazwy: r.typ_nazwy ?? r.type_name ?? null,
+    nazwa_obiektu: r.nazwa_obiektu ?? r.object_name ?? null,
+    status: r.status ?? statusZaplata,
+    created_at: r.created_at ?? null,
   };
 }
 
@@ -898,15 +964,6 @@ function kwotaBruttoEtykieta(wartosc) {
   return n.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " zł";
 }
 
-function nipSprzedawcyZLegacyIssuerId(issuerId) {
-  const s = String(issuerId ?? "").trim();
-  if (!s) return "";
-  const raw = s.toUpperCase().startsWith("NIP_") ? s.slice(4) : s;
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length !== 10) return "";
-  return digits;
-}
-
 function fakturaKluczDuplikatu(row) {
   const kr = String(row?.kr ?? "").trim().toLowerCase();
   const data = String(row?.data_faktury ?? "").trim();
@@ -923,10 +980,18 @@ function fakturaKluczDuplikatu(row) {
 function czyFakturaNiekompletna(row) {
   const kr = String(row?.kr ?? "").trim();
   const data = String(row?.data_faktury ?? "").trim();
-  const sprzedawca = String(row?.sprzedawca_nazwa ?? "").trim();
   const odbiorca = String(row?.komu ?? row?.legacy_receiver_name ?? "").trim();
-  const numer = String(row?.numer_faktury ?? "").trim();
-  return !kr || !data || !sprzedawca || !odbiorca || !numer || row?.kwota_brutto == null;
+  const numer =
+    String(row?.numer_faktury ?? "").trim() || String(row?.legacy_nazwa_pliku ?? "").trim();
+  const sprzedawca = String(row?.sprzedawca_nazwa ?? "").trim();
+  const rawId = row?.sprzedawca_nip || row?.legacy_issuer_id;
+  const id = identyfikatorPodatkowyZnormalizowany(rawId);
+  const nipZnany = id.length >= 5 || nipPolskiCyfry(rawId).length === 10;
+  const maSprzedawce = Boolean(sprzedawca) || nipZnany;
+  const brutto = row?.kwota_brutto;
+  const maBrutto = brutto != null && brutto !== "";
+  /** `nr_konta` celowo pomijane — przy szybkiej zapłacie zwykle puste. */
+  return !kr || !data || !maSprzedawce || !odbiorca || !numer || !maBrutto;
 }
 
 function czyKrTechniczneUkrywaneDlaNieAdmin(kr) {
@@ -934,17 +999,65 @@ function czyKrTechniczneUkrywaneDlaNieAdmin(kr) {
   return k === "000" || k === "KK" || k === "FOT";
 }
 
+/** Prawdziwy admin bez podglądu „jako ktoś inny” — pełna baza faktur kosztowych. */
+function czyPokazWszystkieFakturyKosztoweSesji(czyAdminAktywny, podgladJakoInny) {
+  return Boolean(czyAdminAktywny) && !podgladJakoInny;
+}
+
+function rolaAplikacjiPracownika(p) {
+  return String(p?.app_role ?? "uzytkownik").trim();
+}
+
+function platnikRolaZListyPracownikow(platnikId, listaPracownikow) {
+  const nr = String(platnikId ?? "").trim();
+  if (!nr) return null;
+  const pp = listaPracownikow.find((x) => String(x.nr ?? "").trim() === nr);
+  if (!pp) return null;
+  return String(pp.app_role ?? "uzytkownik").trim();
+}
+
+function czyFakturaKosztowaWidocznaDlaPracownika(row, viewer, listaPracownikow) {
+  if (!viewer) return false;
+  const rola = rolaAplikacjiPracownika(viewer);
+  const kr = String(row?.kr ?? "").trim();
+
+  if (rola === "admin") return true;
+
+  if (rola === "uzytkownik") {
+    const platnik = String(row?.platnik_id ?? "").trim();
+    const mojNr = String(viewer.nr ?? "").trim();
+    return platnik !== "" && platnik === mojNr;
+  }
+
+  if (rola === "kierownik") {
+    if (czyKrTechniczneUkrywaneDlaNieAdmin(kr)) {
+      const pr = platnikRolaZListyPracownikow(row?.platnik_id, listaPracownikow);
+      if (pr === "admin") return false;
+      if (pr === "uzytkownik" || pr === "kierownik") return true;
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function przefiltrujFakturyKosztoweDlaWidoku(rows, kontekst) {
+  const { czyAdminAktywny, podgladJakoInny, pracownikWidokEfektywny, listaPracownikow } = kontekst;
+  const arr = Array.isArray(rows) ? rows : [];
+  if (arr.length === 0) return arr;
+  if (czyPokazWszystkieFakturyKosztoweSesji(czyAdminAktywny, podgladJakoInny)) return arr;
+  if (!pracownikWidokEfektywny) return [];
+  return arr.filter((row) =>
+    czyFakturaKosztowaWidocznaDlaPracownika(row, pracownikWidokEfektywny, listaPracownikow ?? []),
+  );
+}
+
 function dataLogowaniaEtykieta(v) {
   if (!v) return "—";
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString("pl-PL", { dateStyle: "short", timeStyle: "short" });
-}
-
-function nip10(raw) {
-  return String(raw ?? "")
-    .replace(/\D/g, "")
-    .slice(0, 10);
 }
 
 function krZleceniePwKwotaDoPayload(raw) {
@@ -1124,6 +1237,10 @@ const FAKTURA_ODBIORCA_G4_OPCJE = [
   "G4 Geodezja Michał Jakubowski",
   "G4 Geodezja Monika Jakubowska",
 ];
+/** Krok wstecz: faktury kosztowe tylko do podglądu w G4 (edycja/przełączanie statusu wyłączone). */
+const FAKTURY_KOSZTOWE_EDYCJA_WLACZONA = false;
+/** Docelowa tabela 1:1 z invoices.csv (lokalny eksport). */
+const FAKTURY_KOSZTOWE_TABELA_DB = "faktury_kosztowe";
 
 const FAKTURY_KOLUMNY_USTAWIENIA = [
   { key: "kr", label: "KR", def: 112 },
@@ -1133,6 +1250,7 @@ const FAKTURY_KOLUMNY_USTAWIENIA = [
   { key: "nip", label: "NIP", def: 132 },
   { key: "odbiorca", label: "Odbiorca", def: 224 },
   { key: "platnik", label: "Płatnik", def: 192 },
+  { key: "typ", label: "Typ", def: 132 },
   { key: "netto", label: "Netto", def: 112 },
   { key: "brutto", label: "Brutto", def: 112 },
   { key: "vat", label: "VAT", def: 96 },
@@ -1144,6 +1262,189 @@ const FAKTURY_KOLUMNY_USTAWIENIA = [
 
 function fakturyKolumnyDomyslne() {
   return Object.fromEntries(FAKTURY_KOLUMNY_USTAWIENIA.map((c) => [c.key, c.def]));
+}
+
+/** Jedna linia na komórkę — bez zawijania; długi tekst obcinany tak, by widać było koniec (prezentacja). */
+const FAKTURY_KOSZTOWE_TD = { ...s.td, whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden" };
+
+function fakturyKosztoweFiltryKolumnPuste() {
+  return Object.fromEntries(FAKTURY_KOLUMNY_USTAWIENIA.map((c) => [c.key, ""]));
+}
+
+/** Wartość do sortowania (tekst, data YYYY-MM-DD, liczba). */
+function fakturaKosztowaKluczSortowania(row, key, mapaSprzedawcaPoNip) {
+  switch (key) {
+    case "kr":
+      return String(row?.kr ?? "").trim();
+    case "data": {
+      const d = dataDoSortuYYYYMMDD(row?.data_faktury) || dataDoSortuYYYYMMDD(row?.created_at);
+      return d || "";
+    }
+    case "nazwa":
+      return (
+        tekstTrim(row?.legacy_nazwa_pliku) ||
+        (tekstTrim(row?.legacy_pdf_file) ? String(row.legacy_pdf_file).split(/[\\/]/).pop() : "") ||
+        ""
+      );
+    case "sprzedawca":
+      return (
+        tekstTrim(row?.sprzedawca_nazwa) ||
+        nazwaSprzedawcyZMapy(mapaSprzedawcaPoNip, row?.sprzedawca_nip || row?.legacy_issuer_id) ||
+        ""
+      );
+    case "nip":
+      return identyfikatorPodatkowyZnormalizowany(row?.sprzedawca_nip || row?.legacy_issuer_id);
+    case "odbiorca":
+      return tekstTrim(row?.komu) || tekstTrim(row?.legacy_receiver_name) || "";
+    case "platnik":
+      return [tekstTrim(row?.legacy_payer_name), tekstTrim(row?.platnik_id)].filter(Boolean).join(" ") || "";
+    case "typ":
+      return [tekstTrim(row?.typ_nazwy), tekstTrim(row?.rodzaj_kosztu)].filter(Boolean).join(" ") || "";
+    case "netto":
+      return Number(row?.kwota_netto);
+    case "brutto":
+      return Number(row?.kwota_brutto);
+    case "vat":
+      return Number(row?.kwota_vat);
+    case "nr":
+      return tekstTrim(row?.numer_faktury) || "";
+    case "lokalny":
+      return tekstTrim(row?.legacy_pdf_file) || "";
+    case "box":
+      return tekstTrim(row?.link_faktury) || "";
+    case "status":
+      return String(row?.status ?? "").trim();
+    default:
+      return "";
+  }
+}
+
+/** Jedna znormalizowana ciąg znaków do `.includes()` w filtrze kolumny. */
+function fakturaKosztowaTekstKolumnyDoFiltra(row, key, mapaSprzedawcaPoNip) {
+  const v = fakturaKosztowaKluczSortowania(row, key, mapaSprzedawcaPoNip);
+  if (key === "data") {
+    const parts = [];
+    const d = dataDoSortuYYYYMMDD(row?.data_faktury) || dataDoSortuYYYYMMDD(row?.created_at);
+    if (d) {
+      parts.push(d);
+      if (row?.data_faktury) parts.push(dataPLZFormat(dataDoInputa(row.data_faktury)));
+    }
+    if (row?.created_at) {
+      parts.push(new Date(row.created_at).toLocaleString("pl-PL"));
+      parts.push(dataDoSortuYYYYMMDD(row.created_at) || "");
+    }
+    return parts.join(" ").toLowerCase();
+  }
+  if (key === "netto" || key === "brutto" || key === "vat") {
+    if (typeof v === "number" && Number.isFinite(v)) {
+      const pl = v.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return `${v} ${pl}`.toLowerCase().replace(/\s/g, " ");
+    }
+    return "";
+  }
+  return String(v ?? "").toLowerCase();
+}
+
+/** Pola skalarne w jednym blobie wyszukiwania (bez skanowania Object.keys). */
+const FAKTURA_KOSZTOWA_POLA_SKALAROWE_DO_SZUKANIA = [
+  "id",
+  "kr",
+  "numer_faktury",
+  "sprzedawca_nip",
+  "sprzedawca_nazwa",
+  "komu",
+  "legacy_receiver_name",
+  "legacy_payer_name",
+  "platnik_id",
+  "typ_nazwy",
+  "rodzaj_kosztu",
+  "legacy_pdf_file",
+  "legacy_nazwa_pliku",
+  "link_faktury",
+  "status",
+  "notatki",
+  "zgloszil_pracownik_nr",
+  "nr_konta",
+  "legacy_issuer_id",
+];
+
+/**
+ * Na wiersz liczone raz przy zmianie listy: teksty kolumn + scalony ciąg pod globalne „zawiera”.
+ */
+function fakturaKosztowaZbudujIndeksyWiersza(row, mapaSprzedawcaPoNip) {
+  const r = row ?? {};
+  const kolumny = {};
+  for (const c of FAKTURY_KOLUMNY_USTAWIENIA) {
+    kolumny[c.key] = fakturaKosztowaTekstKolumnyDoFiltra(row, c.key, mapaSprzedawcaPoNip);
+  }
+  const parts = [];
+  for (const k of FAKTURA_KOSZTOWA_POLA_SKALAROWE_DO_SZUKANIA) {
+    const v = r[k];
+    if (v != null && v !== "") parts.push(String(v));
+  }
+  parts.push(identyfikatorPodatkowyZnormalizowany(r.sprzedawca_nip || r.legacy_issuer_id));
+  const sn =
+    tekstTrim(r.sprzedawca_nazwa) ||
+    nazwaSprzedawcyZMapy(mapaSprzedawcaPoNip, r.sprzedawca_nip || r.legacy_issuer_id) ||
+    "";
+  if (sn) parts.push(sn);
+  if (r.data_faktury) {
+    const di = dataDoInputa(r.data_faktury);
+    parts.push(di, dataPLZFormat(di));
+  }
+  if (r.created_at) {
+    const dt = new Date(r.created_at);
+    parts.push(dt.toLocaleString("pl-PL"), dt.toISOString());
+  }
+  for (const nk of ["kwota_netto", "kwota_brutto", "kwota_vat"]) {
+    const n = Number(r[nk]);
+    if (Number.isFinite(n)) {
+      parts.push(
+        n.toString(),
+        n.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      );
+    }
+  }
+  for (const c of FAKTURY_KOLUMNY_USTAWIENIA) {
+    parts.push(kolumny[c.key]);
+  }
+  return { kolumny, szukaj: parts.join("\n").toLowerCase() };
+}
+
+function porownajFakturyKosztoweWiersze(a, b, key, mapaSprzedawcaPoNip, dir) {
+  const mnoznik = dir === "desc" ? -1 : 1;
+  const va = fakturaKosztowaKluczSortowania(a, key, mapaSprzedawcaPoNip);
+  const vb = fakturaKosztowaKluczSortowania(b, key, mapaSprzedawcaPoNip);
+  if (key === "netto" || key === "brutto" || key === "vat") {
+    const na = typeof va === "number" && Number.isFinite(va) ? va : Number.NEGATIVE_INFINITY;
+    const nb = typeof vb === "number" && Number.isFinite(vb) ? vb : Number.NEGATIVE_INFINITY;
+    if (na !== nb) return na < nb ? -mnoznik : mnoznik;
+  } else {
+    const sa = String(va ?? "");
+    const sb = String(vb ?? "");
+    const c = sa.localeCompare(sb, "pl", { sensitivity: "base", numeric: true });
+    if (c !== 0) return c * mnoznik;
+  }
+  const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+  const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+  if (ta !== tb) return tb - ta;
+  return (Number(a?.id) || 0) - (Number(b?.id) || 0);
+}
+
+/** Układ pól w modalu edycji faktury kosztowej (wiersze × 2 lub 3 kolumny). */
+const FAKTURY_EDIT_MODAL_LAYOUT = {
+  kolumna: { display: "flex", flexDirection: "column", gap: "0.55rem" },
+  wiersz: { display: "flex", gap: "0.55rem", flexWrap: "wrap", alignItems: "flex-end" },
+  komorka2: { flex: "1 1 240px", minWidth: "min(100%, 220px)" },
+  komorka3: { flex: "1 1 160px", minWidth: "min(100%, 140px)" },
+};
+
+/** Jedna paczka przy pełnym pobraniu listy (pętla `.range` w Supabase). */
+const FAKTURY_KOSZTOWE_PACZKA_SUPABASE = 500;
+
+function fakturyKosztoweDomyslnyZakresDatRokuKalendarzowego() {
+  const y = new Date().getFullYear();
+  return { od: `${y}-01-01`, do: `${y}-12-31` };
 }
 
 /** Podpowiedź pod przyciskiem — tylko przy włączonym trybie HELP (prezentacja). */
@@ -1176,6 +1477,16 @@ const KR_PROJEKT_MENU = [
     id: "koszty",
     label: "Koszty",
     help: "Godziny pracy zarejestrowane na ten KR (pole KR w module Czas pracy). Kierownik i admin widzą zespół; pracownik — tylko siebie (RLS).",
+  },
+  {
+    id: "budzet",
+    label: "Budżet projektu",
+    help: "Suma kosztów (praca + faktury), podział wg typów i przejście od ogółu do szczegółu.",
+  },
+  {
+    id: "jednostki",
+    label: "Jednostki (ha / działki)",
+    help: "Wpisywanie jednostek do przeliczeń budżetu na 1 ha i 1 działkę.",
   },
   {
     id: "zadania_kr",
@@ -1261,6 +1572,7 @@ export default function App() {
   const [widok, setWidok] = useState("dashboard");
   /** Sekcja „karty projektu” (hub KR) — zsynchronizowana z zakładkami/pills. */
   const [krProjektSekcja, setKrProjektSekcja] = useState("przeglad");
+  const [krBudzetDraftByKr, setKrBudzetDraftByKr] = useState({});
   /** Filtrowanie listy KR w prawym panelu. */
   const [panelKrSzukaj, setPanelKrSzukaj] = useState("");
   /** Otwarty rekord KR (szczegóły + etapy); null = główny ekran z samą listą. */
@@ -1279,6 +1591,13 @@ export default function App() {
   const [pulpitSortDaty, setPulpitSortDaty] = useState("asc");
   /** Podstrona pulpitu: przegląd (skrót), pełna oś, lub treść jak zakładki karty projektu. */
   const [pulpitPodstrona, setPulpitPodstrona] = useState("przeglad");
+  /** Geant: skala osi czasu i warstwy widoczne na wykresie. */
+  const [ganttZoom, setGanttZoom] = useState("miesiac");
+  const [ganttWarstwy, setGanttWarstwy] = useState(() => ({
+    projekt: true,
+    etapy: true,
+    pw: true,
+  }));
   /** Drzewo nawigacji pulpitu — gałąź KR rozwinięta domyślnie. */
   const [pulpitDrzewoRozwinProjekty, setPulpitDrzewoRozwinProjekty] = useState(true);
   /** Prezentacja: zielone podpowiedzi pod przyciskami; zapamiętane w przeglądarce. */
@@ -1319,6 +1638,11 @@ export default function App() {
   const [sprzetEdycjaId, setSprzetEdycjaId] = useState(null);
   const [sprzetForm, setSprzetForm] = useState(() => sprzetPustyForm());
   const [rezerwacjaForm, setRezerwacjaForm] = useState(() => rezerwacjaPustyForm());
+  const [terenZakladka, setTerenZakladka] = useState("planowanie");
+  const [pracSort, setPracSort] = useState({ key: "imie_nazwisko", dir: "asc" });
+  const [pracPokazTylkoAktywnych, setPracPokazTylkoAktywnych] = useState(false);
+  const pracTabelaTopScrollRef = useRef(null);
+  const pracTabelaBottomScrollRef = useRef(null);
   const [kalFlotaRok, setKalFlotaRok] = useState(() => new Date().getFullYear());
   const [kalFlotaMiesiac, setKalFlotaMiesiac] = useState(() => new Date().getMonth() + 1);
   const [pwEdycjaId, setPwEdycjaId] = useState(null);
@@ -1344,20 +1668,41 @@ export default function App() {
   /** Pełna baza faktur kosztowych (nie tylko „do zapłaty”) — osobny moduł. */
   const [fakturyKosztoweList, setFakturyKosztoweList] = useState([]);
   const [fakturyKosztoweFetchError, setFakturyKosztoweFetchError] = useState(null);
+  const [fakturyKosztoweLadowanieListy, setFakturyKosztoweLadowanieListy] = useState(false);
+  const fakturyKosztoweSuroweRef = useRef([]);
+  const fakturyOczekujaceSuroweRef = useRef([]);
+  const krFakturyDoZaplatySuroweRef = useRef([]);
   const [fakturySprzedawcySlownikList, setFakturySprzedawcySlownikList] = useState([]);
   const [fakturyTypySlownikList, setFakturyTypySlownikList] = useState([]);
   const [fakturyRodzajeKosztuSlownikList, setFakturyRodzajeKosztuSlownikList] = useState([]);
   const [fakturyKosztoweSzukaj, setFakturyKosztoweSzukaj] = useState("");
   const [fakturyKosztoweTryb, setFakturyKosztoweTryb] = useState("wszystkie");
-  const [fakturyKosztoweDataOd, setFakturyKosztoweDataOd] = useState("");
-  const [fakturyKosztoweDataDo, setFakturyKosztoweDataDo] = useState("");
+  const [fakturyKosztoweDataOd, setFakturyKosztoweDataOd] = useState(
+    () => fakturyKosztoweDomyslnyZakresDatRokuKalendarzowego().od,
+  );
+  const [fakturyKosztoweDataDo, setFakturyKosztoweDataDo] = useState(
+    () => fakturyKosztoweDomyslnyZakresDatRokuKalendarzowego().do,
+  );
+  const [fakturyKosztoweFiltrKr, setFakturyKosztoweFiltrKr] = useState("");
+  const [fakturyKosztoweSort, setFakturyKosztoweSort] = useState(() => ({ key: null, dir: "asc" }));
+  const [fakturyKosztoweFiltryKolumn, setFakturyKosztoweFiltryKolumn] = useState(() => fakturyKosztoweFiltryKolumnPuste());
+  const fakturyKosztoweSzukajDoListy = useDeferredValue(fakturyKosztoweSzukaj);
+  const fakturyKosztoweFiltrKrDoListy = useDeferredValue(fakturyKosztoweFiltrKr);
+  const fakturyKosztoweFiltryKolumnDoListy = useDeferredValue(fakturyKosztoweFiltryKolumn);
   const [fakturyFolderSkanList, setFakturyFolderSkanList] = useState([]);
   const [fakturyFolderSkanWybrane, setFakturyFolderSkanWybrane] = useState([]);
   const [fakturyFolderImportSaving, setFakturyFolderImportSaving] = useState(false);
   const fakturyFolderInputRef = useRef(null);
+  /** Górny pasek przewijania poziomego — zsynchronizowany z kontenerem tabeli faktur kosztowych. */
+  const fakturyKosztoweTabelaScrollGoraRef = useRef(null);
+  const fakturyKosztoweTabelaScrollDolRef = useRef(null);
+  const fakturyKosztoweTabelaScrollSyncRef = useRef(false);
   const [fakturyKosztoweEdycjaId, setFakturyKosztoweEdycjaId] = useState(null);
-  const [fakturyKosztoweEdycjaForm, setFakturyKosztoweEdycjaForm] = useState(null);
+  const [fakturyKosztoweEdycjaInitialForm, setFakturyKosztoweEdycjaInitialForm] = useState(null);
   const [fakturyKosztoweEdycjaSaving, setFakturyKosztoweEdycjaSaving] = useState(false);
+  const [fakturyKosztoweEdycjaPoIdTekst, setFakturyKosztoweEdycjaPoIdTekst] = useState("");
+  /** Zapobiega równoległym zapisom tej samej edycji (podwójne kliknięcie → niespójny stan). */
+  const fakturyZapisEdycjiLockRef = useRef(false);
   const [fakturyResizeCol, setFakturyResizeCol] = useState(null);
   const [fakturyKolumnyPx, setFakturyKolumnyPx] = useState(() => {
     try {
@@ -1368,12 +1713,6 @@ export default function App() {
       return fakturyKolumnyDomyslne();
     }
   });
-  /** Admin: rekordy bez pełnego przypisania (brak KR lub brak pracownika zgłaszającego). */
-  const [fakturyDoPrzypisaniaList, setFakturyDoPrzypisaniaList] = useState([]);
-  const [fakturyDoPrzypisaniaFetchError, setFakturyDoPrzypisaniaFetchError] = useState(null);
-  const [fakturyDoPrzypisaniaDraft, setFakturyDoPrzypisaniaDraft] = useState({});
-  const [fakturyDoPrzypisaniaSavingId, setFakturyDoPrzypisaniaSavingId] = useState(null);
-  const [fakturaDoZaplatyForm, setFakturaDoZaplatyForm] = useState(() => fakturaDoZaplatyPustyForm());
   /**
    * **Faktury sprzedażowe** dla aktualnie wybranego KR (pulpit / karta projektu / tabela etapów) — odczyt z `faktury`
    * po `etap_id`. BRUDNOPIS: docelowo filtr `typ = 'sprzedaz'` albo osobna tabela `faktury_sprzedaz`.
@@ -1390,6 +1729,8 @@ export default function App() {
   const [pwZleceniaWszystkieFetchError, setPwZleceniaWszystkieFetchError] = useState(null);
 
   const [krList, setKrList] = useState([]);
+  /** Pełna lista KR z API (bez filtrowania technicznych kodów) — m.in. spójność listy kart z danymi z serwera. */
+  const [krZApiPelen, setKrZApiPelen] = useState([]);
   const [etapy, setEtapy] = useState([]);
   const [krFetchError, setKrFetchError] = useState(null);
   const [etapyFetchError, setEtapyFetchError] = useState(null);
@@ -1506,8 +1847,7 @@ export default function App() {
     }
     setKrFetchError(null);
     const list = data ?? [];
-    const ukrywajTechniczne = !czyAdminAktywny || podgladJakoInny;
-    setKrList(ukrywajTechniczne ? list.filter((r) => !czyKrTechniczneUkrywaneDlaNieAdmin(r.kr)) : list);
+    setKrZApiPelen(list);
   }
 
   async function fetchEtapy() {
@@ -1803,13 +2143,20 @@ export default function App() {
     }
     const ukrywajTechniczne = !czyAdminAktywny || podgladJakoInny;
     if (ukrywajTechniczne && czyKrTechniczneUkrywaneDlaNieAdmin(k)) {
+      krFakturyDoZaplatySuroweRef.current = [];
       setKrFakturyDoZaplatyList([]);
       setKrFakturyDoZaplatyFetchError(null);
       return;
     }
     setKrFakturyDoZaplatyFetchError(null);
+    const ctxFaktur = {
+      czyAdminAktywny,
+      podgladJakoInny,
+      pracownikWidokEfektywny,
+      listaPracownikow: pracownicy,
+    };
     const { data, error } = await supabase
-      .from("kr_faktura_do_zaplaty")
+      .from(FAKTURY_KOSZTOWE_TABELA_DB)
       .select("*")
       .eq("kr", k)
       .order("created_at", { ascending: false });
@@ -1817,10 +2164,13 @@ export default function App() {
     if (error) {
       console.error("Błąd pobierania zgłoszeń faktur do zapłaty:", error);
       setKrFakturyDoZaplatyFetchError(error.message);
+      krFakturyDoZaplatySuroweRef.current = [];
       setKrFakturyDoZaplatyList([]);
       return;
     }
-    setKrFakturyDoZaplatyList(data ?? []);
+    const lista = (data ?? []).map(fakturaKosztowaRowDoUi);
+    krFakturyDoZaplatySuroweRef.current = lista;
+    setKrFakturyDoZaplatyList(przefiltrujFakturyKosztoweDlaWidoku(lista, ctxFaktur));
   }
 
   async function fetchCzasPracyWpisyDlaKr(krKod) {
@@ -1877,41 +2227,65 @@ export default function App() {
   async function fetchFakturyDoZaplatyOczekujace() {
     setFakturyDoZaplatyOczekujaceFetchError(null);
     const { data, error } = await supabase
-      .from("kr_faktura_do_zaplaty")
+      .from(FAKTURY_KOSZTOWE_TABELA_DB)
       .select("*")
-      .eq("status", "do_zaplaty")
       .order("created_at", { ascending: false });
 
     if (error) {
       console.error("Błąd pobierania faktur oczekujących na płatność:", error);
       setFakturyDoZaplatyOczekujaceFetchError(error.message);
+      fakturyOczekujaceSuroweRef.current = [];
       setFakturyDoZaplatyOczekujaceList([]);
       return;
     }
-    const list = data ?? [];
-    const ukrywajTechniczne = !czyAdminAktywny || podgladJakoInny;
+    const list = (data ?? []).map(fakturaKosztowaRowDoUi).filter((r) => String(r.status ?? "").trim() === "do_zaplaty");
+    fakturyOczekujaceSuroweRef.current = list;
     setFakturyDoZaplatyOczekujaceList(
-      ukrywajTechniczne ? list.filter((r) => !czyKrTechniczneUkrywaneDlaNieAdmin(r.kr)) : list,
+      przefiltrujFakturyKosztoweDlaWidoku(list, {
+        czyAdminAktywny,
+        podgladJakoInny,
+        pracownikWidokEfektywny,
+        listaPracownikow: pracownicy,
+      }),
     );
   }
 
   async function fetchFakturyKosztoweWszystkie() {
     setFakturyKosztoweFetchError(null);
-    const { data, error } = await supabase
-      .from("kr_faktura_do_zaplaty")
-      .select("*")
-      .order("data_faktury", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .limit(5000);
-    if (error) {
-      console.error("Błąd pobierania pełnej bazy faktur kosztowych:", error);
-      setFakturyKosztoweFetchError(error.message);
-      setFakturyKosztoweList([]);
-      return;
+    setFakturyKosztoweLadowanieListy(true);
+    const ctx = {
+      czyAdminAktywny,
+      podgladJakoInny,
+      pracownikWidokEfektywny,
+      listaPracownikow: pracownicy,
+    };
+    const limit = FAKTURY_KOSZTOWE_PACZKA_SUPABASE;
+    try {
+      const pelna = [];
+      let offset = 0;
+      for (;;) {
+        const { data, error } = await supabase
+          .from(FAKTURY_KOSZTOWE_TABELA_DB)
+          .select("*")
+          .order("id", { ascending: false })
+          .range(offset, offset + limit - 1);
+        if (error) {
+          console.error("Błąd pobierania faktur kosztowych:", error);
+          setFakturyKosztoweFetchError(error.message);
+          fakturyKosztoweSuroweRef.current = [];
+          setFakturyKosztoweList([]);
+          return;
+        }
+        const chunk = (data ?? []).map(fakturaKosztowaRowDoUi);
+        pelna.push(...chunk);
+        if (chunk.length < limit) break;
+        offset += limit;
+      }
+      fakturyKosztoweSuroweRef.current = pelna;
+      setFakturyKosztoweList(przefiltrujFakturyKosztoweDlaWidoku(pelna, ctx));
+    } finally {
+      setFakturyKosztoweLadowanieListy(false);
     }
-    const list = data ?? [];
-    const ukrywajTechniczne = !czyAdminAktywny || podgladJakoInny;
-    setFakturyKosztoweList(ukrywajTechniczne ? list.filter((r) => !czyKrTechniczneUkrywaneDlaNieAdmin(r.kr)) : list);
   }
 
   async function fetchFakturySprzedawcySlownik() {
@@ -1946,90 +2320,32 @@ export default function App() {
     }
   }
 
-  async function fetchFakturyDoPrzypisaniaAdmin() {
-    setFakturyDoPrzypisaniaFetchError(null);
-    const { data, error } = await supabase
-      .from("kr_faktura_do_zaplaty")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1200);
-    if (error) {
-      console.error("Błąd pobierania listy do przypisania:", error);
-      setFakturyDoPrzypisaniaFetchError(error.message);
-      setFakturyDoPrzypisaniaList([]);
-      return;
-    }
-    const list = (data ?? []).filter((r) => {
-      const k = String(r.kr ?? "").trim();
-      const p = String(r.zgloszil_pracownik_nr ?? "").trim();
-      return !k || !p;
-    });
-    setFakturyDoPrzypisaniaList(list);
-    setFakturyDoPrzypisaniaDraft((prev) => {
-      const next = { ...prev };
-      for (const r of list) {
-        if (!next[r.id]) {
-          next[r.id] = {
-            kr: String(r.kr ?? "").trim(),
-            zgloszil_pracownik_nr: String(r.zgloszil_pracownik_nr ?? "").trim(),
-          };
-        }
-      }
-      return next;
-    });
-  }
-
-  async function zapiszPrzypisanieFakturyAdmin(rowId) {
-    const id = Number(rowId);
-    if (!Number.isFinite(id)) return;
-    const draft = fakturyDoPrzypisaniaDraft[id] ?? {};
-    const kr = String(draft.kr ?? "").trim() || null;
-    const zgl = String(draft.zgloszil_pracownik_nr ?? "").trim() || null;
-    setFakturyDoPrzypisaniaSavingId(id);
-    const { error } = await supabase
-      .from("kr_faktura_do_zaplaty")
-      .update({ kr, zgloszil_pracownik_nr: zgl })
-      .eq("id", id);
-    setFakturyDoPrzypisaniaSavingId(null);
-    if (error) {
-      alert(`Zapis przypisania: ${error.message}`);
-      return;
-    }
-    await fetchFakturyDoPrzypisaniaAdmin();
-    if (kr) {
-      await fetchKrFakturyDoZaplatyForKr(kr);
-    }
-    void fetchFakturyDoZaplatyOczekujace();
-    void fetchFakturyKosztoweWszystkie();
-  }
-
-  async function zapiszKrFakturaDoZaplaty(e, krKod) {
-    e.preventDefault();
+  async function zapiszKrFakturaDoZaplatyZFormularza(formularz, krKod) {
     const k = String(krKod ?? "").trim();
-    const komu = String(fakturaDoZaplatyForm.komu ?? "").trim();
+    const komu = String(formularz?.komu ?? "").trim();
     if (!k || !komu) {
       alert("Podaj kod KR i pole „Komu / odbiorca”.");
-      return;
+      return false;
     }
-    const kw = kwotaBruttoDoPayload(fakturaDoZaplatyForm.kwota_brutto);
+    const kw = kwotaBruttoDoPayload(formularz?.kwota_brutto);
     if (kw == null || kw < 0) {
       alert("Podaj prawidłową kwotę brutto (np. 1234,56).");
-      return;
+      return false;
     }
     const payload = {
       kr: k,
-      sprzedawca_nip: String(fakturaDoZaplatyForm.sprzedawca_nip ?? "").replace(/\D/g, "").slice(0, 10) || null,
-      sprzedawca_nazwa: String(fakturaDoZaplatyForm.sprzedawca_nazwa ?? "").trim() || null,
+      sprzedawca_nip: identyfikatorPodatkowyZnormalizowany(formularz?.sprzedawca_nip) || null,
+      sprzedawca_nazwa: String(formularz?.sprzedawca_nazwa ?? "").trim() || null,
       komu,
-      nr_konta: String(fakturaDoZaplatyForm.nr_konta ?? "").trim() || null,
+      nr_konta: String(formularz?.nr_konta ?? "").trim() || null,
       kwota_brutto: kw,
-      link_faktury: String(fakturaDoZaplatyForm.link_faktury ?? "").trim() || null,
-      numer_faktury: String(fakturaDoZaplatyForm.numer_faktury ?? "").trim() || null,
-      zgloszil_pracownik_nr: String(fakturaDoZaplatyForm.zgloszil_pracownik_nr ?? "").trim() || null,
-      notatki: String(fakturaDoZaplatyForm.notatki ?? "").trim() || null,
+      link_faktury: String(formularz?.link_faktury ?? "").trim() || null,
+      numer_faktury: String(formularz?.numer_faktury ?? "").trim() || null,
+      zgloszil_pracownik_nr: String(formularz?.zgloszil_pracownik_nr ?? "").trim() || null,
+      notatki: String(formularz?.notatki ?? "").trim() || null,
       status: "do_zaplaty",
     };
-    const { error } = await supabase.from("kr_faktura_do_zaplaty").insert([payload]).select("id");
+    const { error } = await supabase.from(FAKTURY_KOSZTOWE_TABELA_DB).insert([payload]).select("id");
     if (error) {
       console.error(error);
       alert(
@@ -2039,19 +2355,19 @@ export default function App() {
             ? "\n\nUruchom g4-app/supabase/kr-faktura-do-zaplaty.sql oraz RLS w rls-policies-anon.sql."
             : "")
       );
-      return;
+      return false;
     }
-    setFakturaDoZaplatyForm(fakturaDoZaplatyPustyForm());
     await fetchKrFakturyDoZaplatyForKr(k);
     void fetchFakturyDoZaplatyOczekujace();
     void fetchFakturyKosztoweWszystkie();
-    if (czyAdminAktywny) void fetchFakturyDoPrzypisaniaAdmin();
+    return true;
   }
 
   async function zapiszStatusKrFakturaDoZaplaty(rowId, status, krKod) {
+    if (!FAKTURY_KOSZTOWE_EDYCJA_WLACZONA) return;
     const st = String(status ?? "").trim();
     if (!FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(st)) return;
-    const { error } = await supabase.from("kr_faktura_do_zaplaty").update({ status: st }).eq("id", rowId);
+    const { error } = await supabase.from(FAKTURY_KOSZTOWE_TABELA_DB).update({ status: st }).eq("id", rowId);
     if (error) {
       console.error(error);
       alert("Zmiana statusu: " + error.message);
@@ -2061,69 +2377,229 @@ export default function App() {
     if (k) await fetchKrFakturyDoZaplatyForKr(k);
     void fetchFakturyDoZaplatyOczekujace();
     void fetchFakturyKosztoweWszystkie();
-    if (czyAdminAktywny) void fetchFakturyDoPrzypisaniaAdmin();
   }
 
   function rozpocznijEdycjeFakturyKosztowej(row) {
+    if (!FAKTURY_KOSZTOWE_EDYCJA_WLACZONA) return;
     setFakturyKosztoweEdycjaId(row.id);
-    const form = fakturaKosztowaWierszDoFormu(row);
-    if (!String(form.sprzedawca_nazwa ?? "").trim()) {
-      const nip = nip10(form.sprzedawca_nip || row?.legacy_issuer_id);
-      const nazwaZeSlownika = mapaSprzedawcaPoNip.get(nip);
-      if (nazwaZeSlownika) form.sprzedawca_nazwa = nazwaZeSlownika;
+    setFakturyKosztoweEdycjaInitialForm(przygotujPoczatkowyFormularzEdycjiFakturyKosztowej(row, mapaSprzedawcaPoNip, pracownicy));
+  }
+
+  /** Otwiera modal edycji po `id` z tabeli faktur kosztowych (np. z Table Editor lub # kolumny ID). */
+  async function otworzEdycjeFakturyKosztowejPoIdBazy(rawTekst) {
+    if (!FAKTURY_KOSZTOWE_EDYCJA_WLACZONA) return;
+    if (!czyAdminAktywny) {
+      alert("Edycja faktury jest dostępna tylko dla administratora.");
+      return;
     }
-    setFakturyKosztoweEdycjaForm(form);
+    const s = String(rawTekst ?? "")
+      .trim()
+      .replace(/^#+/i, "")
+      .replace(/\s+/g, "");
+    if (!s) {
+      alert("Podaj identyfikator rekordu z bazy (kolumna id).");
+      return;
+    }
+    if (!/^\d+$/.test(s)) {
+      alert("ID musi być liczbą całkowitą (np. 1842 lub #1842).");
+      return;
+    }
+    const zPamieci = fakturyKosztoweSuroweRef.current.find((r) => String(r.id) === s);
+    if (zPamieci) {
+      rozpocznijEdycjeFakturyKosztowej(zPamieci);
+      return;
+    }
+    const { data, error } = await supabase.from(FAKTURY_KOSZTOWE_TABELA_DB).select("*").eq("id", s).maybeSingle();
+    if (error) {
+      console.error(error);
+      alert("Pobieranie faktury po id: " + [error.message, error.details].filter(Boolean).join(" — "));
+      return;
+    }
+    if (!data) {
+      alert(
+        `Brak wiersza ${FAKTURY_KOSZTOWE_TABELA_DB} o id ${s} albo brak uprawnień SELECT. Sprawdź ID w Supabase lub odśwież listę faktur.`,
+      );
+      return;
+    }
+    rozpocznijEdycjeFakturyKosztowej(data);
   }
 
   function anulujEdycjeFakturyKosztowej() {
     setFakturyKosztoweEdycjaId(null);
-    setFakturyKosztoweEdycjaForm(null);
+    setFakturyKosztoweEdycjaInitialForm(null);
     setFakturyKosztoweEdycjaSaving(false);
   }
 
-  async function zapiszEdycjeFakturyKosztowej(rowId) {
-    if (!czyAdminAktywny || !fakturyKosztoweEdycjaForm) {
-      alert("Edycja faktury jest dostępna tylko dla administratora.");
-      return;
+  /**
+   * @returns {Promise<{ ok: boolean, silent?: boolean }>} silent=true — np. blokada lub walidacja (bez alertu przy auto-zapisie)
+   */
+  async function zapiszEdycjeFakturyKosztowej(
+    rowId,
+    formEdycji,
+    { zamknijPoZapisie = true, autoWBiegu = false } = {},
+  ) {
+    const zwrotCichy = () => ({ ok: false, silent: true });
+    const zwrotOstrzez = () => ({ ok: false, silent: false });
+    const zwrotOk = () => ({ ok: true });
+
+    if (!czyAdminAktywny || !formEdycji) {
+      if (!autoWBiegu) alert("Edycja faktury jest dostępna tylko dla administratora.");
+      return zwrotCichy();
     }
-    const kwBrutto = kwotaBruttoDoPayload(fakturyKosztoweEdycjaForm.kwota_brutto);
+    const kwBrutto = kwotaBruttoDoPayload(formEdycji.kwota_brutto);
     if (kwBrutto == null || kwBrutto < 0) {
-      alert("Podaj prawidłową kwotę brutto.");
-      return;
+      if (!autoWBiegu) alert("Podaj prawidłową kwotę brutto.");
+      return zwrotCichy();
     }
+    if (fakturyZapisEdycjiLockRef.current) {
+      if (!autoWBiegu) alert("Poczekaj — poprzedni zapis faktury do Supabase jeszcze się kończy.");
+      return zwrotCichy();
+    }
+    fakturyZapisEdycjiLockRef.current = true;
+    setFakturyKosztoweEdycjaSaving(true);
+
+    const linkWyslany = String(formEdycji.link_faktury ?? "").trim() || null;
+    /** `komu` jest NOT NULL w bazie — nigdy nie wysyłaj `null` (np. puste pole w formularzu przy zapisie samego linku). */
+    const komuZFormularza = String(formEdycji.komu ?? "").trim();
+    const wierszPrzedZapisem = fakturyKosztoweSuroweRef.current.find((r) => String(r.id) === String(rowId));
+    const komuFallbackZBazy =
+      String(wierszPrzedZapisem?.komu ?? "").trim() ||
+      String(wierszPrzedZapisem?.legacy_receiver_name ?? "").trim();
+    const komuDoPayload = komuZFormularza || komuFallbackZBazy;
     const payload = {
-      data_faktury: String(fakturyKosztoweEdycjaForm.data_faktury ?? "").trim() || null,
-      sprzedawca_nip: nip10(fakturyKosztoweEdycjaForm.sprzedawca_nip) || null,
-      sprzedawca_nazwa: String(fakturyKosztoweEdycjaForm.sprzedawca_nazwa ?? "").trim() || null,
-      komu: String(fakturyKosztoweEdycjaForm.komu ?? "").trim() || null,
-      legacy_receiver_name: String(fakturyKosztoweEdycjaForm.komu ?? "").trim() || null,
-      legacy_payer_name: String(fakturyKosztoweEdycjaForm.legacy_payer_name ?? "").trim() || null,
-      rodzaj_kosztu: String(fakturyKosztoweEdycjaForm.rodzaj_kosztu ?? "").trim() || null,
-      typ_nazwy: String(fakturyKosztoweEdycjaForm.typ_nazwy ?? "").trim() || null,
-      kwota_netto: kwotaBruttoDoPayload(fakturyKosztoweEdycjaForm.kwota_netto),
+      kr: String(formEdycji.kr ?? "").trim() || null,
+      data_faktury: String(formEdycji.data_faktury ?? "").trim() || null,
+      sprzedawca_nip: identyfikatorPodatkowyZnormalizowany(formEdycji.sprzedawca_nip) || null,
+      sprzedawca_nazwa: String(formEdycji.sprzedawca_nazwa ?? "").trim() || null,
+      legacy_payer_name: String(formEdycji.legacy_payer_name ?? "").trim() || null,
+      platnik_id:
+        platnikIdDoZapisuFaktury(formEdycji.legacy_payer_name, formEdycji.platnik_id, pracownicy) || null,
+      rodzaj_kosztu: String(formEdycji.rodzaj_kosztu ?? "").trim() || null,
+      typ_nazwy: String(formEdycji.typ_nazwy ?? "").trim() || null,
+      kwota_netto: kwotaBruttoDoPayload(formEdycji.kwota_netto),
       kwota_brutto: kwBrutto,
-      kwota_vat: kwotaBruttoDoPayload(fakturyKosztoweEdycjaForm.kwota_vat),
-      nr_konta: String(fakturyKosztoweEdycjaForm.nr_konta ?? "").trim() || null,
-      numer_faktury: String(fakturyKosztoweEdycjaForm.numer_faktury ?? "").trim() || null,
-      legacy_pdf_file: String(fakturyKosztoweEdycjaForm.legacy_pdf_file ?? "").trim() || null,
-      link_faktury: String(fakturyKosztoweEdycjaForm.link_faktury ?? "").trim() || null,
+      kwota_vat: kwotaBruttoDoPayload(formEdycji.kwota_vat),
+      nr_konta: String(formEdycji.nr_konta ?? "").trim() || null,
+      numer_faktury: String(formEdycji.numer_faktury ?? "").trim() || null,
+      link_faktury: linkWyslany,
       status:
-        FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(String(fakturyKosztoweEdycjaForm.status ?? "").trim())
-          ? String(fakturyKosztoweEdycjaForm.status).trim()
+        FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(String(formEdycji.status ?? "").trim())
+          ? String(formEdycji.status).trim()
           : "do_zaplaty",
     };
-    setFakturyKosztoweEdycjaSaving(true);
-    const { error } = await supabase.from("kr_faktura_do_zaplaty").update(payload).eq("id", rowId);
-    setFakturyKosztoweEdycjaSaving(false);
-    if (error) {
-      console.error(error);
-      alert("Zapis faktury: " + error.message);
-      return;
+    if (komuDoPayload) {
+      payload.komu = komuDoPayload;
+      if (komuZFormularza) payload.legacy_receiver_name = komuZFormularza;
     }
-    anulujEdycjeFakturyKosztowej();
-    void fetchFakturyKosztoweWszystkie();
-    void fetchFakturyDoZaplatyOczekujace();
-    if (czyAdminAktywny) void fetchFakturyDoPrzypisaniaAdmin();
+    const ctxFaktur = {
+      czyAdminAktywny,
+      podgladJakoInny,
+      pracownikWidokEfektywny,
+      listaPracownikow: pracownicy,
+    };
+
+    try {
+      if (import.meta.env.DEV) {
+        console.debug(`[faktura→Supabase] PATCH ${FAKTURY_KOSZTOWE_TABELA_DB}`, {
+          host: supabaseApiHostname(),
+          id: rowId,
+          klucze: Object.keys(payload),
+          link_faktury: payload.link_faktury,
+        });
+      }
+      const { data: updatedRow, error } = await supabase
+        .from(FAKTURY_KOSZTOWE_TABELA_DB)
+        .update(payload)
+        .eq("id", rowId)
+        .select()
+        .maybeSingle();
+
+      if (error || !updatedRow) {
+        const { data: sesjaDiag } = await supabase.auth.getSession();
+        const zalogowanyJwt = Boolean(sesjaDiag?.session?.user?.id);
+        const hostApi = supabaseApiHostname();
+        const podpowiedzSesja = zalogowanyJwt
+          ? ""
+          : " Nie jesteś zalogowany — Supabase używa roli «anon». Jeśli w projekcie nie ma polityki UPDATE dla anon (albo tylko zalogowany admin może zapisywać), żądanie nie zmieni wiersza.";
+        const podpowiedzHost = ` Host API: ${hostApi}. Upewnij się, że VITE_SUPABASE_URL i klucz w buildzie to ten sam projekt co w Supabase → Settings → API.`;
+        if (error) {
+          console.error(error);
+          const det = [error.code, error.message, error.details, error.hint].filter(Boolean).join(" — ");
+          if (!autoWBiegu) alert("Zapis faktury: " + det + podpowiedzSesja + podpowiedzHost);
+          else console.warn("[faktura auto-zapis]", det + podpowiedzSesja + podpowiedzHost);
+          return zwrotOstrzez();
+        }
+        if (!autoWBiegu) {
+          alert(
+            `Zapis faktury (id ${rowId}): serwer nie zwrócił wiersza po aktualizacji — zwykle oznacza to 0 zaktualizowanych rekordów (RLS blokuje UPDATE albo złe id).` +
+              podpowiedzSesja +
+              podpowiedzHost +
+              ` W DevTools → Network znajdź PATCH …/rest/v1/${FAKTURY_KOSZTOWE_TABELA_DB} (status, JSON).`,
+          );
+        } else {
+          console.warn("[faktura auto-zapis] brak wiersza po UPDATE", rowId, podpowiedzSesja);
+        }
+        await fetchFakturyKosztoweWszystkie();
+        return zwrotOstrzez();
+      }
+
+      let finalRow = updatedRow;
+      if (linkWyslany) {
+        const { data: poLinku, error: errLink } = await supabase
+          .from(FAKTURY_KOSZTOWE_TABELA_DB)
+          .update({ link_faktury: linkWyslany })
+          .eq("id", rowId)
+          .select()
+          .maybeSingle();
+        if (errLink) {
+          console.error("Osobny zapis link_faktury:", errLink);
+          if (!autoWBiegu) alert("Link Box: osobny zapis linku w bazie nie powiódł się: " + errLink.message);
+        } else if (poLinku) {
+          finalRow = { ...finalRow, ...poLinku };
+        } else if (!autoWBiegu) {
+          alert(
+            "Link Box: osobny zapis linku nie zwrócił wiersza (id " +
+              rowId +
+              "). Sprawdź RLS i kolumnę link_faktury w Supabase.",
+          );
+        }
+      }
+
+      const rawPrev = fakturyKosztoweSuroweRef.current;
+      const ix = rawPrev.findIndex((r) => String(r.id) === String(rowId));
+      if (ix >= 0) {
+        const rawNext = [...rawPrev];
+        rawNext[ix] = { ...rawPrev[ix], ...finalRow };
+        fakturyKosztoweSuroweRef.current = rawNext;
+        setFakturyKosztoweList(przefiltrujFakturyKosztoweDlaWidoku(rawNext, ctxFaktur));
+      }
+
+      if (zamknijPoZapisie) {
+        anulujEdycjeFakturyKosztowej();
+      } else {
+        setFakturyKosztoweEdycjaInitialForm(
+          przygotujPoczatkowyFormularzEdycjiFakturyKosztowej(finalRow, mapaSprzedawcaPoNip, pracownicy),
+        );
+      }
+
+      await fetchFakturyKosztoweWszystkie();
+      const po = fakturyKosztoweSuroweRef.current.find((r) => String(r.id) === String(rowId));
+      if (linkWyslany && po && !String(po.link_faktury ?? "").trim()) {
+        if (!autoWBiegu) {
+          alert(
+            "Po odświeżeniu z bazy pole link_faktury dla tej faktury nadal jest puste — wartość nie utrzymuje się w PostgreSQL (trigger, inna migracja kolumny lub zapis z innej aplikacji). Sprawdź rekord w Supabase dla tego id.",
+          );
+        } else {
+          console.warn("[faktura auto-zapis] link_faktury puste po odświeżeniu", rowId);
+        }
+      }
+
+      void fetchFakturyDoZaplatyOczekujace();
+      return zwrotOk();
+    } finally {
+      setFakturyKosztoweEdycjaSaving(false);
+      fakturyZapisEdycjiLockRef.current = false;
+    }
   }
 
   function zeskanujFolderFakturPoPlikach(ev) {
@@ -2178,7 +2654,7 @@ export default function App() {
       data_faktury: null,
     }));
     setFakturyFolderImportSaving(true);
-    const { error } = await supabase.from("kr_faktura_do_zaplaty").insert(payload);
+    const { error } = await supabase.from(FAKTURY_KOSZTOWE_TABELA_DB).insert(payload);
     setFakturyFolderImportSaving(false);
     if (error) {
       console.error(error);
@@ -2439,6 +2915,32 @@ export default function App() {
     void fetchPracownicy();
   }
 
+  function przejdzDoPrzydzialuSprzetu() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setKrZleceniePwEdycjaId(null);
+    setKrZleceniePwKontekstKr(null);
+    setKrZleceniePwForm(krZleceniePwPustyForm());
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setKrProjektSekcja("przeglad");
+    setWidok("przydzial_sprzetu");
+    void fetchPracownicy();
+  }
+
   function przejdzDoZadanDlaNr(nr) {
     setZadaniaFiltrPracNr(String(nr ?? "").trim());
     przejdzDoZadania();
@@ -2524,7 +3026,6 @@ export default function App() {
     void fetchFakturyDoZaplatyOczekujace();
     void fetchFakturyKosztoweWszystkie();
     if (czyAdminAktywny) {
-      void fetchFakturyDoPrzypisaniaAdmin();
     }
   }
 
@@ -2564,7 +3065,7 @@ export default function App() {
     void fetchRezerwacjeMiesiac(y, m);
   }
 
-  function przejdzDoTerenZespolow() {
+  function przejdzDoTeren(zakladka = "planowanie") {
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
@@ -2586,8 +3087,12 @@ export default function App() {
     setZadanieForm(zadaniePustyForm());
     setPwEdycjaId(null);
     setPwForm(podwykonawcaPustyForm());
-    setWidok("teren_zespoly");
+    setTerenZakladka(zakladka);
+    setWidok("teren");
     void fetchPracownicy();
+    void fetchPodwykonawcy();
+    void fetchSamochody();
+    void fetchSprzet();
   }
 
   function przejdzDoSprzet() {
@@ -2740,6 +3245,57 @@ export default function App() {
     if (error) {
       console.error(error);
       alert("Zapis „odpowiedzialny za flotę”: " + error.message);
+      return;
+    }
+    await fetchPracownicy();
+  }
+
+  async function ustawOdpowiedzialnyTeren(nr, wartosc) {
+    const { pracownikSesja, czyAdminAktywny: jestAdmin } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    const rola = String(pracownikSesja?.app_role ?? "").trim().toLowerCase();
+    if (!jestAdmin && rola !== "kierownik") {
+      alert("Tylko administrator lub kierownik może przypisywać odpowiedzialność za teren.");
+      return;
+    }
+    const { error } = await supabase
+      .from("pracownik")
+      .update({ odpowiedzialny_teren: wartosc })
+      .eq("nr", nr);
+    if (error) {
+      console.error(error);
+      alert(
+        "Zapis „odpowiedzialny za teren”: " +
+          error.message +
+          (String(error.message).includes("column") || String(error.message).includes("schema")
+            ? "\n\nUruchom w Supabase: g4-app/supabase/pracownik-odpowiedzialny-teren.sql"
+            : ""),
+      );
+      return;
+    }
+    await fetchPracownicy();
+  }
+
+  async function ustawPracownikAktywny(nr, wartosc) {
+    const { czyAdminAktywny: jestAdmin } = obliczPracownikWidokuDlaSesji(
+      pracownicy,
+      session,
+      adminPodgladPracownikNr,
+    );
+    if (!jestAdmin) {
+      alert("Tylko administrator może zmieniać aktywność pracownika.");
+      return;
+    }
+    const { error } = await supabase
+      .from("pracownik")
+      .update({ is_active: wartosc })
+      .eq("nr", nr);
+    if (error) {
+      console.error(error);
+      alert("Zapis „aktywny”: " + error.message);
       return;
     }
     await fetchPracownicy();
@@ -3422,7 +3978,7 @@ export default function App() {
   }, [widok]);
 
   useEffect(() => {
-    if (widok !== "teren_zespoly") return;
+    if (widok !== "teren") return;
     void fetchPracownicy();
   }, [widok]);
 
@@ -3505,7 +4061,6 @@ export default function App() {
       adminPodgladPracownikNr,
     );
     if (!jestAdmin) return;
-    void fetchFakturyDoPrzypisaniaAdmin();
   }, [widok, krProjektSekcja, pracownicy, session?.user?.id, adminPodgladPracownikNr]);
 
   useEffect(() => {
@@ -3645,21 +4200,76 @@ export default function App() {
     [pracownicy]
   );
 
+  /** Moduł Teren — tylko osoby z tickiem „odpowiedzialny za teren” w Zespół. */
+  const pracownicyOdpowiedzialniTeren = useMemo(
+    () => pracownicyPosortowani.filter((p) => p.odpowiedzialny_teren === true),
+    [pracownicyPosortowani],
+  );
+
+  const czyAdminDlaListyPracownikow = useMemo(() => {
+    const { czyAdminAktywny } = obliczPracownikWidokuDlaSesji(pracownicy, session, adminPodgladPracownikNr);
+    return czyAdminAktywny;
+  }, [pracownicy, session, adminPodgladPracownikNr]);
+
+  const pracownicyWgSortowania = useMemo(() => {
+    const getVal = (p, key) => {
+      if (key === "nr") return String(p.nr ?? "").trim();
+      if (key === "imie_nazwisko") return String(p.imie_nazwisko ?? "").trim();
+      if (key === "dzial") return String(p.dzial ?? "").trim();
+      if (key === "app_role") return String(p.app_role ?? "").trim();
+      if (key === "odpowiedzialny_flota") return p.odpowiedzialny_flota === true ? 1 : 0;
+      if (key === "odpowiedzialny_teren") return p.odpowiedzialny_teren === true ? 1 : 0;
+      if (key === "forma_zatrudnienia") return String(p.forma_zatrudnienia ?? "").trim();
+      if (key === "email") return String(p.email ?? "").trim();
+      if (key === "telefon") return String(p.telefon ?? "").trim();
+      if (key === "konto_utworzone") return dataDoSortuYYYYMMDD(p.created_at) ?? "";
+      if (key === "ostatnie_logowanie") return dataDoSortuYYYYMMDD(p.last_sign_in_at) ?? "";
+      if (key === "is_active") return p.is_active === false ? 0 : 1;
+      return "";
+    };
+    const list = [...pracownicy].filter((p) => {
+      if (czyAdminDlaListyPracownikow) {
+        return !pracPokazTylkoAktywnych || p.is_active !== false;
+      }
+      return p.is_active !== false;
+    });
+    list.sort((a, b) => {
+      const av = getVal(a, pracSort.key);
+      const bv = getVal(b, pracSort.key);
+      const cmp =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv), "pl", { sensitivity: "base", numeric: true });
+      if (cmp !== 0) return pracSort.dir === "asc" ? cmp : -cmp;
+      return String(a.nr ?? "").localeCompare(String(b.nr ?? ""), "pl", { sensitivity: "base", numeric: true });
+    });
+    return list;
+  }, [pracownicy, pracSort, czyAdminDlaListyPracownikow, pracPokazTylkoAktywnych]);
+
   const mapaProwadzacychId = useMemo(() => mapaNrPracownika(pracownicy), [pracownicy]);
   const mapaSprzedawcaPoNip = useMemo(() => {
     const m = new Map();
     for (const s of fakturySprzedawcySlownikList) {
-      const nip = nip10(s?.nip);
+      const nip = nipPolskiCyfry(s?.nip);
       const nazwa = String(s?.nazwa ?? "").trim();
       if (nip && nazwa && !m.has(nip)) m.set(nip, nazwa);
     }
     for (const row of [...fakturyKosztoweList, ...krFakturyDoZaplatyList, ...fakturyDoZaplatyOczekujaceList]) {
-      const nip = nip10(row?.sprzedawca_nip ?? row?.legacy_issuer_id);
+      const key = kluczSprzedawcaDoMapy(row?.sprzedawca_nip ?? row?.legacy_issuer_id);
       const nazwa = String(row?.sprzedawca_nazwa ?? "").trim();
-      if (nip && nazwa && !m.has(nip)) m.set(nip, nazwa);
+      if (key && nazwa && !m.has(key)) m.set(key, nazwa);
     }
     return m;
   }, [fakturySprzedawcySlownikList, fakturyKosztoweList, krFakturyDoZaplatyList, fakturyDoZaplatyOczekujaceList]);
+
+  const fakturyKosztoweIndeksyWidoku = useMemo(() => {
+    const m = new Map();
+    for (const row of fakturyKosztoweList) {
+      m.set(row.id, fakturaKosztowaZbudujIndeksyWiersza(row, mapaSprzedawcaPoNip));
+    }
+    return m;
+  }, [fakturyKosztoweList, mapaSprzedawcaPoNip]);
+
   const fakturyKosztoweDuplikatyIds = useMemo(() => {
     const licznik = new Map();
     for (const row of fakturyKosztoweList) {
@@ -3674,6 +4284,71 @@ export default function App() {
     }
     return ids;
   }, [fakturyKosztoweList]);
+
+  const fakturyKosztoweListaWidoku = useMemo(() => {
+    const q = tekstTrim(fakturyKosztoweSzukajDoListy).toLowerCase();
+    const fk = tekstTrim(fakturyKosztoweFiltrKrDoListy).toLowerCase();
+    const filtry = fakturyKosztoweFiltryKolumnDoListy;
+    const indeksy = fakturyKosztoweIndeksyWidoku;
+    const out = [];
+    for (const row of fakturyKosztoweList) {
+      const idx = indeksy.get(row.id);
+      if (!idx) continue;
+      if (q && !idx.szukaj.includes(q)) continue;
+
+      let colOk = true;
+      for (const c of FAKTURY_KOLUMNY_USTAWIENIA) {
+        const fi = tekstTrim(filtry?.[c.key]).toLowerCase();
+        if (!fi) continue;
+        if (!idx.kolumny[c.key].includes(fi)) {
+          colOk = false;
+          break;
+        }
+      }
+      if (!colOk) continue;
+
+      if (fakturyKosztoweDataOd || fakturyKosztoweDataDo) {
+        const d = dataDoSortuYYYYMMDD(row.data_faktury) || dataDoSortuYYYYMMDD(row.created_at);
+        if (!d) continue;
+        if (fakturyKosztoweDataOd && d < fakturyKosztoweDataOd) continue;
+        if (fakturyKosztoweDataDo && d > fakturyKosztoweDataDo) continue;
+      }
+
+      if (fk && !String(row.kr ?? "").toLowerCase().includes(fk)) continue;
+
+      if (fakturyKosztoweTryb === "duplikaty") {
+        if (!fakturyKosztoweDuplikatyIds.has(row.id)) continue;
+      } else if (fakturyKosztoweTryb === "niekompletne") {
+        if (!czyFakturaNiekompletna(row)) continue;
+      }
+
+      out.push(row);
+    }
+
+    if (fakturyKosztoweSort.key == null) return out;
+    return [...out].sort((a, b) =>
+      porownajFakturyKosztoweWiersze(
+        a,
+        b,
+        fakturyKosztoweSort.key,
+        mapaSprzedawcaPoNip,
+        fakturyKosztoweSort.dir,
+      ),
+    );
+  }, [
+    fakturyKosztoweList,
+    fakturyKosztoweIndeksyWidoku,
+    fakturyKosztoweSzukajDoListy,
+    fakturyKosztoweFiltrKrDoListy,
+    fakturyKosztoweFiltryKolumnDoListy,
+    fakturyKosztoweDataOd,
+    fakturyKosztoweDataDo,
+    fakturyKosztoweTryb,
+    fakturyKosztoweDuplikatyIds,
+    fakturyKosztoweSort,
+    mapaSprzedawcaPoNip,
+  ]);
+
   const fakturyNazwaPlikuWBazieSet = useMemo(() => {
     const out = new Set();
     for (const row of fakturyKosztoweList) {
@@ -3714,6 +4389,33 @@ export default function App() {
       () => obliczPracownikWidokuDlaSesji(pracownicy, session, adminPodgladPracownikNr),
       [pracownicy, session, adminPodgladPracownikNr],
     );
+  const czyKierownikAktywny = String(pracownikPowiazanyZSesja?.app_role ?? "").trim().toLowerCase() === "kierownik";
+  const czyMozeEdytowacTickTeren = czyAdminAktywny || czyKierownikAktywny;
+
+  const fakturyKosztoweSzerokoscTabeliPx = useMemo(() => {
+    let sum = czyAdminAktywny ? Number(fakturyKolumnyPx.akcje ?? 108) : 0;
+    for (const c of FAKTURY_KOLUMNY_USTAWIENIA) {
+      sum += Number(fakturyKolumnyPx[c.key] ?? c.def);
+    }
+    return sum;
+  }, [czyAdminAktywny, fakturyKolumnyPx]);
+
+  function szerFakturyKolumny(key) {
+    if (key === "akcje") return Number(fakturyKolumnyPx.akcje ?? 108);
+    const def = FAKTURY_KOLUMNY_USTAWIENIA.find((c) => c.key === key)?.def ?? 120;
+    return Number(fakturyKolumnyPx[key] ?? def);
+  }
+
+  function syncPracTabelaScroll(source) {
+    const top = pracTabelaTopScrollRef.current;
+    const bottom = pracTabelaBottomScrollRef.current;
+    if (!top || !bottom) return;
+    if (source === "top") {
+      if (bottom.scrollLeft !== top.scrollLeft) bottom.scrollLeft = top.scrollLeft;
+    } else if (source === "bottom") {
+      if (top.scrollLeft !== bottom.scrollLeft) top.scrollLeft = bottom.scrollLeft;
+    }
+  }
 
   const czyWidziNaprawyFloty = useMemo(
     () => pracownikWidziNaprawyFloty(pracownikWidokEfektywny),
@@ -3726,6 +4428,27 @@ export default function App() {
       String(pracownikWidokEfektywny.nr ?? "").trim() !== String(pracownikPowiazanyZSesja.nr ?? "").trim()
     );
   }, [czyAdminAktywny, pracownikPowiazanyZSesja, pracownikWidokEfektywny]);
+
+  useEffect(() => {
+    const ukrywajTechniczne = !czyAdminAktywny || podgladJakoInny;
+    setKrList(
+      ukrywajTechniczne
+        ? krZApiPelen.filter((r) => !czyKrTechniczneUkrywaneDlaNieAdmin(r.kr))
+        : [...krZApiPelen],
+    );
+  }, [czyAdminAktywny, podgladJakoInny, krZApiPelen]);
+
+  useEffect(() => {
+    const ctx = {
+      czyAdminAktywny,
+      podgladJakoInny,
+      pracownikWidokEfektywny,
+      listaPracownikow: pracownicy,
+    };
+    setFakturyKosztoweList(przefiltrujFakturyKosztoweDlaWidoku(fakturyKosztoweSuroweRef.current, ctx));
+    setFakturyDoZaplatyOczekujaceList(przefiltrujFakturyKosztoweDlaWidoku(fakturyOczekujaceSuroweRef.current, ctx));
+    setKrFakturyDoZaplatyList(przefiltrujFakturyKosztoweDlaWidoku(krFakturyDoZaplatySuroweRef.current, ctx));
+  }, [czyAdminAktywny, podgladJakoInny, pracownikWidokEfektywny, pracownicy]);
 
   useEffect(() => {
     if (!pracownikPowiazanyZSesja || czyAdminAktywny || !adminPodgladPracownikNr) return;
@@ -3754,39 +4477,6 @@ export default function App() {
       return next;
     });
   }, [pracownicy]);
-
-  useEffect(() => {
-    const nip = String(fakturaDoZaplatyForm.sprzedawca_nip ?? "")
-      .replace(/\D/g, "")
-      .slice(0, 10);
-    if (!nip) return;
-    if (String(fakturaDoZaplatyForm.sprzedawca_nazwa ?? "").trim() !== "") return;
-    const znanaNazwa = mapaSprzedawcaPoNip.get(nip);
-    if (!znanaNazwa) return;
-    setFakturaDoZaplatyForm((f) => {
-      const n = String(f.sprzedawca_nip ?? "")
-        .replace(/\D/g, "")
-        .slice(0, 10);
-      if (n !== nip) return f;
-      if (String(f.sprzedawca_nazwa ?? "").trim() !== "") return f;
-      return { ...f, sprzedawca_nazwa: znanaNazwa };
-    });
-  }, [fakturaDoZaplatyForm.sprzedawca_nip, fakturaDoZaplatyForm.sprzedawca_nazwa, mapaSprzedawcaPoNip]);
-
-  useEffect(() => {
-    if (fakturyKosztoweEdycjaId == null || !fakturyKosztoweEdycjaForm) return;
-    const nip = nip10(fakturyKosztoweEdycjaForm.sprzedawca_nip);
-    if (!nip) return;
-    if (String(fakturyKosztoweEdycjaForm.sprzedawca_nazwa ?? "").trim() !== "") return;
-    const nazwaZeSlownika = mapaSprzedawcaPoNip.get(nip);
-    if (!nazwaZeSlownika) return;
-    setFakturyKosztoweEdycjaForm((f) => {
-      if (!f) return f;
-      if (nip10(f.sprzedawca_nip) !== nip) return f;
-      if (String(f.sprzedawca_nazwa ?? "").trim() !== "") return f;
-      return { ...f, sprzedawca_nazwa: nazwaZeSlownika };
-    });
-  }, [fakturyKosztoweEdycjaId, fakturyKosztoweEdycjaForm, mapaSprzedawcaPoNip]);
 
   useEffect(() => {
     if (!czyAdminAktywny) return;
@@ -4073,8 +4763,11 @@ export default function App() {
     const m = {
       przeglad: "przeglad",
       os: "przeglad",
+      geant: "terminy",
       faktury: "faktury",
       koszty: "koszty",
+      budzet: "budzet",
+      jednostki: "jednostki",
       podwykonawcy: "podwykonawcy",
       zlecenia: "zlecenia",
       dziennik: "zgloszenia",
@@ -4096,6 +4789,11 @@ export default function App() {
     void fetchDziennikForKr(kr);
     if (pod === "faktury") void fetchKrFakturyDoZaplatyForKr(kr);
     if (pod === "koszty") {
+      void fetchCzasPracyWpisyDlaKr(kr);
+      void fetchPracownicy();
+    }
+    if (pod === "budzet" || pod === "jednostki") {
+      void fetchKrFakturyDoZaplatyForKr(kr);
       void fetchCzasPracyWpisyDlaKr(kr);
       void fetchPracownicy();
     }
@@ -4283,6 +4981,8 @@ export default function App() {
         os: "os",
         faktury: "faktury",
         koszty: "koszty",
+        budzet: "budzet",
+        jednostki: "jednostki",
         zadania_kr: "zadania",
         zlecenia: "zlecenia",
         podwykonawcy: "podwykonawcy",
@@ -4350,6 +5050,8 @@ export default function App() {
     const sekcjeTylkoKarta = new Set([
       "faktury",
       "koszty",
+      "budzet",
+      "jednostki",
       "zadania_kr",
       "umowa",
       "terminy",
@@ -4368,6 +5070,11 @@ export default function App() {
       void fetchKrZleceniaPwForKr(k);
       if (sekcjaId === "faktury") void fetchKrFakturyDoZaplatyForKr(k);
       if (sekcjaId === "koszty") {
+        void fetchCzasPracyWpisyDlaKr(k);
+        void fetchPracownicy();
+      }
+      if (sekcjaId === "budzet" || sekcjaId === "jednostki") {
+        void fetchKrFakturyDoZaplatyForKr(k);
         void fetchCzasPracyWpisyDlaKr(k);
         void fetchPracownicy();
       }
@@ -5299,6 +6006,10 @@ export default function App() {
     [zadaniaTylkoPowiazaneZKr],
   );
 
+  const nrZalogowanegoDoZadan = useMemo(() => {
+    return pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+  }, [pracownikWidokEfektywny?.nr]);
+
   const zadaniaPrzefiltrowane = useMemo(() => {
     let list = zadaniaList;
     const fk = String(zadaniaFiltrKr ?? "").trim();
@@ -5314,12 +6025,13 @@ export default function App() {
     }
     const fnr = String(zadaniaFiltrPracNr ?? "").trim();
     if (!fnr) return list;
-    return list.filter((z) => {
+    list = list.filter((z) => {
       const o = String(z.osoba_odpowiedzialna ?? "").trim();
       const zl = String(z.osoba_zlecajaca ?? "").trim();
       if (zadaniaFiltrTylkoOdpowiedzialny) return o === fnr;
       return o === fnr || zl === fnr;
     });
+    return list;
   }, [
     zadaniaList,
     zadaniaFiltrPracNr,
@@ -5328,9 +6040,18 @@ export default function App() {
     kodyAktywnychKr,
   ]);
 
+  const zadaniaMojePrzefiltrowane = useMemo(() => {
+    if (!nrZalogowanegoDoZadan) return zadaniaPrzefiltrowane;
+    return zadaniaPrzefiltrowane.filter((z) => {
+      const o = String(z.osoba_odpowiedzialna ?? "").trim();
+      const zl = String(z.osoba_zlecajaca ?? "").trim();
+      return o === nrZalogowanegoDoZadan || zl === nrZalogowanegoDoZadan;
+    });
+  }, [zadaniaPrzefiltrowane, nrZalogowanegoDoZadan]);
+
   const zadaniaKanbanBuckets = useMemo(() => {
     const buckets = { oczekuje: [], w_trakcie: [], ukonczone: [], inne: [] };
-    for (const row of zadaniaPrzefiltrowane) {
+    for (const row of zadaniaMojePrzefiltrowane) {
       buckets[zadanieKluczKolumnyKanban(row.status)].push(row);
     }
     const sortWiersze = (rows) =>
@@ -5347,7 +6068,7 @@ export default function App() {
       buckets[k] = sortWiersze(buckets[k]);
     }
     return buckets;
-  }, [zadaniaPrzefiltrowane]);
+  }, [zadaniaMojePrzefiltrowane]);
 
   const liczbaOpoznionychEtapow = useMemo(() => {
     let n = 0;
@@ -5438,8 +6159,11 @@ export default function App() {
     const podDoAktywnejPill = {
       przeglad: "przeglad",
       os: "os",
+      geant: "terminy",
       faktury: "faktury",
       koszty: "koszty",
+      budzet: "budzet",
+      jednostki: "jednostki",
       podwykonawcy: "podwykonawcy",
       zlecenia: "zlecenia",
       dziennik: "zgloszenia",
@@ -5567,8 +6291,11 @@ export default function App() {
             </div>
             {btnLeaf("przeglad", "Przegląd — zagrożenia i zadania")}
             {btnLeaf("os", "Oś czasu (ETAP · PW · LOG)")}
+            {btnLeaf("geant", "Geant (harmonogram projektu)")}
             {btnLeaf("faktury", "Faktury kosztowe")}
             {btnLeaf("koszty", "Koszty — czas pracy")}
+            {btnLeaf("budzet", "Budżet projektu")}
+            {btnLeaf("jednostki", "Jednostki (ha / działki)")}
             {btnLeaf("zlecenia", "Zlecenia PW")}
             {btnLeaf("podwykonawcy", "Podwykonawcy")}
             {btnLeaf("dziennik", "Dziennik zdarzeń")}
@@ -6678,6 +7405,227 @@ export default function App() {
       );
     }
 
+    if (sekcja === "budzet") {
+      const krK = String(item.kr ?? "").trim();
+      const listaFakturKr = krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK);
+      const draft = {
+        budzetBrutto: "",
+        ha: "",
+        liczbaDzialek: "",
+        ...(krBudzetDraftByKr[krK] ?? {}),
+      };
+      const parseNum = (v) => {
+        const t = String(v ?? "").trim().replace(/\s/g, "").replace(",", ".");
+        if (!t) return 0;
+        const n = Number(t);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const setDraft = (patch) =>
+        setKrBudzetDraftByKr((prev) => ({
+          ...prev,
+          [krK]: { budzetBrutto: "", ha: "", liczbaDzialek: "", ...(prev[krK] ?? {}), ...patch },
+        }));
+      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
+      const budzetBrutto = parseNum(draft.budzetBrutto);
+      const budzetProc = budzetBrutto > 0 ? (sumaFakturBrutto / budzetBrutto) * 100 : 0;
+      const ha = parseNum(draft.ha);
+      const dzialki = parseNum(draft.liczbaDzialek);
+      const kosztNaHa = ha > 0 ? sumaFakturBrutto / ha : 0;
+      const kosztNaDzialke = dzialki > 0 ? sumaFakturBrutto / dzialki : 0;
+      const godzinyPracy = krCzasPracyWpisyList.reduce((acc, w) => {
+        if (grupaTypuCzasuWpisu(w.typ) !== "praca") return acc;
+        return acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0);
+      }, 0);
+      const grupyFaktur = Array.from(
+        listaFakturKr.reduce((map, row) => {
+          const key =
+            String(row.typ_nazwy ?? "").trim() ||
+            String(row.rodzaj_kosztu_nazwa ?? "").trim() ||
+            String(row.rodzaj_kosztu ?? "").trim() ||
+            "Nieokreślony";
+          map.set(key, (map.get(key) ?? 0) + (Number(row.kwota_brutto) || 0));
+          return map;
+        }, new Map()).entries()
+      ).sort((a, b) => b[1] - a[1]);
+      const roboczogodzinyWgPracownika = Array.from(
+        krCzasPracyWpisyList.reduce((map, row) => {
+          if (grupaTypuCzasuWpisu(row.typ) !== "praca") return map;
+          const nr = String(row.pracownik_nr ?? "").trim() || "—";
+          const h = (Number(row.godziny) || 0) + (Number(row.nadgodziny) || 0);
+          map.set(nr, (map.get(nr) ?? 0) + h);
+          return map;
+        }, new Map()).entries()
+      ).sort((a, b) => b[1] - a[1]);
+      const etykietaPrac = (nr) => {
+        const p = pracownicyPosortowani.find((x) => String(x.nr ?? "").trim() === String(nr ?? "").trim());
+        return p?.imie_nazwisko?.trim() ? `${nr} — ${p.imie_nazwisko.trim()}` : String(nr ?? "—");
+      };
+      return (
+        <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
+          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Budżet projektu — KR {krK}</h3>
+          <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
+            Widok roboczy: sumy kosztów, podział na typy oraz przeliczenie na jednostki. Uzupełnij budżet i jednostki dla
+            tej KR.
+          </p>
+          <div style={{ ...s.formRow, marginBottom: "0.9rem" }}>
+            <label style={s.label}>
+              Budżet projektu (brutto)
+              <input
+                style={s.input}
+                placeholder="np. 1200000"
+                value={draft.budzetBrutto}
+                onChange={(ev) => setDraft({ budzetBrutto: ev.target.value })}
+              />
+            </label>
+            <label style={s.label}>
+              Jednostki — ha
+              <input style={s.input} placeholder="np. 42,5" value={draft.ha} onChange={(ev) => setDraft({ ha: ev.target.value })} />
+            </label>
+            <label style={s.label}>
+              Jednostki — liczba działek
+              <input
+                style={s.input}
+                placeholder="np. 320"
+                value={draft.liczbaDzialek}
+                onChange={(ev) => setDraft({ liczbaDzialek: ev.target.value })}
+              />
+            </label>
+          </div>
+          <div style={{ ...op.kpiGrid, marginBottom: "1rem" }}>
+            <div style={op.kpiCard("rgba(249,115,22,0.2)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Faktury kosztowe (brutto)</div>
+              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>{kwotaBruttoEtykieta(sumaFakturBrutto)}</div>
+            </div>
+            <div style={op.kpiCard("rgba(56,189,248,0.2)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszt pracy (roboczogodziny)</div>
+              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>{godzinyPracy.toFixed(2)} h</div>
+            </div>
+            <div style={op.kpiCard("rgba(99,102,241,0.2)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Realizacja budżetu</div>
+              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>
+                {budzetBrutto > 0 ? `${budzetProc.toFixed(1)}%` : "—"}
+              </div>
+            </div>
+            <div style={op.kpiCard("rgba(34,197,94,0.2)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszt / ha · koszt / działkę</div>
+              <div style={{ fontSize: "0.92rem", fontWeight: 700 }}>
+                {ha > 0 ? kwotaBruttoEtykieta(kosztNaHa) : "—"} / ha · {dzialki > 0 ? kwotaBruttoEtykieta(kosztNaDzialke) : "—"} / dz.
+              </div>
+            </div>
+          </div>
+          <h4 style={{ ...op.sectionTitle, fontSize: "0.9rem", marginBottom: "0.55rem" }}>Faktury kosztowe wg typów</h4>
+          {grupyFaktur.length === 0 ? (
+            <p style={s.muted}>Brak danych faktur dla tej KR.</p>
+          ) : (
+            <div style={{ ...s.tableWrap, marginBottom: "1rem", borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Typ kosztu</th>
+                    <th style={s.th}>Suma brutto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {grupyFaktur.map(([typ, suma]) => (
+                    <tr key={typ}>
+                      <td style={s.td}>{typ}</td>
+                      <td style={{ ...s.td, whiteSpace: "nowrap" }}>{kwotaBruttoEtykieta(suma)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <h4 style={{ ...op.sectionTitle, fontSize: "0.9rem", marginBottom: "0.55rem" }}>Roboczogodziny wg pracownika</h4>
+          {roboczogodzinyWgPracownika.length === 0 ? (
+            <p style={s.muted}>Brak wpisów czasu pracy (typ praca) dla tej KR.</p>
+          ) : (
+            <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.82rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Pracownik</th>
+                    <th style={s.th}>Roboczogodziny</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roboczogodzinyWgPracownika.map(([nr, h]) => (
+                    <tr key={String(nr)}>
+                      <td style={s.td}>{etykietaPrac(nr)}</td>
+                      <td style={{ ...s.td, whiteSpace: "nowrap" }}>{Number(h).toFixed(2)} h</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (sekcja === "jednostki") {
+      const krK = String(item.kr ?? "").trim();
+      const listaFakturKr = krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK);
+      const draft = {
+        budzetBrutto: "",
+        ha: "",
+        liczbaDzialek: "",
+        ...(krBudzetDraftByKr[krK] ?? {}),
+      };
+      const parseNum = (v) => {
+        const t = String(v ?? "").trim().replace(/\s/g, "").replace(",", ".");
+        if (!t) return 0;
+        const n = Number(t);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const setDraft = (patch) =>
+        setKrBudzetDraftByKr((prev) => ({
+          ...prev,
+          [krK]: { budzetBrutto: "", ha: "", liczbaDzialek: "", ...(prev[krK] ?? {}), ...patch },
+        }));
+      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
+      const ha = parseNum(draft.ha);
+      const dzialki = parseNum(draft.liczbaDzialek);
+      const kosztNaHa = ha > 0 ? sumaFakturBrutto / ha : 0;
+      const kosztNaDzialke = dzialki > 0 ? sumaFakturBrutto / dzialki : 0;
+      return (
+        <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
+          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Jednostki projektu — KR {krK}</h3>
+          <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
+            Wpisz jednostki bazowe projektu (hektary i liczbę działek). Dane są używane w „Budżecie projektu” do
+            przeliczeń kosztów na jednostkę.
+          </p>
+          <form style={{ ...s.form, maxWidth: "min(38rem, 100%)" }} onSubmit={(e) => e.preventDefault()}>
+            <label style={s.label}>
+              Powierzchnia (ha)
+              <input style={s.input} value={draft.ha} onChange={(ev) => setDraft({ ha: ev.target.value })} placeholder="np. 42,5" />
+            </label>
+            <label style={s.label}>
+              Liczba działek
+              <input
+                style={s.input}
+                value={draft.liczbaDzialek}
+                onChange={(ev) => setDraft({ liczbaDzialek: ev.target.value })}
+                placeholder="np. 320"
+              />
+            </label>
+          </form>
+          <div style={{ ...op.kpiGrid, marginTop: "1rem" }}>
+            <div style={op.kpiCard("rgba(34,197,94,0.18)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszt faktur / ha</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>{ha > 0 ? kwotaBruttoEtykieta(kosztNaHa) : "—"}</div>
+            </div>
+            <div style={op.kpiCard("rgba(59,130,246,0.18)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszt faktur / działkę</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>
+                {dzialki > 0 ? kwotaBruttoEtykieta(kosztNaDzialke) : "—"}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (sekcja === "faktury") {
       const krK = String(item.kr ?? "").trim();
       return (
@@ -6693,8 +7641,8 @@ export default function App() {
               <strong>Nie wczytano listy zgłoszeń.</strong> {krFakturyDoZaplatyFetchError}
               <br />
               <span style={{ fontSize: "0.88em" }}>
-                Uruchom <code style={s.code}>kr-faktura-do-zaplaty.sql</code> i RLS dla{" "}
-                <code style={s.code}>kr_faktura_do_zaplaty</code>.
+                Sprawdź konfigurację i uprawnienia tabeli{" "}
+                <code style={s.code}>{FAKTURY_KOSZTOWE_TABELA_DB}</code>.
               </span>
             </div>
           ) : null}
@@ -6750,16 +7698,16 @@ export default function App() {
                               : "—")}
                         </td>
                         <td style={s.td}>
-                          {tekstTrim(row.sprzedawca_nip) || nipSprzedawcyZLegacyIssuerId(row.legacy_issuer_id) || "—"}
+                          {identyfikatorPodatkowyZnormalizowany(row.sprzedawca_nip || row.legacy_issuer_id) || "—"}
                         </td>
                         <td style={s.td}>
                           {tekstTrim(row.sprzedawca_nazwa) ||
-                            mapaSprzedawcaPoNip.get(nip10(row.sprzedawca_nip || row.legacy_issuer_id)) ||
+                            nazwaSprzedawcyZMapy(mapaSprzedawcaPoNip, row.sprzedawca_nip || row.legacy_issuer_id) ||
                             "—"}
                         </td>
                         <td style={s.td}>
                           <strong style={{ color: opl ? "#94a3b8" : "#f8fafc" }}>
-                            {tekstTrim(row.legacy_receiver_name) || row.komu?.trim() || "—"}
+                            {tekstTrim(row.komu) || tekstTrim(row.legacy_receiver_name) || "—"}
                           </strong>
                         </td>
                         <td style={s.td}>{tekstTrim(row.legacy_payer_name) || "—"}</td>
@@ -6776,10 +7724,19 @@ export default function App() {
                           {row.kwota_vat != null ? kwotaBruttoEtykieta(row.kwota_vat) : "—"}
                         </td>
                         <td style={s.td}>{row.numer_faktury?.trim() ? row.numer_faktury : "—"}</td>
-                        <td style={s.td}>
+                        <td
+                          style={{
+                            ...s.td,
+                            maxWidth: "14rem",
+                            overflow: "hidden",
+                            fontFamily: "ui-monospace, monospace",
+                            fontSize: "0.78rem",
+                          }}
+                          title={tekstTrim(row.legacy_pdf_file) ? String(row.legacy_pdf_file) : undefined}
+                        >
                           {tekstTrim(row.legacy_pdf_file) ? (
-                            <span title={String(row.legacy_pdf_file)} style={{ color: "#94a3b8" }}>
-                              {String(row.legacy_pdf_file).split(/[\\/]/).pop()}
+                            <span style={{ color: "#94a3b8" }}>
+                              {tekstUcietyKoniecPrezentacja(String(row.legacy_pdf_file), 42)}
                             </span>
                           ) : (
                             "—"
@@ -6826,252 +7783,13 @@ export default function App() {
             </div>
           )}
 
-          {czyAdminAktywny ? (
-            <div
-              style={{
-                marginBottom: "1.25rem",
-                padding: "0.75rem 0.85rem",
-                border: "1px solid rgba(56,189,248,0.28)",
-                borderRadius: "12px",
-                background: "rgba(15,23,42,0.35)",
-              }}
-            >
-              <h4 style={{ margin: "0 0 0.45rem 0", fontSize: "0.9rem", color: "#e2e8f0" }}>
-                Admin — faktury do przypisania (brak KR lub brak pracownika)
-              </h4>
-              <p style={{ ...op.muted, margin: "0 0 0.7rem 0", fontSize: "0.78rem", lineHeight: 1.45 }}>
-                Te rekordy widzi tylko administrator. Po przypisaniu do KR/pracownika znikają z tej listy.
-              </p>
-              {fakturyDoPrzypisaniaFetchError ? (
-                <div style={{ ...s.errBox, marginBottom: "0.75rem" }} role="alert">
-                  Nie udało się wczytać listy do przypisania: {fakturyDoPrzypisaniaFetchError}
-                </div>
-              ) : null}
-              {fakturyDoPrzypisaniaList.length === 0 ? (
-                <p style={{ ...op.muted, margin: 0, fontSize: "0.82rem" }}>Brak rekordów do przypisania.</p>
-              ) : (
-                <div style={{ ...s.tableWrap, marginBottom: 0 }}>
-                  <table style={{ ...s.table, fontSize: "0.8rem" }}>
-                    <thead>
-                      <tr>
-                        <th style={s.th}>Data</th>
-                        <th style={s.th}>Nr faktury</th>
-                        <th style={s.th}>Komu</th>
-                        <th style={s.th}>KR</th>
-                        <th style={s.th}>Pracownik</th>
-                        <th style={s.th}>Akcja</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {fakturyDoPrzypisaniaList.map((r) => {
-                        const draft = fakturyDoPrzypisaniaDraft[r.id] ?? {
-                          kr: String(r.kr ?? "").trim(),
-                          zgloszil_pracownik_nr: String(r.zgloszil_pracownik_nr ?? "").trim(),
-                        };
-                        return (
-                          <tr key={`unassigned-${r.id}`}>
-                            <td style={s.td}>
-                              {r.created_at
-                                ? new Date(r.created_at).toLocaleString("pl-PL", { dateStyle: "short" })
-                                : "—"}
-                            </td>
-                            <td style={s.td}>{tekstTrim(r.numer_faktury) || "—"}</td>
-                            <td style={s.td}>{tekstTrim(r.komu) || "—"}</td>
-                            <td style={s.td}>
-                              <select
-                                style={{ ...s.input, margin: 0, padding: "0.25rem 0.35rem", minWidth: "9rem" }}
-                                value={draft.kr}
-                                onChange={(ev) =>
-                                  setFakturyDoPrzypisaniaDraft((prev) => ({
-                                    ...prev,
-                                    [r.id]: {
-                                      ...draft,
-                                      kr: ev.target.value,
-                                    },
-                                  }))
-                                }
-                              >
-                                <option value="">— bez KR —</option>
-                                {[...krList].sort((a, b) =>
-                                  String(a.kr ?? "").localeCompare(String(b.kr ?? ""), "pl", {
-                                    sensitivity: "base",
-                                    numeric: true,
-                                  }),
-                                ).map((kRow) => (
-                                  <option key={`kr-pick-${r.id}-${kRow.kr}`} value={String(kRow.kr ?? "")}>
-                                    {String(kRow.kr ?? "")} — {String(kRow.nazwa_obiektu ?? "").trim()}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td style={s.td}>
-                              <select
-                                style={{ ...s.input, margin: 0, padding: "0.25rem 0.35rem", minWidth: "11rem" }}
-                                value={draft.zgloszil_pracownik_nr}
-                                onChange={(ev) =>
-                                  setFakturyDoPrzypisaniaDraft((prev) => ({
-                                    ...prev,
-                                    [r.id]: {
-                                      ...draft,
-                                      zgloszil_pracownik_nr: ev.target.value,
-                                    },
-                                  }))
-                                }
-                              >
-                                <option value="">— bez pracownika —</option>
-                                {pracownicyPosortowani.map((p) => (
-                                  <option key={`prac-pick-${r.id}-${String(p.nr)}`} value={String(p.nr)}>
-                                    {String(p.nr)} — {String(p.imie_nazwisko ?? "").trim()}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td style={s.td}>
-                              <button
-                                type="button"
-                                style={{ ...s.btnGhost, fontSize: "0.78rem", padding: "0.25rem 0.5rem" }}
-                                disabled={fakturyDoPrzypisaniaSavingId === r.id}
-                                onClick={() => void zapiszPrzypisanieFakturyAdmin(r.id)}
-                              >
-                                {fakturyDoPrzypisaniaSavingId === r.id ? "Zapisywanie…" : "Zapisz"}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e2e8f0", margin: "0 0 0.65rem" }}>
-            Nowe zgłoszenie (projekt {krK})
-          </h4>
-          <form style={{ ...s.form, maxWidth: "min(40rem, 100%)" }} onSubmit={(e) => void zapiszKrFakturaDoZaplaty(e, krK)}>
-            <label style={s.label}>
-              NIP sprzedawcy
-              <input
-                style={s.input}
-                type="text"
-                inputMode="numeric"
-                value={fakturaDoZaplatyForm.sprzedawca_nip}
-                onChange={(ev) =>
-                  setFakturaDoZaplatyForm((f) => ({
-                    ...f,
-                    sprzedawca_nip: String(ev.target.value ?? "").replace(/\D/g, "").slice(0, 10),
-                  }))
-                }
-                placeholder="np. 5250001009"
-              />
-            </label>
-            <label style={s.label}>
-              Sprzedawca
-              <input
-                style={s.input}
-                type="text"
-                value={fakturaDoZaplatyForm.sprzedawca_nazwa}
-                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, sprzedawca_nazwa: ev.target.value }))}
-                placeholder="np. ABC Serwis Sp. z o.o."
-              />
-            </label>
-            <label style={s.label}>
-              Odbiorca <span style={{ color: "#fca5a5" }}>*</span>
-              <input
-                style={s.input}
-                type="text"
-                value={fakturaDoZaplatyForm.komu}
-                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, komu: ev.target.value }))}
-                required
-                placeholder="np. nazwa firmy z faktury"
-              />
-            </label>
-            <label style={s.label}>
-              Nr konta bankowego
-              <input
-                style={s.input}
-                type="text"
-                value={fakturaDoZaplatyForm.nr_konta}
-                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, nr_konta: ev.target.value }))}
-                placeholder="np. 12 3456…"
-              />
-            </label>
-            <label style={s.label}>
-              Kwota brutto <span style={{ color: "#fca5a5" }}>*</span>
-              <input
-                style={s.input}
-                type="text"
-                inputMode="decimal"
-                value={fakturaDoZaplatyForm.kwota_brutto}
-                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, kwota_brutto: ev.target.value }))}
-                required
-                placeholder="np. 1234,56"
-              />
-            </label>
-            <label style={s.label}>
-              Nr faktury (opcjonalnie)
-              <input
-                style={s.input}
-                type="text"
-                value={fakturaDoZaplatyForm.numer_faktury}
-                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, numer_faktury: ev.target.value }))}
-              />
-            </label>
-            <label style={s.label}>
-              Link do faktury / skanu (opcjonalnie)
-              <input
-                style={s.input}
-                type="url"
-                value={fakturaDoZaplatyForm.link_faktury}
-                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, link_faktury: ev.target.value }))}
-                placeholder="https://…"
-              />
-            </label>
-            <label style={s.label}>
-              Zgłasza — <code style={s.code}>pracownik.nr</code>
-              <select
-                style={s.input}
-                value={String(fakturaDoZaplatyForm.zgloszil_pracownik_nr ?? "")}
-                onChange={(ev) =>
-                  setFakturaDoZaplatyForm((f) => ({ ...f, zgloszil_pracownik_nr: ev.target.value }))
-                }
-              >
-                <option value="">— bez wyboru —</option>
-                {(() => {
-                  const cur = String(fakturaDoZaplatyForm.zgloszil_pracownik_nr ?? "").trim();
-                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
-                  const orphan = cur !== "" && !nrs.has(cur);
-                  return (
-                    <>
-                      {orphan ? (
-                        <option value={cur}>{cur} (nie w liście)</option>
-                      ) : null}
-                      {pracownicyPosortowani.map((p) => (
-                        <option key={String(p.nr)} value={String(p.nr)}>
-                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
-                        </option>
-                      ))}
-                    </>
-                  );
-                })()}
-              </select>
-            </label>
-            <label style={s.label}>
-              Notatki (opcjonalnie)
-              <textarea
-                style={{ ...s.input, minHeight: "2.8rem" }}
-                value={fakturaDoZaplatyForm.notatki}
-                onChange={(ev) => setFakturaDoZaplatyForm((f) => ({ ...f, notatki: ev.target.value }))}
-                rows={2}
-              />
-            </label>
-            <div style={s.btnRow}>
-              <button type="submit" style={s.btn}>
-                Zgłoś do opłacenia
-              </button>
-            </div>
-          </form>
+          <ZgloszenieFakturyDoZaplatyFormularz
+            key={krK || "kr"}
+            krKod={krK}
+            mapaSprzedawcaPoNip={mapaSprzedawcaPoNip}
+            pracownicyPosortowani={pracownicyPosortowani}
+            onWyslij={zapiszKrFakturaDoZaplatyZFormularza}
+          />
 
           <OpFutureModule title="Szersza ewidencja kosztów (później)">
             Kategorie kosztów, powiązanie z PW, netto / VAT, terminy płatności — można rozwinąć obok tej tabeli.
@@ -7081,48 +7799,315 @@ export default function App() {
     }
 
     if (sekcja === "terminy") {
-      const rows = [];
-      if (item.data_rozpoczecia)
-        rows.push({ t: "Data rozpoczęcia (KR)", d: item.data_rozpoczecia });
-      if (item.okres_projektu_od) rows.push({ t: "Okres projektu — od", d: item.okres_projektu_od });
-      if (item.okres_projektu_do) rows.push({ t: "Okres projektu — do", d: item.okres_projektu_do });
-      for (const e of listaEtapow) {
-        if (e.data_planowana) rows.push({ t: `Etap: ${e.etap ?? "—"}`, d: e.data_planowana });
-      }
-      for (const z of krZleceniaPwList) {
-        if (z.termin_zlecenia)
-          rows.push({ t: `PW: ${z.numer_zlecenia?.trim() ? z.numer_zlecenia : "zlecenie"}`, d: z.termin_zlecenia });
-      }
-      rows.sort((a, b) => {
-        const x = dataDoSortuYYYYMMDD(a.d) ?? "";
-        const y = dataDoSortuYYYYMMDD(b.d) ?? "";
-        return x.localeCompare(y);
-      });
+      const etapy = listaEtapow
+        .filter((e) => dataDoSortuYYYYMMDD(e.data_planowana))
+        .map((e) => ({
+          label: String(e.etap ?? "Etap").trim() || "Etap",
+          d: dataDoSortuYYYYMMDD(e.data_planowana),
+          status: String(e.status ?? "").trim(),
+        }))
+        .sort((a, b) => String(a.d).localeCompare(String(b.d)));
+      const pw = krZleceniaPwList
+        .filter((z) => dataDoSortuYYYYMMDD(z.termin_zlecenia))
+        .map((z) => ({
+          label: String(z.numer_zlecenia ?? "zlecenie").trim() || "zlecenie",
+          d: dataDoSortuYYYYMMDD(z.termin_zlecenia),
+          status: pulpitPwWymagaUwagi(z, d0) ? "po_terminie" : "ok",
+        }))
+        .sort((a, b) => String(a.d).localeCompare(String(b.d)));
+
+      const zakresStartRaw =
+        dataDoSortuYYYYMMDD(item.okres_projektu_od) || dataDoSortuYYYYMMDD(item.data_rozpoczecia);
+      const zakresKoniecRaw = dataDoSortuYYYYMMDD(item.okres_projektu_do) || etapy.at(-1)?.d || pw.at(-1)?.d || zakresStartRaw;
+      const wszystkieDaty = [zakresStartRaw, zakresKoniecRaw, ...etapy.map((x) => x.d), ...pw.map((x) => x.d)].filter(Boolean);
+      const min = wszystkieDaty.reduce((a, b) => (a == null || String(b) < String(a) ? b : a), null);
+      const max = wszystkieDaty.reduce((a, b) => (a == null || String(b) > String(a) ? b : a), null);
+      const baseStart = min ? new Date(`${min}T00:00:00`) : null;
+      const baseKoniec = max ? new Date(`${max}T00:00:00`) : null;
+      const addDays = (d, n) => {
+        const x = new Date(d);
+        x.setDate(x.getDate() + n);
+        return x;
+      };
+      const zakresDniZoom =
+        ganttZoom === "dzien" ? 21 : ganttZoom === "tydzien" ? 84 : ganttZoom === "miesiac" ? 450 : 1400;
+      const start =
+        baseStart && baseKoniec
+          ? addDays(baseStart, -Math.max(1, Math.round((zakresDniZoom - (baseKoniec.getTime() - baseStart.getTime()) / 86400000) / 2)))
+          : baseStart;
+      const koniec =
+        baseStart && baseKoniec
+          ? addDays(start, zakresDniZoom)
+          : baseKoniec;
+      const totalDays =
+        start && koniec ? Math.max(1, Math.round((koniec.getTime() - start.getTime()) / (24 * 3600 * 1000)) + 1) : 1;
+      const pxPerDay = ganttZoom === "dzien" ? 24 : ganttZoom === "tydzien" ? 4 : ganttZoom === "miesiac" ? 1.4 : 0.28;
+      const chartWidthPx = Math.max(880, Math.round(totalDays * pxPerDay));
+      const xPos = (ymd) => {
+        if (!ymd || !start) return 0;
+        const d = new Date(`${ymd}T00:00:00`);
+        const dx = Math.round((d.getTime() - start.getTime()) / (24 * 3600 * 1000));
+        return Math.max(0, Math.min(chartWidthPx, dx * pxPerDay));
+      };
+      const barLeft = xPos(zakresStartRaw);
+      const barRight = xPos(zakresKoniecRaw);
+      const barWidth = Math.max(1, barRight - barLeft);
+      const statusKolorEtapu = (s) => {
+        if (s === "zrealizowane" || s === "rozliczone") return "#34d399";
+        if (s === "w trakcie") return "#38bdf8";
+        if (s === "anulowane") return "#94a3b8";
+        if (s === "oczekuje") return "#fbbf24";
+        return "#cbd5e1";
+      };
+      const ticks = (() => {
+        if (!start || !koniec) return [];
+        const arr = [];
+        const cur = new Date(start);
+        while (cur <= koniec) {
+          arr.push(new Date(cur));
+          if (ganttZoom === "dzien") cur.setDate(cur.getDate() + 1);
+          else if (ganttZoom === "tydzien") cur.setDate(cur.getDate() + 7);
+          else if (ganttZoom === "miesiac") cur.setMonth(cur.getMonth() + 1);
+          else cur.setFullYear(cur.getFullYear() + 1);
+        }
+        return arr;
+      })();
+      const tickLabel = (d) => {
+        if (ganttZoom === "dzien") return d.toLocaleDateString("pl-PL", { day: "2-digit", month: "2-digit" });
+        if (ganttZoom === "tydzien") {
+          const cz = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+          const dzien = cz.getUTCDay() || 7;
+          cz.setUTCDate(cz.getUTCDate() + 4 - dzien);
+          const startYear = new Date(Date.UTC(cz.getUTCFullYear(), 0, 1));
+          const tydz = Math.ceil((((cz - startYear) / 86400000) + 1) / 7);
+          return `${tydz} tydzień`;
+        }
+        if (ganttZoom === "miesiac") return d.toLocaleDateString("pl-PL", { month: "short", year: "2-digit" });
+        return d.toLocaleDateString("pl-PL", { year: "numeric" });
+      };
+      const ustawWarstwe = (k) => setGanttWarstwy((prev) => ({ ...prev, [k]: !prev[k] }));
       return (
         <>
-          <h3 style={{ ...op.sectionTitle, fontSize: "0.95rem" }}>Harmonogram terminów</h3>
-          {rows.length === 0 ? (
+          <h3 style={{ ...op.sectionTitle, fontSize: "0.95rem" }}>Harmonogram (Gantt)</h3>
+          {!start || !koniec ? (
             <p style={{ ...op.muted, margin: 0 }}>Brak zapisanych terminów dla tego projektu.</p>
           ) : (
-            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-              {rows.map((r, i) => {
-                const stl = stylTerminuHarmonogramu(r.d, d0);
-                return (
-                  <li
-                    key={`${r.t}-${i}`}
-                    style={{
-                      ...stl,
-                      padding: "0.65rem 0.85rem",
-                      marginBottom: "0.4rem",
-                      borderRadius: "12px",
-                      fontSize: "0.82rem",
-                    }}
+            <div
+              style={{
+                border: "1px solid rgba(148,163,184,0.18)",
+                borderRadius: "12px",
+                padding: "0.75rem",
+                background: "rgba(15,23,42,0.45)",
+              }}
+            >
+              <div style={{ ...s.btnRow, marginBottom: "0.45rem", flexWrap: "wrap", gap: "0.35rem" }}>
+                {[
+                  { id: "rok", label: "Rok" },
+                  { id: "miesiac", label: "Miesiące" },
+                  { id: "tydzien", label: "Tygodnie" },
+                  { id: "dzien", label: "Dni" },
+                ].map((z) => (
+                  <button
+                    key={z.id}
+                    type="button"
+                    style={ganttZoom === z.id ? s.btn : s.btnGhost}
+                    onClick={() => setGanttZoom(z.id)}
                   >
-                    <strong>{r.t}</strong> — {dataPLZFormat(dataDoSortuYYYYMMDD(r.d) ?? "")}
-                  </li>
-                );
-              })}
-            </ul>
+                    {z.label}
+                  </button>
+                ))}
+                <button type="button" style={ganttWarstwy.projekt ? s.btn : s.btnGhost} onClick={() => ustawWarstwe("projekt")}>
+                  Projekt
+                </button>
+                <button type="button" style={ganttWarstwy.etapy ? s.btn : s.btnGhost} onClick={() => ustawWarstwe("etapy")}>
+                  Etapy
+                </button>
+                <button type="button" style={ganttWarstwy.pw ? s.btn : s.btnGhost} onClick={() => ustawWarstwe("pw")}>
+                  PW
+                </button>
+              </div>
+              <div style={{ fontSize: "0.76rem", color: "#94a3b8", marginBottom: "0.45rem" }}>
+                Zakres: {dataPLZFormat(dataDoInputa(start.toISOString().slice(0, 10)))} -{" "}
+                {dataPLZFormat(dataDoInputa(koniec.toISOString().slice(0, 10)))}
+              </div>
+              <div style={{ overflowX: "auto", overflowY: "hidden", paddingBottom: "0.2rem" }}>
+                <div
+                  style={{
+                    position: "relative",
+                    height: "24px",
+                    marginBottom: "0.45rem",
+                    borderRadius: "8px",
+                    background: "rgba(148,163,184,0.08)",
+                    overflow: "hidden",
+                    width: `${chartWidthPx}px`,
+                    minWidth: `${chartWidthPx}px`,
+                  }}
+                >
+                  {ticks.map((t, i) => (
+                    <div key={`tick-${i}`} style={{ position: "absolute", left: `${xPos(t.toISOString().slice(0, 10))}px`, top: 0, bottom: 0 }}>
+                      <div style={{ width: "1px", height: "100%", background: "rgba(148,163,184,0.45)" }} />
+                      <div style={{ position: "absolute", top: "2px", left: "4px", fontSize: "0.66rem", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                        {tickLabel(t)}
+                      </div>
+                    </div>
+                  ))}
+                  <div
+                    title="Dzisiaj"
+                    style={{
+                      position: "absolute",
+                      left: `${xPos(d0)}px`,
+                      top: 0,
+                      bottom: 0,
+                      width: "2px",
+                      background: "#f97316",
+                    }}
+                  />
+                </div>
+              <div style={{ display: "grid", gap: "0.45rem" }}>
+                {ganttWarstwy.projekt ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "0.5rem", alignItems: "center" }}>
+                    <div style={{ color: "#e2e8f0", fontSize: "0.8rem" }}>Projekt (okres KR)</div>
+                    <div
+                      style={{
+                        position: "relative",
+                        height: "16px",
+                        background: "rgba(148,163,184,0.12)",
+                        borderRadius: "999px",
+                        width: `${chartWidthPx}px`,
+                        minWidth: `${chartWidthPx}px`,
+                      }}
+                    >
+                      {ticks.map((t, i) => (
+                        <div
+                          key={`grid-proj-${i}`}
+                          style={{
+                            position: "absolute",
+                            left: `${xPos(t.toISOString().slice(0, 10))}px`,
+                            top: 0,
+                            bottom: 0,
+                            width: "1px",
+                            background: "rgba(148,163,184,0.25)",
+                          }}
+                        />
+                      ))}
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${barLeft}px`,
+                          width: `${barWidth}px`,
+                          top: 0,
+                          bottom: 0,
+                          borderRadius: "999px",
+                          background: "linear-gradient(90deg,#38bdf8,#34d399)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+                {ganttWarstwy.etapy ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "0.5rem", alignItems: "start" }}>
+                    <div style={{ color: "#e2e8f0", fontSize: "0.8rem", paddingTop: "0.2rem" }}>Etapy</div>
+                    <div
+                      style={{
+                        position: "relative",
+                        minHeight: "28px",
+                        background: "rgba(148,163,184,0.08)",
+                        borderRadius: "10px",
+                        width: `${chartWidthPx}px`,
+                        minWidth: `${chartWidthPx}px`,
+                      }}
+                    >
+                      {ticks.map((t, i) => (
+                        <div
+                          key={`grid-etap-${i}`}
+                          style={{
+                            position: "absolute",
+                            left: `${xPos(t.toISOString().slice(0, 10))}px`,
+                            top: 0,
+                            bottom: 0,
+                            width: "1px",
+                            background: "rgba(148,163,184,0.25)",
+                          }}
+                        />
+                      ))}
+                      {etapy.map((e, i) => (
+                        <div
+                          key={`gantt-etap-${i}-${e.label}`}
+                          title={`${e.label} - ${dataPLZFormat(e.d)} - ${e.status || "planowane"}`}
+                          style={{
+                            position: "absolute",
+                            left: `${xPos(e.d)}px`,
+                            top: `${4 + (i % 2) * 10}px`,
+                            width: "10px",
+                            height: "10px",
+                            transform: "translateX(-50%)",
+                            borderRadius: "50%",
+                            background: statusKolorEtapu(e.status),
+                            boxShadow: "0 0 0 1px rgba(15,23,42,0.8)",
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {ganttWarstwy.pw ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "0.5rem", alignItems: "start" }}>
+                    <div style={{ color: "#e2e8f0", fontSize: "0.8rem", paddingTop: "0.2rem" }}>Podwykonawcy (PW)</div>
+                    <div
+                      style={{
+                        position: "relative",
+                        minHeight: "28px",
+                        background: "rgba(148,163,184,0.08)",
+                        borderRadius: "10px",
+                        width: `${chartWidthPx}px`,
+                        minWidth: `${chartWidthPx}px`,
+                      }}
+                    >
+                      {ticks.map((t, i) => (
+                        <div
+                          key={`grid-pw-${i}`}
+                          style={{
+                            position: "absolute",
+                            left: `${xPos(t.toISOString().slice(0, 10))}px`,
+                            top: 0,
+                            bottom: 0,
+                            width: "1px",
+                            background: "rgba(148,163,184,0.25)",
+                          }}
+                        />
+                      ))}
+                      {pw.map((z, i) => (
+                        <div
+                          key={`gantt-pw-${i}-${z.label}`}
+                          title={`PW ${z.label} - ${dataPLZFormat(z.d)}`}
+                          style={{
+                            position: "absolute",
+                            left: `${xPos(z.d)}px`,
+                            top: `${4 + (i % 2) * 10}px`,
+                            width: "0",
+                            height: "0",
+                            transform: "translateX(-50%)",
+                            borderLeft: "6px solid transparent",
+                            borderRight: "6px solid transparent",
+                            borderBottom: `10px solid ${z.status === "po_terminie" ? "#f87171" : "#fbbf24"}`,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              </div>
+              <div style={{ marginTop: "0.65rem", fontSize: "0.76rem", color: "#94a3b8", display: "flex", gap: "0.7rem", flexWrap: "wrap", lineHeight: 1.5 }}>
+                <span>Legenda:</span>
+                <span style={{ color: "#38bdf8" }}>● etap w trakcie</span>
+                <span style={{ color: "#34d399" }}>● etap zakończony</span>
+                <span style={{ color: "#94a3b8" }}>● anulowane / zamrożone</span>
+                <span style={{ color: "#fbbf24" }}>▼ termin PW</span>
+                <span style={{ color: "#f87171" }}>▼ PW po terminie</span>
+                <span style={{ color: "#f97316" }}>| dziś</span>
+              </div>
+            </div>
           )}
         </>
       );
@@ -7916,8 +8901,8 @@ export default function App() {
               <strong>Faktury do zapłaty (panel):</strong> {fakturyDoZaplatyOczekujaceFetchError}
               <br />
               <span style={{ fontSize: "0.88em" }}>
-                Uruchom <code style={s.code}>kr-faktura-do-zaplaty.sql</code> i RLS dla{" "}
-                <code style={s.code}>kr_faktura_do_zaplaty</code>.
+                Sprawdź konfigurację i uprawnienia tabeli{" "}
+                <code style={s.code}>{FAKTURY_KOSZTOWE_TABELA_DB}</code>.
               </span>
             </div>
           ) : null}
@@ -9060,8 +10045,40 @@ export default function App() {
         </>
       ) : null}
 
+      {widok === "przydzial_sprzetu" ? (
+        <>
+          <h2 style={{ ...s.h2, marginTop: 0 }}>Przydział sprzętu</h2>
+          <p style={{ ...s.muted, maxWidth: "44rem" }}>
+            Ta sekcja jest w przygotowaniu. Docelowo będzie tu widok sprzętu firmowego przypisanego do zalogowanej osoby.
+          </p>
+          {!requireAuth ? (
+            <div style={s.hintBox}>
+              Włącz logowanie (<code style={s.code}>VITE_REQUIRE_AUTH=true</code>), aby korzystać z przydziału sprzętu.
+            </div>
+          ) : !session?.user ? (
+            <p style={s.muted}>Zaloguj się.</p>
+          ) : (
+            <div style={s.hintBox}>Wkrótce: lista sprzętu przypisanego do Twojego konta.</div>
+          )}
+        </>
+      ) : null}
+
       {widok === "pracownik" ? (
         <>
+          {(() => {
+            const togglePracSort = (key) =>
+              setPracSort((prev) =>
+                prev.key === key
+                  ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+                  : { key, dir: "asc" },
+              );
+            const strzalkaSort = (key) => {
+              if (pracSort.key !== key) return "↕";
+              return pracSort.dir === "asc" ? "↑" : "↓";
+            };
+            const sortThStyle = { ...s.th, cursor: "pointer", userSelect: "none" };
+            return (
+              <>
           <h2 style={{ ...s.h2, marginTop: 0 }}>Pracownicy</h2>
           <p style={s.muted}>
             Rekordy z tabeli <code style={s.code}>pracownik</code> — kolumna <code style={s.code}>nr</code>{" "}
@@ -9078,6 +10095,16 @@ export default function App() {
               <code style={s.code}>pracownik-forma-zatrudnienia.sql</code>).
             </p>
           ) : null}
+          {czyAdminAktywny ? (
+            <label style={{ ...s.muted, display: "inline-flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.75rem" }}>
+              <input
+                type="checkbox"
+                checked={pracPokazTylkoAktywnych}
+                onChange={(ev) => setPracPokazTylkoAktywnych(ev.target.checked)}
+              />
+              Pokaż tylko aktywnych pracowników
+            </label>
+          ) : null}
 
           {pracLoading ? (
             <p style={s.muted}>Ładowanie…</p>
@@ -9093,37 +10120,75 @@ export default function App() {
               potem odśwież stronę lub ponownie wybierz <strong>ID</strong>.
             </div>
           ) : (
-            <div style={{ ...s.tableWrap, overflowX: "scroll", overflowY: "hidden" }}>
-              <table style={{ ...s.table, minWidth: "1750px" }}>
+            <>
+            <div
+              ref={pracTabelaTopScrollRef}
+              onScroll={() => syncPracTabelaScroll("top")}
+              style={{ ...s.tableWrap, overflowX: "auto", overflowY: "hidden", marginBottom: "0.25rem", padding: 0, height: "14px" }}
+              aria-label="Górny pasek przewijania tabeli pracowników"
+            >
+              <div style={{ minWidth: "3300px", height: "1px" }} />
+            </div>
+            <div
+              ref={pracTabelaBottomScrollRef}
+              onScroll={() => syncPracTabelaScroll("bottom")}
+              style={{ ...s.tableWrap, overflowX: "scroll", overflowY: "hidden" }}
+            >
+              <table style={{ ...s.table, minWidth: "3300px" }}>
                 <thead>
                   <tr>
-                    <th style={s.th}>nr (ID)</th>
-                    <th style={s.th}>Imię i nazwisko</th>
-                    <th style={{ ...s.th, color: "#7dd3fc" }}>Dział</th>
+                    <th style={sortThStyle} onClick={() => togglePracSort("nr")}>nr (ID) {strzalkaSort("nr")}</th>
+                    <th style={sortThStyle} onClick={() => togglePracSort("imie_nazwisko")}>Imię i nazwisko {strzalkaSort("imie_nazwisko")}</th>
+                    <th style={{ ...sortThStyle, color: "#7dd3fc" }} onClick={() => togglePracSort("dzial")}>Dział {strzalkaSort("dzial")}</th>
                     {czyAdminAktywny ? (
-                      <th style={{ ...s.th, whiteSpace: "nowrap" }} title="Uprawnienia w aplikacji — tylko administrator">
-                        Rola
+                      <th style={{ ...sortThStyle, whiteSpace: "nowrap" }} title="Uprawnienia w aplikacji — tylko administrator" onClick={() => togglePracSort("app_role")}>
+                        Rola {strzalkaSort("app_role")}
                       </th>
                     ) : null}
                     {czyAdminAktywny ? (
-                      <th style={{ ...s.th, textAlign: "center", whiteSpace: "nowrap" }} title="Odpowiedzialność za flotę — tylko administrator">
-                        Flota
+                      <th style={{ ...sortThStyle, textAlign: "center", whiteSpace: "nowrap" }} title="Odpowiedzialność za flotę — tylko administrator" onClick={() => togglePracSort("odpowiedzialny_flota")}>
+                        Flota {strzalkaSort("odpowiedzialny_flota")}
+                      </th>
+                    ) : null}
+                    {czyMozeEdytowacTickTeren ? (
+                      <th style={{ ...sortThStyle, textAlign: "center", whiteSpace: "nowrap" }} title="Odpowiedzialność za teren — administrator/kierownik" onClick={() => togglePracSort("odpowiedzialny_teren")}>
+                        Teren {strzalkaSort("odpowiedzialny_teren")}
                       </th>
                     ) : null}
                     {czyAdminAktywny ? (
-                      <th style={{ ...s.th, whiteSpace: "nowrap", color: "#7dd3fc" }} title="UoP vs um. zlecenie — moduł Czas pracy; edycja tylko administrator">
-                        Forma zatrudnienia
+                      <th style={{ ...sortThStyle, textAlign: "center", whiteSpace: "nowrap" }} onClick={() => togglePracSort("is_active")} title="Aktywność konta pracownika">
+                        Aktywny {strzalkaSort("is_active")}
                       </th>
                     ) : null}
-                    <th style={s.th}>E-mail</th>
-                    <th style={s.th}>Telefon</th>
-                    <th style={{ ...s.th, whiteSpace: "nowrap" }}>Konto utworzone</th>
-                    <th style={{ ...s.th, whiteSpace: "nowrap" }}>Ostatnie logowanie</th>
+                    {czyAdminAktywny ? (
+                      <th style={{ ...sortThStyle, whiteSpace: "nowrap", color: "#7dd3fc" }} title="UoP vs um. zlecenie — moduł Czas pracy; edycja tylko administrator" onClick={() => togglePracSort("forma_zatrudnienia")}>
+                        Forma zatrudnienia {strzalkaSort("forma_zatrudnienia")}
+                      </th>
+                    ) : null}
+                    <th style={sortThStyle} onClick={() => togglePracSort("email")}>E-mail {strzalkaSort("email")}</th>
+                    <th style={sortThStyle} onClick={() => togglePracSort("telefon")}>Telefon {strzalkaSort("telefon")}</th>
+                    <th style={{ ...sortThStyle, whiteSpace: "nowrap" }} onClick={() => togglePracSort("konto_utworzone")}>Konto utworzone {strzalkaSort("konto_utworzone")}</th>
+                    <th style={{ ...sortThStyle, whiteSpace: "nowrap" }} onClick={() => togglePracSort("ostatnie_logowanie")}>Ostatnie logowanie {strzalkaSort("ostatnie_logowanie")}</th>
                     {czyAdminAktywny ? <th style={s.th}>Edycja</th> : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {pracownicy.map((p) => (
+                  {pracownicyWgSortowania.map((p) => {
+                    const d = pracownikEditDraft[String(p.nr)] ?? {};
+                    const imieDraft = String(d.imie_nazwisko ?? p.imie_nazwisko ?? "").trim();
+                    const dzialDraft = String(d.dzial ?? p.dzial ?? "").trim();
+                    const emailDraft = String(d.email ?? p.email ?? "").trim();
+                    const telefonDraft = String(d.telefon ?? p.telefon ?? "").trim();
+                    const imieBase = String(p.imie_nazwisko ?? "").trim();
+                    const dzialBase = String(p.dzial ?? "").trim();
+                    const emailBase = String(p.email ?? "").trim();
+                    const telefonBase = String(p.telefon ?? "").trim();
+                    const czyWierszZmodyfikowany =
+                      imieDraft !== imieBase ||
+                      dzialDraft !== dzialBase ||
+                      emailDraft !== emailBase ||
+                      telefonDraft !== telefonBase;
+                    return (
                     <tr key={p.nr}>
                       <td style={s.td}>
                         <strong style={{ color: "#fff" }}>{p.nr}</strong>
@@ -9131,7 +10196,7 @@ export default function App() {
                       <td style={s.td}>
                         {czyAdminAktywny ? (
                           <input
-                            style={{ ...s.input, minWidth: "14rem" }}
+                            style={{ ...s.input, minWidth: "11.5rem" }}
                             type="text"
                             value={String(pracownikEditDraft[String(p.nr)]?.imie_nazwisko ?? p.imie_nazwisko ?? "")}
                             onChange={(ev) =>
@@ -9162,7 +10227,7 @@ export default function App() {
                               ...s.input,
                               fontSize: "0.82rem",
                               padding: "0.35rem 0.45rem",
-                              maxWidth: "12rem",
+                              maxWidth: "48rem",
                             }}
                             aria-label={`Dział: ${p.imie_nazwisko ?? p.nr}`}
                           >
@@ -9196,7 +10261,7 @@ export default function App() {
                               ...s.input,
                               fontSize: "0.82rem",
                               padding: "0.35rem 0.45rem",
-                              maxWidth: "11rem",
+                              maxWidth: "48rem",
                             }}
                             aria-label={`Rola: ${p.imie_nazwisko ?? p.nr}`}
                           >
@@ -9218,6 +10283,26 @@ export default function App() {
                           />
                         </td>
                       ) : null}
+                      {czyMozeEdytowacTickTeren ? (
+                        <td style={{ ...s.td, textAlign: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={p.odpowiedzialny_teren === true}
+                            onChange={(ev) => void ustawOdpowiedzialnyTeren(p.nr, ev.target.checked)}
+                            title="Odpowiedzialny za teren"
+                          />
+                        </td>
+                      ) : null}
+                      {czyAdminAktywny ? (
+                        <td style={{ ...s.td, textAlign: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={p.is_active !== false}
+                            onChange={(ev) => void ustawPracownikAktywny(p.nr, ev.target.checked)}
+                            title="Aktywny pracownik (wpływa na uprawnienia i widoczność)"
+                          />
+                        </td>
+                      ) : null}
                       {czyAdminAktywny ? (
                         <td style={s.td}>
                           <select
@@ -9227,7 +10312,7 @@ export default function App() {
                               ...s.input,
                               fontSize: "0.78rem",
                               padding: "0.3rem 0.4rem",
-                              maxWidth: "9.5rem",
+                              maxWidth: "7rem",
                             }}
                             aria-label={`Forma zatrudnienia: ${p.imie_nazwisko ?? p.nr}`}
                           >
@@ -9280,7 +10365,16 @@ export default function App() {
                           <div style={{ display: "flex", gap: "0.35rem" }}>
                             <button
                               type="button"
-                              style={{ ...s.btnGhost, fontSize: "0.76rem", padding: "0.25rem 0.45rem" }}
+                              style={
+                                czyWierszZmodyfikowany
+                                  ? {
+                                      ...s.btn,
+                                      fontSize: "0.76rem",
+                                      padding: "0.25rem 0.45rem",
+                                      boxShadow: "0 0 0 1px rgba(56,189,248,0.55), 0 0 14px rgba(56,189,248,0.35)",
+                                    }
+                                  : { ...s.btnGhost, fontSize: "0.76rem", padding: "0.25rem 0.45rem" }
+                              }
                               disabled={pracownikEditSavingNr === String(p.nr)}
                               onClick={() => void zapiszDanePracownikaAdmin(p.nr)}
                             >
@@ -9307,11 +10401,16 @@ export default function App() {
                         </td>
                       ) : null}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
+            </>
           )}
+              </>
+            );
+          })()}
 
           <h3
             style={{
@@ -9399,14 +10498,13 @@ export default function App() {
       {widok === "zadania" ? (
         <>
           <div style={op.heroCard}>
-            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Zadania ogólne</h2>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Moje zadania</h2>
             {trybHelp ? (
               <>
                 <p style={{ ...op.muted, marginBottom: "0.35rem", maxWidth: "44rem" }}>
-                  Zadania <strong>ogólne</strong> i <strong>przy konkretnym KR</strong> — pole <strong>Projekt (KR)</strong>{" "}
-                  w formularzu wiąże kartkę Kanban z projektem; puste = zadanie poza KR. <strong>Przydział:</strong> osoba
-                  odpowiedzialna (wykonanie) i opcjonalnie zlecająca. Kategoria w tabeli to <strong>heurystyka</strong> z
-                  treści i działu.
+                  Tu widzisz tylko zadania, które <strong>zleciła zalogowana osoba</strong> albo które są do niej{" "}
+                  <strong>przypisane</strong> jako odpowiedzialnej. Pole <strong>Projekt (KR)</strong> filtruje ten zakres po
+                  kodzie projektu.
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.15rem" }}>
                   {["Samochody", "Komputery", "Sprzęt", "Biuro", "Organizacyjne"].map((kat) => (
@@ -9559,9 +10657,9 @@ export default function App() {
               />
               Tylko jako osoba odpowiedzialna
             </label>
-            {zadaniaFiltrPracNr || zadaniaFiltrKr ? (
+            {zadaniaFiltrPracNr || zadaniaFiltrKr || nrZalogowanegoDoZadan ? (
               <span style={{ color: "#94a3b8", fontSize: "0.86rem", alignSelf: "center" }}>
-                Wynik: {zadaniaPrzefiltrowane.length}
+                Wynik: {zadaniaMojePrzefiltrowane.length}
                 {zadaniaFiltrKr === "__bez_kr__"
                   ? " (bez KR)"
                   : zadaniaFiltrKr === "__tylko_z_kr__"
@@ -9569,6 +10667,7 @@ export default function App() {
                     : zadaniaFiltrKr
                       ? ` (KR ${zadaniaFiltrKr})`
                       : ""}
+                {nrZalogowanegoDoZadan ? ` · moje (nr ${nrZalogowanegoDoZadan})` : ""}
                 {zadaniaFiltrPracNr
                   ? zadaniaFiltrTylkoOdpowiedzialny
                     ? " · tylko wykonawca"
@@ -9580,9 +10679,9 @@ export default function App() {
 
           {zadaniaFetchError ? null : zadaniaList.length === 0 ? (
             <p style={s.muted}>Brak zadań — dodaj pierwsze formularzem poniżej.</p>
-          ) : zadaniaPrzefiltrowane.length === 0 ? (
+          ) : zadaniaMojePrzefiltrowane.length === 0 ? (
             <p style={s.muted}>
-              Brak zadań dla wybranego filtra — zmień pracownika, projekt KR lub odznacz „tylko odpowiedzialny”.
+              Brak Twoich zadań dla wybranego filtra — zmień filtr KR lub ustawienia dodatkowe.
             </p>
           ) : zadaniaWidok === "kanban" ? (
             <div
@@ -9763,7 +10862,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {zadaniaPrzefiltrowane.map((row) => {
+                {zadaniaMojePrzefiltrowane.map((row) => {
                     const zt = kmTekstDoKomorki(row.zadanie);
                     const opisKom = kmTekstDoKomorki(row.opis);
                     const kat = zadaniaEtykietaKategorii(row);
@@ -10098,9 +11197,17 @@ export default function App() {
         <>
           <h2 style={{ ...s.h2, marginTop: 0 }}>Faktury kosztowe</h2>
           <p style={{ ...s.muted, marginBottom: "0.85rem", maxWidth: "56rem" }}>
-            To pełna baza faktur kosztowych (nie tylko „do zapłaty”). Wyszukasz tu fakturę po numerze, KR, nazwie
-            pliku, odbiorcy, płatniku i ścieżce lokalnej.
+            Lista faktur kosztowych jest <strong>wczytywana w całości</strong> z bazy (w granicach Twoich uprawnień). Domyślnie
+            na górze ustawiony jest zakres dat: <strong>bieżący rok kalendarzowy</strong> — tabela pokazuje tylko ten podzbiór,
+            dopóki go nie zmienisz. Możesz też zawęzić po <strong>KR</strong> (pole poniżej). Szukanie, filtry kolumn i sortowanie
+            działają na tej pełnej liście w pamięci.
           </p>
+          {!FAKTURY_KOSZTOWE_EDYCJA_WLACZONA ? (
+            <div style={{ ...s.hintBox, marginBottom: "0.85rem" }}>
+              Edycja faktur kosztowych w G4 jest wyłączona (tryb tylko do odczytu). Uzupełnianie wykonuj w aplikacji lokalnej,
+              a do G4 importuj gotowe dane.
+            </div>
+          ) : null}
 
           {fakturyKosztoweFetchError ? (
             <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
@@ -10109,22 +11216,88 @@ export default function App() {
           ) : null}
 
           <div style={{ ...op.sectionCard, marginBottom: "1rem" }}>
-            <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.65rem" }}>
-              Baza faktur kosztowych ({fakturyKosztoweList.length})
+            <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.35rem" }}>
+              Faktury kosztowe — wczytano z bazy {fakturyKosztoweList.length}
+              {fakturyKosztoweLadowanieListy ? " (ładowanie…)" : ""}
             </h3>
-            <label style={{ ...s.label, marginBottom: "0.65rem", maxWidth: "30rem" }}>
-              Szukaj (nr, KR, sprzedawca, NIP, odbiorca, płatnik, nazwa pliku, ścieżka)
+            {fakturyKosztoweList.length > 0 ? (
+              <div
+                role="note"
+                style={{
+                  marginBottom: "0.65rem",
+                  padding: "0.5rem 0.65rem",
+                  borderRadius: "6px",
+                  fontSize: "0.84rem",
+                  lineHeight: 1.45,
+                  color: "#e2e8f0",
+                  background: "rgba(148,163,184,0.1)",
+                  border: "1px solid rgba(148,163,184,0.28)",
+                }}
+              >
+                Przy pierwszym wejściu data <strong>od–do</strong> to <strong>cały bieżący rok</strong> — w tabeli widać tylko
+                faktury w tym zakresie (wg daty dokumentu lub daty utworzenia). Opróżnij daty, żeby zobaczyć{" "}
+                <strong>wszystkie {fakturyKosztoweList.length}</strong> wczytane rekordy. Porównanie plików w folderze z bazą
+                używa nazw z tej pełnej listy.
+              </div>
+            ) : null}
+            <div style={{ ...s.btnRow, marginBottom: "0.65rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+              <button
+                type="button"
+                style={s.btnGhost}
+                disabled={fakturyKosztoweLadowanieListy}
+                onClick={() => void fetchFakturyKosztoweWszystkie()}
+                title="Ponownie pobiera wszystkie wiersze z Supabase"
+              >
+                {fakturyKosztoweLadowanieListy ? "Wczytywanie z bazy…" : "Odśwież listę z bazy"}
+              </button>
+              {czyAdminAktywny && FAKTURY_KOSZTOWE_EDYCJA_WLACZONA ? (
+                <>
+                  <label style={{ ...s.label, marginBottom: 0 }}>
+                    Edycja po ID (baza)
+                    <input
+                      style={{ ...s.input, width: "8rem", fontFamily: "ui-monospace, monospace" }}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={fakturyKosztoweEdycjaPoIdTekst}
+                      onChange={(ev) => setFakturyKosztoweEdycjaPoIdTekst(ev.target.value)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter") {
+                          ev.preventDefault();
+                          void otworzEdycjeFakturyKosztowejPoIdBazy(fakturyKosztoweEdycjaPoIdTekst);
+                        }
+                      }}
+                      placeholder="np. 1842"
+                      title={`Identyfikator z kolumny id w ${FAKTURY_KOSZTOWE_TABELA_DB} (Table Editor); dozwolony format z #`}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    style={s.btnGhost}
+                    title="Otwiera ten sam modal co „Edytuj” w tabeli — najpierw szuka w pamięci, potem SELECT po id"
+                    onClick={() => void otworzEdycjeFakturyKosztowejPoIdBazy(fakturyKosztoweEdycjaPoIdTekst)}
+                  >
+                    Otwórz edycję po ID
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <label style={{ ...s.label, marginBottom: "0.65rem", maxWidth: "36rem" }}>
+              Szukaj we wszystkich polach (tekst zawiera…)
               <input
                 style={s.input}
                 type="text"
                 value={fakturyKosztoweSzukaj}
                 onChange={(ev) => setFakturyKosztoweSzukaj(ev.target.value)}
-                placeholder="np. 1070, FV/2026, Geodar, faktura.pdf"
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") ev.preventDefault();
+                }}
+                placeholder="np. 1070, FV/2026, kwota, status, id, nr konta, VAT…"
               />
             </label>
-            <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap", marginBottom: "0.65rem" }}>
+            <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap", marginBottom: "0.65rem", alignItems: "flex-end" }}>
               <label style={{ ...s.label, marginBottom: 0, minWidth: "11rem" }}>
-                Data od
+                Data od <span style={{ ...s.muted, fontWeight: 400 }}>(domyślnie 1 I)</span>
                 <input
                   style={s.input}
                   type="date"
@@ -10133,7 +11306,7 @@ export default function App() {
                 />
               </label>
               <label style={{ ...s.label, marginBottom: 0, minWidth: "11rem" }}>
-                Data do
+                Data do <span style={{ ...s.muted, fontWeight: 400 }}>(domyślnie 31 XII)</span>
                 <input
                   style={s.input}
                   type="date"
@@ -10141,7 +11314,31 @@ export default function App() {
                   onChange={(ev) => setFakturyKosztoweDataDo(ev.target.value)}
                 />
               </label>
-              <div style={{ ...s.btnRow, marginTop: "1.45rem" }}>
+              <label style={{ ...s.label, marginBottom: 0, minWidth: "8rem" }}>
+                KR <span style={{ ...s.muted, fontWeight: 400 }}>(zawiera)</span>
+                <input
+                  style={s.input}
+                  type="text"
+                  value={fakturyKosztoweFiltrKr}
+                  onChange={(ev) => setFakturyKosztoweFiltrKr(ev.target.value)}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter") ev.preventDefault();
+                  }}
+                  placeholder="np. 1070"
+                />
+              </label>
+              <div style={{ ...s.btnRow, marginTop: 0, paddingBottom: "0.12rem" }}>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, fontSize: "0.8rem", padding: "0.35rem 0.55rem" }}
+                  onClick={() => {
+                    const { od, do: ddo } = fakturyKosztoweDomyslnyZakresDatRokuKalendarzowego();
+                    setFakturyKosztoweDataOd(od);
+                    setFakturyKosztoweDataDo(ddo);
+                  }}
+                >
+                  Bieżący rok
+                </button>
                 <button
                   type="button"
                   style={{ ...s.btnGhost, fontSize: "0.8rem", padding: "0.35rem 0.55rem" }}
@@ -10150,7 +11347,14 @@ export default function App() {
                     setFakturyKosztoweDataDo("");
                   }}
                 >
-                  Wyczyść zakres dat
+                  Wszystkie daty
+                </button>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, fontSize: "0.8rem", padding: "0.35rem 0.55rem" }}
+                  onClick={() => setFakturyKosztoweFiltrKr("")}
+                >
+                  Wyczyść KR
                 </button>
               </div>
             </div>
@@ -10238,7 +11442,10 @@ export default function App() {
                       <span style={{ minWidth: "8.8rem", color: "#94a3b8", fontWeight: 500 }}>
                         {r.modifiedAt ? new Date(r.modifiedAt).toLocaleDateString("pl-PL") : "—"}
                       </span>
-                      <span>{r.inBase ? "OK" : "BRAK"} — {r.name}</span>
+                      <span style={{ minWidth: 0, overflow: "hidden" }}>
+                        {r.inBase ? "OK" : "BRAK"} —{" "}
+                        {tekstUcietyKoniecPrezentacja(r.relativePath || r.name, 72)}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -10266,41 +11473,57 @@ export default function App() {
               >
                 Niekompletne
               </button>
+              <button
+                type="button"
+                style={s.btnGhost}
+                title="Przywraca kolejność z ostatniego wczytania z bazy"
+                onClick={() => setFakturyKosztoweSort({ key: null, dir: "asc" })}
+              >
+                Sortowanie: jak w bazie
+              </button>
             </div>
+            <details style={{ marginBottom: "0.65rem" }}>
+              <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: "0.84rem", userSelect: "none" }}>
+                Filtrowanie według kolumn (opcjonalnie — każda kolumna osobno, spełnić muszą wszystkie wypełnione)
+              </summary>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(11.5rem, 1fr))",
+                  gap: "0.45rem",
+                  marginTop: "0.5rem",
+                }}
+              >
+                {FAKTURY_KOLUMNY_USTAWIENIA.map((c) => (
+                  <label key={c.key} style={{ ...s.label, marginBottom: 0, fontSize: "0.78rem" }}>
+                    {c.label}
+                    <input
+                      style={{ ...s.input, fontSize: "0.78rem", padding: "0.28rem 0.4rem" }}
+                      type="text"
+                      value={fakturyKosztoweFiltryKolumn[c.key]}
+                      onChange={(ev) =>
+                        setFakturyKosztoweFiltryKolumn((prev) => ({ ...prev, [c.key]: ev.target.value }))
+                      }
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter") ev.preventDefault();
+                      }}
+                      placeholder="zawiera…"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div style={{ ...s.btnRow, marginTop: "0.45rem" }}>
+                <button
+                  type="button"
+                  style={{ ...s.btnGhost, fontSize: "0.78rem" }}
+                  onClick={() => setFakturyKosztoweFiltryKolumn(fakturyKosztoweFiltryKolumnPuste())}
+                >
+                  Wyczyść filtry kolumn
+                </button>
+              </div>
+            </details>
             {(() => {
-              const q = tekstTrim(fakturyKosztoweSzukaj).toLowerCase();
-              const listSurowa = !q
-                ? fakturyKosztoweList
-                : fakturyKosztoweList.filter((row) =>
-                    [
-                      row.kr,
-                      row.numer_faktury,
-                      row.sprzedawca_nazwa,
-                      row.sprzedawca_nip,
-                      row.legacy_issuer_id,
-                      row.legacy_receiver_name,
-                      row.legacy_payer_name,
-                      row.legacy_nazwa_pliku,
-                      row.legacy_pdf_file,
-                      row.link_faktury,
-                    ]
-                      .map((v) => String(v ?? "").toLowerCase())
-                      .some((v) => v.includes(q)),
-                  );
-              const listZRangedat = listSurowa.filter((row) => {
-                if (!fakturyKosztoweDataOd && !fakturyKosztoweDataDo) return true;
-                const d = dataDoSortuYYYYMMDD(row.data_faktury) || dataDoSortuYYYYMMDD(row.created_at);
-                if (!d) return false;
-                if (fakturyKosztoweDataOd && d < fakturyKosztoweDataOd) return false;
-                if (fakturyKosztoweDataDo && d > fakturyKosztoweDataDo) return false;
-                return true;
-              });
-              const list =
-                fakturyKosztoweTryb === "duplikaty"
-                  ? listZRangedat.filter((row) => fakturyKosztoweDuplikatyIds.has(row.id))
-                  : fakturyKosztoweTryb === "niekompletne"
-                    ? listZRangedat.filter((row) => czyFakturaNiekompletna(row))
-                    : listZRangedat;
+              const list = fakturyKosztoweListaWidoku;
               if (list.length === 0) {
                 return (
                   <p style={{ ...op.muted, margin: 0, fontSize: "0.84rem" }}>
@@ -10309,29 +11532,129 @@ export default function App() {
                 );
               }
               return (
-                <div style={{ ...s.tableWrap, marginBottom: 0, overflowX: "scroll", overflowY: "hidden" }}>
-                  <table style={{ ...s.table, fontSize: "0.82rem", minWidth: "1850px" }}>
+                <div style={{ width: "100%", maxWidth: "100%", marginBottom: 0, boxSizing: "border-box" }}>
+                  <div
+                    ref={fakturyKosztoweTabelaScrollGoraRef}
+                    onScroll={(ev) => {
+                      if (fakturyKosztoweTabelaScrollSyncRef.current) return;
+                      const dol = fakturyKosztoweTabelaScrollDolRef.current;
+                      if (!dol) return;
+                      fakturyKosztoweTabelaScrollSyncRef.current = true;
+                      dol.scrollLeft = ev.currentTarget.scrollLeft;
+                      fakturyKosztoweTabelaScrollSyncRef.current = false;
+                    }}
+                    style={{
+                      overflowX: "auto",
+                      overflowY: "hidden",
+                      maxHeight: "18px",
+                      minHeight: "12px",
+                      border: `1px solid ${theme.border}`,
+                      borderBottom: "none",
+                      borderRadius: "12px 12px 0 0",
+                      background: theme.surface,
+                      boxSizing: "border-box",
+                      width: "100%",
+                      maxWidth: "100%",
+                      WebkitOverflowScrolling: "touch",
+                    }}
+                    title="Przewijanie poziome (nad nagłówkami tabeli)"
+                  >
+                    <div
+                      aria-hidden
+                      style={{
+                        width: `${fakturyKosztoweSzerokoscTabeliPx}px`,
+                        height: "1px",
+                        pointerEvents: "none",
+                      }}
+                    />
+                  </div>
+                  <div
+                    ref={fakturyKosztoweTabelaScrollDolRef}
+                    onScroll={(ev) => {
+                      if (fakturyKosztoweTabelaScrollSyncRef.current) return;
+                      const gora = fakturyKosztoweTabelaScrollGoraRef.current;
+                      if (!gora) return;
+                      fakturyKosztoweTabelaScrollSyncRef.current = true;
+                      gora.scrollLeft = ev.currentTarget.scrollLeft;
+                      fakturyKosztoweTabelaScrollSyncRef.current = false;
+                    }}
+                    style={{
+                      ...s.tableWrap,
+                      marginBottom: 0,
+                      borderTop: "none",
+                      borderRadius: "0 0 12px 12px",
+                      overflowX: "auto",
+                      overflowY: "hidden",
+                    }}
+                  >
+                    <table
+                      style={{
+                        ...s.table,
+                        fontSize: "0.82rem",
+                        width: `${fakturyKosztoweSzerokoscTabeliPx}px`,
+                        minWidth: `${fakturyKosztoweSzerokoscTabeliPx}px`,
+                        tableLayout: "fixed",
+                      }}
+                    >
                     <thead>
                       <tr>
                         {[
-                          ...(czyAdminAktywny ? [["akcje", "Akcje"]] : []),
-                          ["kr", "KR"],
-                          ["data", "Data"],
-                          ["nazwa", "Nazwa pliku"],
-                          ["sprzedawca", "Sprzedawca"],
-                          ["nip", "NIP"],
-                          ["odbiorca", "Odbiorca"],
-                          ["platnik", "Płatnik"],
-                          ["netto", "Netto"],
-                          ["brutto", "Brutto"],
-                          ["vat", "VAT"],
-                          ["nr", "Nr faktury"],
-                          ["lokalny", "Ścieżka lokalna"],
-                          ["box", "Link Box"],
-                          ["status", "Status"],
-                        ].map(([k, label]) => (
-                          <th key={k} style={{ ...s.th, minWidth: `${fakturyKolumnyPx[k]}px`, position: "relative" }}>
-                            <span>{label}</span>
+                          ...(czyAdminAktywny && FAKTURY_KOSZTOWE_EDYCJA_WLACZONA
+                            ? [{ key: "akcje", label: "Akcje", sortowalna: false }]
+                            : []),
+                          ...FAKTURY_KOLUMNY_USTAWIENIA.map((c) => ({
+                            key: c.key,
+                            label: c.label,
+                            sortowalna: true,
+                          })),
+                        ].map(({ key: k, label, sortowalna }) => {
+                          const colW = szerFakturyKolumny(k);
+                          return (
+                          <th
+                            key={k}
+                            style={{
+                              ...s.th,
+                              width: `${colW}px`,
+                              minWidth: `${colW}px`,
+                              maxWidth: `${colW}px`,
+                              position: "relative",
+                            }}
+                          >
+                            {sortowalna ? (
+                              <button
+                                type="button"
+                                title="Kliknij: sortuj; ponownie: odwróć kolejność"
+                                onClick={() =>
+                                  setFakturyKosztoweSort((prev) =>
+                                    prev.key === k
+                                      ? { key: k, dir: prev.dir === "asc" ? "desc" : "asc" }
+                                      : { key: k, dir: "asc" },
+                                  )
+                                }
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  color: "inherit",
+                                  cursor: "pointer",
+                                  font: "inherit",
+                                  fontWeight: 600,
+                                  textAlign: "left",
+                                  padding: "0 0.35rem 0 0",
+                                  maxWidth: "calc(100% - 8px)",
+                                  lineHeight: 1.25,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {label}
+                                {fakturyKosztoweSort.key === k
+                                  ? fakturyKosztoweSort.dir === "asc"
+                                    ? " ↑"
+                                    : " ↓"
+                                  : ""}
+                              </button>
+                            ) : (
+                              <span style={{ fontWeight: 600 }}>{label}</span>
+                            )}
                             <span
                               role="separator"
                               aria-orientation="vertical"
@@ -10340,7 +11663,7 @@ export default function App() {
                                 setFakturyResizeCol({
                                   key: k,
                                   startX: ev.clientX,
-                                  startWidth: Number(fakturyKolumnyPx[k] ?? 120),
+                                  startWidth: colW,
                                 });
                               }}
                               title="Przeciągnij, aby zmienić szerokość kolumny"
@@ -10358,41 +11681,92 @@ export default function App() {
                               }}
                             />
                           </th>
-                        ))}
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody>
                       {list.map((row) => {
                         const st = String(row.status ?? "do_zaplaty").trim();
-                        const isEdit = false;
+                        const txtNazwa =
+                          tekstTrim(row.legacy_nazwa_pliku) ||
+                          (tekstTrim(row.legacy_pdf_file) ? String(row.legacy_pdf_file).split(/[\\/]/).pop() : "");
+                        const txtSprzedawca =
+                          tekstTrim(row.sprzedawca_nazwa) ||
+                          nazwaSprzedawcyZMapy(mapaSprzedawcaPoNip, row.sprzedawca_nip || row.legacy_issuer_id) ||
+                          "";
+                        const txtOdbiorca = tekstTrim(row.komu) || tekstTrim(row.legacy_receiver_name) || "";
+                        const txtPlatnik = tekstTrim(row.legacy_payer_name) || "";
+                        const txtTyp = tekstTrim(row.typ_nazwy) || "";
+                        const txtNr = tekstTrim(row.numer_faktury) || "";
+                        const txtLokalny = tekstTrim(row.legacy_pdf_file) ? String(row.legacy_pdf_file) : "";
                         return (
                           <tr key={`faktury-modul-${row.id}`}>
-                            {czyAdminAktywny ? (
-                              <td style={s.td}>
-                                <div style={{ display: "flex", gap: "0.25rem", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
-                                  <button
-                                    type="button"
-                                    style={{ ...s.btnGhost, fontSize: "0.74rem", padding: "0.22rem 0.4rem" }}
-                                    onClick={() => rozpocznijEdycjeFakturyKosztowej(row)}
-                                  >
-                                    Edit
-                                  </button>
-                                  {tekstTrim(row.legacy_pdf_file) ? (
+                            {czyAdminAktywny && FAKTURY_KOSZTOWE_EDYCJA_WLACZONA ? (
+                              <td
+                                style={{
+                                  ...FAKTURY_KOSZTOWE_TD,
+                                  width: `${szerFakturyKolumny("akcje")}px`,
+                                  maxWidth: `${szerFakturyKolumny("akcje")}px`,
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "flex-start",
+                                    gap: "0.2rem",
+                                  }}
+                                >
+                                  <div style={{ display: "flex", gap: "0.25rem", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
                                     <button
                                       type="button"
                                       style={{ ...s.btnGhost, fontSize: "0.74rem", padding: "0.22rem 0.4rem" }}
-                                      onClick={() =>
-                                        navigator.clipboard?.writeText(komendaExplorerSelect(row.legacy_pdf_file))
-                                      }
-                                      title='Kopiuje komendę: explorer /select,"...". Wklej w PowerShell.'
+                                      onClick={() => rozpocznijEdycjeFakturyKosztowej(row)}
                                     >
-                                      Fold
+                                      Edit
                                     </button>
-                                  ) : null}
+                                    {tekstTrim(row.legacy_pdf_file) ? (
+                                      <button
+                                        type="button"
+                                        style={{ ...s.btnGhost, fontSize: "0.74rem", padding: "0.22rem 0.4rem" }}
+                                        onClick={() =>
+                                          navigator.clipboard?.writeText(komendaExplorerSelect(row.legacy_pdf_file))
+                                        }
+                                        title='Kopiuje komendę: explorer /select,"...". Wklej w PowerShell.'
+                                      >
+                                        Fold
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    style={{
+                                      background: "none",
+                                      border: "none",
+                                      padding: 0,
+                                      cursor: "pointer",
+                                      fontSize: "0.68rem",
+                                      color: "#64748b",
+                                      fontFamily: "ui-monospace, monospace",
+                                      textAlign: "left",
+                                    }}
+                                    title={`Identyfikator w ${FAKTURY_KOSZTOWE_TABELA_DB} — kliknij, aby skopiować (pole „Edycja po ID”)`}
+                                    onClick={() => void navigator.clipboard?.writeText(String(row.id))}
+                                  >
+                                    #{row.id}
+                                  </button>
                                 </div>
                               </td>
                             ) : null}
-                            <td style={s.td}>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("kr")}px`,
+                                maxWidth: `${szerFakturyKolumny("kr")}px`,
+                              }}
+                              title={tekstTrim(row.kr) || undefined}
+                            >
                               {tekstTrim(row.kr) ? (
                                 <button
                                   type="button"
@@ -10408,21 +11782,23 @@ export default function App() {
                                     font: "inherit",
                                   }}
                                 >
-                                  {String(row.kr).trim()}
+                                  {tekstUcietyKoniecPrezentacja(
+                                    String(row.kr).trim(),
+                                    fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("kr")),
+                                  )}
                                 </button>
                               ) : (
                                 <span style={{ color: "#fca5a5" }}>— nieprzypisane —</span>
                               )}
                             </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "8.2rem" }}
-                                  type="date"
-                                  value={fakturyKosztoweEdycjaForm.data_faktury}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, data_faktury: ev.target.value }))}
-                                />
-                              ) : row.data_faktury ? (
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("data")}px`,
+                                maxWidth: `${szerFakturyKolumny("data")}px`,
+                              }}
+                            >
+                              {row.data_faktury ? (
                                 dataPLZFormat(dataDoInputa(row.data_faktury))
                               ) : row.created_at ? (
                                 new Date(row.created_at).toLocaleString("pl-PL", { dateStyle: "short" })
@@ -10430,179 +11806,151 @@ export default function App() {
                                 "—"
                               )}
                             </td>
-                            <td style={s.td}>
-                              <span
-                                title={
-                                  tekstTrim(row.legacy_nazwa_pliku) ||
-                                  (tekstTrim(row.legacy_pdf_file)
-                                    ? String(row.legacy_pdf_file).split(/[\\/]/).pop()
-                                    : "—")
-                                }
-                                style={{
-                                  display: "inline-block",
-                                  maxWidth: "56px",
-                                  whiteSpace: "nowrap",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  verticalAlign: "top",
-                                }}
-                              >
-                                {tekstTrim(row.legacy_nazwa_pliku) ||
-                                  (tekstTrim(row.legacy_pdf_file)
-                                    ? String(row.legacy_pdf_file).split(/[\\/]/).pop()
-                                    : "—")}
-                              </span>
-                            </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "12rem" }}
-                                  type="text"
-                                  value={fakturyKosztoweEdycjaForm.sprzedawca_nazwa}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, sprzedawca_nazwa: ev.target.value }))}
-                                />
-                              ) : (
-                                <span
-                                  title={
-                                    tekstTrim(row.sprzedawca_nazwa) ||
-                                    mapaSprzedawcaPoNip.get(nip10(row.sprzedawca_nip || row.legacy_issuer_id)) ||
-                                    "—"
-                                  }
-                                  style={{ display: "inline-block", maxWidth: "100px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                                >
-                                  {tekstTrim(row.sprzedawca_nazwa) ||
-                                    mapaSprzedawcaPoNip.get(nip10(row.sprzedawca_nip || row.legacy_issuer_id)) ||
-                                    "—"}
-                                </span>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("nazwa")}px`,
+                                maxWidth: `${szerFakturyKolumny("nazwa")}px`,
+                              }}
+                              title={txtNazwa || undefined}
+                            >
+                              {tekstUcietyKoniecPrezentacja(
+                                txtNazwa,
+                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("nazwa")),
                               )}
                             </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "8rem" }}
-                                  type="text"
-                                  inputMode="numeric"
-                                  value={fakturyKosztoweEdycjaForm.sprzedawca_nip}
-                                  onChange={(ev) =>
-                                    setFakturyKosztoweEdycjaForm((f) => ({ ...f, sprzedawca_nip: nip10(ev.target.value) }))
-                                  }
-                                />
-                              ) : (
-                                tekstTrim(row.sprzedawca_nip) || nipSprzedawcyZLegacyIssuerId(row.legacy_issuer_id) || "—"
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("sprzedawca")}px`,
+                                maxWidth: `${szerFakturyKolumny("sprzedawca")}px`,
+                              }}
+                              title={txtSprzedawca || undefined}
+                            >
+                              {tekstUcietyKoniecPrezentacja(
+                                txtSprzedawca,
+                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("sprzedawca")),
                               )}
                             </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "10rem" }}
-                                  type="text"
-                                  value={fakturyKosztoweEdycjaForm.komu}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, komu: ev.target.value }))}
-                                />
-                              ) : (
-                                <span title={tekstTrim(row.legacy_receiver_name) || tekstTrim(row.komu) || "—"}>
-                                  {pokazKoncowkeTekstu(tekstTrim(row.legacy_receiver_name) || tekstTrim(row.komu) || "—")}
-                                </span>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("nip")}px`,
+                                maxWidth: `${szerFakturyKolumny("nip")}px`,
+                              }}
+                            >
+                              {identyfikatorPodatkowyZnormalizowany(row.sprzedawca_nip || row.legacy_issuer_id) || "—"}
+                            </td>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("odbiorca")}px`,
+                                maxWidth: `${szerFakturyKolumny("odbiorca")}px`,
+                              }}
+                              title={txtOdbiorca || undefined}
+                            >
+                              {tekstUcietyKoniecPrezentacja(
+                                txtOdbiorca,
+                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("odbiorca")),
                               )}
                             </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "10rem" }}
-                                  type="text"
-                                  value={fakturyKosztoweEdycjaForm.legacy_payer_name}
-                                  onChange={(ev) =>
-                                    setFakturyKosztoweEdycjaForm((f) => ({ ...f, legacy_payer_name: ev.target.value }))
-                                  }
-                                />
-                              ) : (
-                                <span title={tekstTrim(row.legacy_payer_name) || "—"}>
-                                  {pokazKoncowkeTekstu(tekstTrim(row.legacy_payer_name) || "—")}
-                                </span>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("platnik")}px`,
+                                maxWidth: `${szerFakturyKolumny("platnik")}px`,
+                              }}
+                              title={txtPlatnik || undefined}
+                            >
+                              {tekstUcietyKoniecPrezentacja(
+                                txtPlatnik,
+                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("platnik")),
                               )}
                             </td>
-                            <td style={{ ...s.td, color: "#bfdbfe" }}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "7rem" }}
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={fakturyKosztoweEdycjaForm.kwota_netto}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, kwota_netto: ev.target.value }))}
-                                />
-                              ) : row.kwota_netto != null ? (
-                                kwotaBruttoEtykieta(row.kwota_netto)
-                              ) : (
-                                "—"
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("typ")}px`,
+                                maxWidth: `${szerFakturyKolumny("typ")}px`,
+                              }}
+                              title={txtTyp || undefined}
+                            >
+                              {tekstUcietyKoniecPrezentacja(
+                                txtTyp,
+                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("typ")),
                               )}
                             </td>
-                            <td style={{ ...s.td, fontWeight: 700, color: "#fde68a" }}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "7rem" }}
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={fakturyKosztoweEdycjaForm.kwota_brutto}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, kwota_brutto: ev.target.value }))}
-                                />
-                              ) : (
-                                kwotaBruttoEtykieta(row.kwota_brutto)
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("netto")}px`,
+                                maxWidth: `${szerFakturyKolumny("netto")}px`,
+                                color: "#bfdbfe",
+                              }}
+                            >
+                              {row.kwota_netto != null ? kwotaBruttoEtykieta(row.kwota_netto) : "—"}
+                            </td>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("brutto")}px`,
+                                maxWidth: `${szerFakturyKolumny("brutto")}px`,
+                                fontWeight: 700,
+                                color: "#fde68a",
+                              }}
+                            >
+                              {kwotaBruttoEtykieta(row.kwota_brutto)}
+                            </td>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("vat")}px`,
+                                maxWidth: `${szerFakturyKolumny("vat")}px`,
+                                color: "#fca5a5",
+                              }}
+                            >
+                              {row.kwota_vat != null ? kwotaBruttoEtykieta(row.kwota_vat) : "—"}
+                            </td>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("nr")}px`,
+                                maxWidth: `${szerFakturyKolumny("nr")}px`,
+                              }}
+                              title={txtNr || undefined}
+                            >
+                              {tekstUcietyKoniecPrezentacja(
+                                txtNr,
+                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("nr")),
                               )}
                             </td>
-                            <td style={{ ...s.td, color: "#fca5a5" }}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "7rem" }}
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={fakturyKosztoweEdycjaForm.kwota_vat}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, kwota_vat: ev.target.value }))}
-                                />
-                              ) : row.kwota_vat != null ? (
-                                kwotaBruttoEtykieta(row.kwota_vat)
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "10rem" }}
-                                  type="text"
-                                  value={fakturyKosztoweEdycjaForm.numer_faktury}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, numer_faktury: ev.target.value }))}
-                                />
-                              ) : (
-                                tekstTrim(row.numer_faktury) || "—"
-                              )}
-                            </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "14rem" }}
-                                  type="text"
-                                  value={fakturyKosztoweEdycjaForm.legacy_pdf_file}
-                                  onChange={(ev) =>
-                                    setFakturyKosztoweEdycjaForm((f) => ({ ...f, legacy_pdf_file: ev.target.value }))
-                                  }
-                                />
-                              ) : tekstTrim(row.legacy_pdf_file) ? (
-                                <span title={String(row.legacy_pdf_file)} style={{ color: "#94a3b8" }}>
-                                  {String(row.legacy_pdf_file).split(/[\\/]/).pop()}
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("lokalny")}px`,
+                                maxWidth: `${szerFakturyKolumny("lokalny")}px`,
+                              }}
+                              title={txtLokalny || undefined}
+                            >
+                              {txtLokalny ? (
+                                <span style={{ color: "#94a3b8" }}>
+                                  {tekstUcietyKoniecPrezentacja(
+                                    txtLokalny,
+                                    fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("lokalny")),
+                                  )}
                                 </span>
                               ) : (
                                 "—"
                               )}
                             </td>
-                            <td style={s.td}>
-                              {isEdit ? (
-                                <input
-                                  style={{ ...s.input, minWidth: "12rem" }}
-                                  type="url"
-                                  value={fakturyKosztoweEdycjaForm.link_faktury}
-                                  onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, link_faktury: ev.target.value }))}
-                                />
-                              ) : tekstTrim(row.link_faktury) ? (
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("box")}px`,
+                                maxWidth: `${szerFakturyKolumny("box")}px`,
+                              }}
+                            >
+                              {tekstTrim(row.link_faktury) ? (
                                 <a href={hrefLinkuZewnetrznego(row.link_faktury)} target="_blank" rel="noopener noreferrer" style={{ color: "#7dd3fc" }}>
                                   otwórz
                                 </a>
@@ -10610,297 +11958,63 @@ export default function App() {
                                 "—"
                               )}
                             </td>
-                            <td style={s.td}>
-                              <select
-                                style={{ ...s.input, padding: "0.25rem 0.35rem", fontSize: "0.78rem", minWidth: "8.5rem" }}
-                                value={
-                                  isEdit
-                                    ? fakturyKosztoweEdycjaForm.status
-                                    : FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(st)
-                                      ? st
-                                      : "do_zaplaty"
-                                }
-                                onChange={(ev) =>
-                                  isEdit
-                                    ? setFakturyKosztoweEdycjaForm((f) => ({ ...f, status: ev.target.value }))
-                                    : void zapiszStatusKrFakturaDoZaplaty(row.id, ev.target.value, row.kr)
-                                }
-                              >
-                                {FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.map((v) => (
-                                  <option key={v} value={v}>
-                                    {etykietaFakturyDoZaplatyStatus(v)}
-                                  </option>
-                                ))}
-                              </select>
+                            <td
+                              style={{
+                                ...FAKTURY_KOSZTOWE_TD,
+                                width: `${szerFakturyKolumny("status")}px`,
+                                maxWidth: `${szerFakturyKolumny("status")}px`,
+                              }}
+                            >
+                              {FAKTURY_KOSZTOWE_EDYCJA_WLACZONA ? (
+                                <select
+                                  style={{ ...s.input, padding: "0.25rem 0.35rem", fontSize: "0.78rem", minWidth: "8.5rem" }}
+                                  value={FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(st) ? st : "do_zaplaty"}
+                                  onChange={(ev) => void zapiszStatusKrFakturaDoZaplaty(row.id, ev.target.value, row.kr)}
+                                >
+                                  {FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.map((v) => (
+                                    <option key={v} value={v}>
+                                      {etykietaFakturyDoZaplatyStatus(v)}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span>{etykietaFakturyDoZaplatyStatus(st)}</span>
+                              )}
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               );
             })()}
           </div>
 
-          {czyAdminAktywny && fakturyKosztoweEdycjaId != null && fakturyKosztoweEdycjaForm ? (
-            <div
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(2,6,23,0.72)",
-                zIndex: 70,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "1rem",
-              }}
-              onClick={anulujEdycjeFakturyKosztowej}
-            >
-              <div
-                style={{ ...op.sectionCard, width: "min(900px, 96vw)", maxHeight: "88vh", overflowY: "auto" }}
-                onClick={(ev) => ev.stopPropagation()}
-              >
-                <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.65rem" }}>
-                  Edycja faktury #{fakturyKosztoweEdycjaId}
-                </h3>
-                <div style={{ display: "grid", gap: "0.55rem", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                  <label style={s.label}>Data faktury
-                    <input style={s.input} type="date" value={fakturyKosztoweEdycjaForm.data_faktury} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, data_faktury: ev.target.value }))} />
-                  </label>
-                  <label style={s.label}>NIP sprzedawcy
-                    <input style={s.input} type="text" inputMode="numeric" value={fakturyKosztoweEdycjaForm.sprzedawca_nip} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, sprzedawca_nip: nip10(ev.target.value) }))} />
-                  </label>
-                  <label style={s.label}>Sprzedawca
-                    <input style={s.input} type="text" value={fakturyKosztoweEdycjaForm.sprzedawca_nazwa} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, sprzedawca_nazwa: ev.target.value }))} />
-                  </label>
-                  <label style={s.label}>Odbiorca (firma G4)
-                    <select
-                      style={s.input}
-                      value={String(fakturyKosztoweEdycjaForm.komu ?? "")}
-                      onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, komu: ev.target.value }))}
-                    >
-                      <option value="">— wybierz —</option>
-                      {(() => {
-                        const cur = String(fakturyKosztoweEdycjaForm.komu ?? "").trim();
-                        const known = new Set(FAKTURA_ODBIORCA_G4_OPCJE);
-                        const orphan = cur !== "" && !known.has(cur);
-                        return (
-                          <>
-                            {orphan ? <option value={cur}>{cur} (z bazy)</option> : null}
-                            {FAKTURA_ODBIORCA_G4_OPCJE.map((o) => (
-                              <option key={o} value={o}>
-                                {o}
-                              </option>
-                            ))}
-                          </>
-                        );
-                      })()}
-                    </select>
-                  </label>
-                  <label style={s.label}>Płatnik
-                    <input style={s.input} type="text" value={fakturyKosztoweEdycjaForm.legacy_payer_name} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, legacy_payer_name: ev.target.value }))} />
-                  </label>
-                  <label style={s.label}>Rodzaj kosztu
-                    <select
-                      style={s.input}
-                      value={String(fakturyKosztoweEdycjaForm.rodzaj_kosztu ?? "")}
-                      onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, rodzaj_kosztu: ev.target.value }))}
-                    >
-                      <option value="">— wybierz —</option>
-                      {fakturyOpcjeRodzajuKosztu.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={s.label}>Typ
-                    <select
-                      style={s.input}
-                      value={String(fakturyKosztoweEdycjaForm.typ_nazwy ?? "")}
-                      onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, typ_nazwy: ev.target.value }))}
-                    >
-                      <option value="">— wybierz —</option>
-                      {fakturyOpcjeTypu.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={s.label}>Netto
-                    <input style={s.input} type="text" inputMode="decimal" value={fakturyKosztoweEdycjaForm.kwota_netto} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, kwota_netto: ev.target.value }))} />
-                  </label>
-                  <label style={s.label}>Brutto
-                    <input style={s.input} type="text" inputMode="decimal" value={fakturyKosztoweEdycjaForm.kwota_brutto} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, kwota_brutto: ev.target.value }))} />
-                  </label>
-                  <label style={s.label}>VAT
-                    <input style={s.input} type="text" inputMode="decimal" value={fakturyKosztoweEdycjaForm.kwota_vat} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, kwota_vat: ev.target.value }))} />
-                  </label>
-                  <label style={s.label}>Nr konta (opcjonalnie)
-                    <input
-                      style={s.input}
-                      type="text"
-                      value={fakturyKosztoweEdycjaForm.nr_konta}
-                      onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, nr_konta: ev.target.value }))}
-                      placeholder="np. 12 3456 7890 1234 5678 9012 3456"
-                    />
-                  </label>
-                  <label style={s.label}>Nr faktury
-                    <input style={s.input} type="text" value={fakturyKosztoweEdycjaForm.numer_faktury} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, numer_faktury: ev.target.value }))} />
-                  </label>
-                  <label style={s.label}>Ścieżka lokalna
-                    <input style={s.input} type="text" value={fakturyKosztoweEdycjaForm.legacy_pdf_file} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, legacy_pdf_file: ev.target.value }))} />
-                    <div style={{ ...s.btnRow, marginTop: "0.2rem" }}>
-                      <button
-                        type="button"
-                        style={{ ...s.btnGhost, fontSize: "0.74rem", padding: "0.2rem 0.38rem" }}
-                        disabled={!tekstTrim(fakturyKosztoweEdycjaForm.legacy_pdf_file)}
-                        onClick={() =>
-                          navigator.clipboard?.writeText(komendaExplorerSelect(fakturyKosztoweEdycjaForm.legacy_pdf_file))
-                        }
-                        title='Kopiuje komendę: explorer /select,"...". Wklej w PowerShell.'
-                      >
-                        Fold
-                      </button>
-                    </div>
-                  </label>
-                  <label style={s.label}>Link Box
-                    <input style={s.input} type="url" value={fakturyKosztoweEdycjaForm.link_faktury} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, link_faktury: ev.target.value }))} />
-                    <div style={{ ...s.btnRow, marginTop: "0.2rem" }}>
-                      <button
-                        type="button"
-                        style={{ ...s.btnGhost, fontSize: "0.74rem", padding: "0.2rem 0.38rem" }}
-                        disabled={!tekstTrim(fakturyKosztoweEdycjaForm.link_faktury)}
-                        onClick={() => window.open(hrefLinkuZewnetrznego(fakturyKosztoweEdycjaForm.link_faktury), "_blank", "noopener,noreferrer")}
-                      >
-                        Link Box
-                      </button>
-                    </div>
-                  </label>
-                  <label style={s.label}>Status
-                    <select style={s.input} value={fakturyKosztoweEdycjaForm.status} onChange={(ev) => setFakturyKosztoweEdycjaForm((f) => ({ ...f, status: ev.target.value }))}>
-                      {FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.map((v) => (
-                        <option key={v} value={v}>{etykietaFakturyDoZaplatyStatus(v)}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div style={{ ...s.btnRow, marginTop: "0.7rem" }}>
-                  <button type="button" style={s.btn} disabled={fakturyKosztoweEdycjaSaving} onClick={() => void zapiszEdycjeFakturyKosztowej(fakturyKosztoweEdycjaId)}>
-                    {fakturyKosztoweEdycjaSaving ? "Zapisywanie..." : "Zapisz"}
-                  </button>
-                  <button type="button" style={s.btnGhost} onClick={anulujEdycjeFakturyKosztowej}>Anuluj</button>
-                </div>
-              </div>
-            </div>
+          {czyAdminAktywny &&
+          FAKTURY_KOSZTOWE_EDYCJA_WLACZONA &&
+          fakturyKosztoweEdycjaId != null &&
+          fakturyKosztoweEdycjaInitialForm ? (
+            <FakturaKosztowaEdycjaModal
+              key={fakturyKosztoweEdycjaId}
+              rowId={fakturyKosztoweEdycjaId}
+              initialForm={fakturyKosztoweEdycjaInitialForm}
+              layout={FAKTURY_EDIT_MODAL_LAYOUT}
+              odbiorcaOpcje={FAKTURA_ODBIORCA_G4_OPCJE}
+              statusyWbazie={FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE}
+              saving={fakturyKosztoweEdycjaSaving}
+              mapaSprzedawcaPoNip={mapaSprzedawcaPoNip}
+              pracownicyPosortowani={pracownicyPosortowani}
+              opcjeRodzajuKosztu={fakturyOpcjeRodzajuKosztu}
+              opcjeTypu={fakturyOpcjeTypu}
+              onCancel={anulujEdycjeFakturyKosztowej}
+              onSave={(formEdycji, opcje) =>
+                zapiszEdycjeFakturyKosztowej(fakturyKosztoweEdycjaId, formEdycji, opcje)
+              }
+            />
           ) : null}
 
-          {czyAdminAktywny ? (
-            <div style={{ ...op.sectionCard, borderColor: "rgba(56,189,248,0.28)" }}>
-              <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.45rem" }}>
-                Admin — faktury do przypisania (brak KR lub brak pracownika)
-              </h3>
-              {fakturyDoPrzypisaniaFetchError ? (
-                <div style={{ ...s.errBox, marginBottom: "0.75rem" }} role="alert">
-                  Nie udało się wczytać listy do przypisania: {fakturyDoPrzypisaniaFetchError}
-                </div>
-              ) : null}
-              {fakturyDoPrzypisaniaList.length === 0 ? (
-                <p style={{ ...op.muted, margin: 0, fontSize: "0.84rem" }}>Brak rekordów do przypisania.</p>
-              ) : (
-                <div style={{ ...s.tableWrap, marginBottom: 0 }}>
-                  <table style={{ ...s.table, fontSize: "0.8rem" }}>
-                    <thead>
-                      <tr>
-                        <th style={s.th}>Data</th>
-                        <th style={s.th}>Nr faktury</th>
-                        <th style={s.th}>Komu</th>
-                        <th style={s.th}>KR</th>
-                        <th style={s.th}>Pracownik</th>
-                        <th style={s.th}>Akcja</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {fakturyDoPrzypisaniaList.map((r) => {
-                        const draft = fakturyDoPrzypisaniaDraft[r.id] ?? {
-                          kr: String(r.kr ?? "").trim(),
-                          zgloszil_pracownik_nr: String(r.zgloszil_pracownik_nr ?? "").trim(),
-                        };
-                        return (
-                          <tr key={`faktury-przypisz-${r.id}`}>
-                            <td style={s.td}>
-                              {r.created_at
-                                ? new Date(r.created_at).toLocaleString("pl-PL", { dateStyle: "short" })
-                                : "—"}
-                            </td>
-                            <td style={s.td}>{tekstTrim(r.numer_faktury) || "—"}</td>
-                            <td style={s.td}>{tekstTrim(r.komu) || "—"}</td>
-                            <td style={s.td}>
-                              <select
-                                style={{ ...s.input, margin: 0, padding: "0.25rem 0.35rem", minWidth: "9rem" }}
-                                value={draft.kr}
-                                onChange={(ev) =>
-                                  setFakturyDoPrzypisaniaDraft((prev) => ({
-                                    ...prev,
-                                    [r.id]: { ...draft, kr: ev.target.value },
-                                  }))
-                                }
-                              >
-                                <option value="">— bez KR —</option>
-                                {[...krList]
-                                  .sort((a, b) =>
-                                    String(a.kr ?? "").localeCompare(String(b.kr ?? ""), "pl", {
-                                      sensitivity: "base",
-                                      numeric: true,
-                                    }),
-                                  )
-                                  .map((kRow) => (
-                                    <option key={`faktury-kr-${r.id}-${kRow.kr}`} value={String(kRow.kr ?? "")}>
-                                      {String(kRow.kr ?? "")} — {String(kRow.nazwa_obiektu ?? "").trim()}
-                                    </option>
-                                  ))}
-                              </select>
-                            </td>
-                            <td style={s.td}>
-                              <select
-                                style={{ ...s.input, margin: 0, padding: "0.25rem 0.35rem", minWidth: "11rem" }}
-                                value={draft.zgloszil_pracownik_nr}
-                                onChange={(ev) =>
-                                  setFakturyDoPrzypisaniaDraft((prev) => ({
-                                    ...prev,
-                                    [r.id]: { ...draft, zgloszil_pracownik_nr: ev.target.value },
-                                  }))
-                                }
-                              >
-                                <option value="">— bez pracownika —</option>
-                                {pracownicyPosortowani.map((p) => (
-                                  <option key={`faktury-prac-${r.id}-${String(p.nr)}`} value={String(p.nr)}>
-                                    {String(p.nr)} — {String(p.imie_nazwisko ?? "").trim()}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td style={s.td}>
-                              <button
-                                type="button"
-                                style={{ ...s.btnGhost, fontSize: "0.78rem", padding: "0.25rem 0.5rem" }}
-                                disabled={fakturyDoPrzypisaniaSavingId === r.id}
-                                onClick={() => void zapiszPrzypisanieFakturyAdmin(r.id)}
-                              >
-                                {fakturyDoPrzypisaniaSavingId === r.id ? "Zapisywanie…" : "Zapisz"}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          ) : null}
         </>
       ) : null}
 
@@ -11392,8 +12506,40 @@ export default function App() {
         </>
       ) : null}
 
-      {widok === "teren_zespoly" ? (
-        <TerenZespolyPanel krList={krListPosortowana} pracownicy={pracownicy} trybHelp={trybHelp} />
+      {widok === "teren" ? (
+        <>
+          <div style={{ ...op.heroCard, marginBottom: "0.8rem" }}>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Teren - planowanie i wykonanie</h2>
+            <div style={{ ...s.btnRow, marginTop: "0.55rem" }}>
+              <button
+                type="button"
+                style={terenZakladka === "planowanie" ? s.btn : s.btnGhost}
+                onClick={() => setTerenZakladka("planowanie")}
+              >
+                Planowanie (v1)
+              </button>
+              <button
+                type="button"
+                style={terenZakladka === "wykonanie" ? s.btn : s.btnGhost}
+                onClick={() => setTerenZakladka("wykonanie")}
+              >
+                Wykonanie dzienne
+              </button>
+            </div>
+          </div>
+          {terenZakladka === "planowanie" ? (
+            <TerenPlanningBoard
+              krList={krListPosortowana}
+              pracownicy={pracownicyOdpowiedzialniTeren}
+              podwykonawcy={podwykonawcyList}
+              samochody={samochodyList}
+              sprzet={sprzetList}
+              trybHelp={trybHelp}
+            />
+          ) : (
+            <TerenZespolyPanel krList={krListPosortowana} pracownicy={pracownicyOdpowiedzialniTeren} trybHelp={trybHelp} />
+          )}
+        </>
       ) : null}
 
       {widok === "samochody" ? (
@@ -15230,7 +16376,40 @@ export default function App() {
             <span title="Automatyczne alerty">Alerty: {listaAlertowOperacyjnych.length}</span>
             <span title="KR z podświetleniem">Uwaga KR: {liczbaTematowUwagi}</span>
           </div>
-          <div style={{ ...op.navSectionLabel }}>Menu</div>
+          <div style={{ ...op.navSectionLabel }}>KR</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
+            {[
+              {
+                id: "kr",
+                label: "KR",
+                fn: przejdzDoKr,
+                w: "kr",
+                help: "Lista kodów KR, karty i pulpity projektów.",
+              },
+            ].map((b) => (
+              <div key={b.id}>
+                <button
+                  type="button"
+                  style={{ ...op.navBtn, ...(widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
+                  onClick={() => b.fn()}
+                >
+                  {b.label}
+                </button>
+                <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+              </div>
+            ))}
+            {trybHelp ? (
+              <div>
+                <button type="button" style={{ ...op.navBtn, marginBottom: 0 }} onClick={przejdzDoInfoZagrozen}>
+                  Reguły podświetleń (INFO)
+                </button>
+                <HelpLinijka wlaczony={trybHelp}>
+                  Treść wyjaśniająca kolory i zasady — do czytania, bez edycji projektów.
+                </HelpLinijka>
+              </div>
+            ) : null}
+          </div>
+          <div style={{ ...op.navSectionLabel }}>Osobiste</div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
             {[
               {
@@ -15241,18 +16420,29 @@ export default function App() {
                 help: "Start aplikacji — liczby, skróty i ogólny obraz sytuacji.",
               },
               {
-                id: "kr",
-                label: "KR",
-                fn: przejdzDoKr,
-                w: "kr",
-                help: "Lista kodów KR, karty i pulpity projektów.",
+                id: "przydzial_sprzetu",
+                label: "Przydział sprzętu",
+                fn: przejdzDoPrzydzialuSprzetu,
+                w: "przydzial_sprzetu",
+                help: "Docelowo: sprzęt firmowy przypisany do zalogowanej osoby.",
               },
+              ...(requireAuth
+                ? [
+                    {
+                      id: "moje_dokumenty",
+                      label: "Moje dokumenty",
+                      fn: przejdzDoMojeDokumenty,
+                      w: "moje_dokumenty",
+                      help: "Pliki z Box (kategoria z nazwy), opcjonalnie skrót do Google Sheet.",
+                    },
+                  ]
+                : []),
               {
                 id: "zadania",
-                label: "Zadania",
+                label: "Moje zadania",
                 fn: przejdzDoZadania,
                 w: "zadania",
-                help: "Zadania ogólne — terminy, Kanban, filtr KR.",
+                help: "Zadania, które zleciła zalogowana osoba lub które są jej przypisane.",
               },
               {
                 id: "czas_pracy",
@@ -15269,25 +16459,11 @@ export default function App() {
                 help: "Lista zgłoszeń kosztowych do opłacenia + przypisywanie rekordów po imporcie.",
               },
               {
-                id: "podwykonawca",
-                label: "Podwykonawcy",
-                fn: przejdzDoPodwykonawcow,
-                w: "podwykonawca",
-                help: "Katalog firm zewnętrznych.",
-              },
-              {
-                id: "sprzet",
-                label: "Sprzęt",
-                fn: przejdzDoSprzet,
-                w: "sprzet",
-                help: "Komputery, drukarki, ksera — inwentaryzacja.",
-              },
-              {
                 id: "ostrzezenia",
-                label: "Raporty",
+                label: "Osobiste raporty",
                 fn: przejdzDoOstrzezeniaPanel,
                 w: "ostrzezenia",
-                help: "Alerty operacyjne i lista wymagających reakcji.",
+                help: "Raporty i alerty dla zalogowanej osoby (sekcja do dalszego rozwoju).",
               },
             ].map((b) => (
               <div key={b.id}>
@@ -15303,23 +16479,26 @@ export default function App() {
             ))}
             <div style={op.navSectionLabel}>Zasoby</div>
             {[
-              ...(requireAuth
-                ? [
-                    {
-                      id: "moje_dokumenty",
-                      label: "Moje dokumenty",
-                      fn: przejdzDoMojeDokumenty,
-                      w: "moje_dokumenty",
-                      help: "Pliki z Box (kategoria z nazwy), opcjonalnie skrót do Google Sheet.",
-                    },
-                  ]
-                : []),
               {
-                id: "teren_zespoly",
+                id: "podwykonawca",
+                label: "Podwykonawcy",
+                fn: przejdzDoPodwykonawcow,
+                w: "podwykonawca",
+                help: "Katalog firm zewnętrznych.",
+              },
+              {
+                id: "teren",
                 label: "Teren",
-                fn: przejdzDoTerenZespolow,
-                w: "teren_zespoly",
-                help: "Przydziały terenowe: KR + dzień + kto; opcjonalnie nazwane listy ekip.",
+                fn: () => przejdzDoTeren("planowanie"),
+                w: "teren",
+                help: "Jedna całość: planowanie, przydziały, wykonanie dzienne i raport.",
+              },
+              {
+                id: "sprzet",
+                label: "Sprzęt",
+                fn: przejdzDoSprzet,
+                w: "sprzet",
+                help: "Pełna ewidencja sprzętu dla całej firmy.",
               },
               {
                 id: "samochody",
@@ -15347,57 +16526,6 @@ export default function App() {
                 <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
               </div>
             ))}
-            <div>
-              <button type="button" style={{ ...op.navBtn, marginBottom: 0 }} onClick={przejdzDoInfoZagrozen}>
-                Reguły podświetleń (INFO)
-              </button>
-              <HelpLinijka wlaczony={trybHelp}>
-                Treść wyjaśniająca kolory i zasady — do czytania, bez edycji projektów.
-              </HelpLinijka>
-            </div>
-          </div>
-          <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.45rem" }}>KR</div>
-          <HelpLinijka wlaczony={trybHelp}>
-            Kliknij wiersz — otworzy się ten projekt w środkowej części ekranu. Kropka to przybliżony stan (uwaga /
-            spokój).
-          </HelpLinijka>
-          <div style={{ maxHeight: "min(38vh, 420px)", overflowY: "auto", marginBottom: "0.65rem" }}>
-            {panelKrListaFiltrowana.length === 0 ? (
-              <p style={{ ...op.muted, fontSize: "0.76rem", margin: 0 }}>Brak pozycji przy tym filtrze.</p>
-            ) : (
-              panelKrListaFiltrowana.map((row) => {
-                const active =
-                  wybranyKrKlucz != null && String(wybranyKrKlucz).trim() === String(row.kr).trim();
-                return (
-                  <button
-                    key={String(row.kr)}
-                    type="button"
-                    style={op.krListItem(active, kodyKrZWyroznieniemUwagi.has(String(row.kr).trim()))}
-                    onClick={() => wybierzKrWPanelu(row)}
-                  >
-                    <span style={{ minWidth: 0, textAlign: "left", lineHeight: 1.25 }}>
-                      <strong style={{ fontSize: "0.78rem" }}>{row.kr}</strong>
-                      {row.nazwa_obiektu ? (
-                        <span
-                          style={{
-                            display: "block",
-                            fontWeight: 500,
-                            color: "#94a3b8",
-                            fontSize: "0.66rem",
-                            marginTop: "0.04rem",
-                          }}
-                        >
-                          {String(row.nazwa_obiektu).length > 38
-                            ? `${String(row.nazwa_obiektu).slice(0, 36)}…`
-                            : row.nazwa_obiektu}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span style={op.dot(kolorKropkiKrWPanelu(row))} title="Status przybliżony" />
-                  </button>
-                );
-              })
-            )}
           </div>
           {widok === "kr" && wybranyRekordKr ? (
             <div style={{ borderTop: "1px solid rgba(148,163,184,0.12)", paddingTop: "0.75rem" }}>

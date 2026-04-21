@@ -18,6 +18,15 @@ export const supabaseUrl =
   import.meta.env.VITE_SUPABASE_URL ??
   "https://xtkzubyrxcngzwlykzup.supabase.co";
 
+/** Host z konfiguracji (np. diagnostyka: czy zapis trafia do właściwego projektu). */
+export function supabaseApiHostname() {
+  try {
+    return new URL(supabaseUrl).hostname;
+  } catch {
+    return "";
+  }
+}
+
 const anonKey =
   import.meta.env.VITE_SUPABASE_ANON_KEY ??
   "sb_publishable_egj88SMg2r8pgEhdZl94_g_hWAIBlt0";

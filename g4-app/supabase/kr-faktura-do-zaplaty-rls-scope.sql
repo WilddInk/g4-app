@@ -1,9 +1,10 @@
   -- =============================================================================
   -- Docelowy zakres dostępu do faktur (po logowaniu):
-  -- - admin: widzi i edytuje wszystkie
-  -- - kierownik KR: widzi faktury dla KR, które prowadzi (kr.osoba_prowadzaca = pracownik.nr)
-  -- - pracownik: widzi faktury, które sam zgłosił (zgloszil_pracownik_nr = pracownik.nr)
-  -- - faktury nieprzypisane (bez KR i bez pracownika): tylko admin
+  -- - admin: widzi wszystkie (SELECT); mutacje jak dotąd tylko admin
+  -- - kierownik: faktury dla wszystkich „zwykłych” KR (wszystko poza 000, KK, FOT); dla 000/KK/FOT
+  --   tylko gdy płatnik to użytkownik lub kierownik (nie administrator)
+  -- - użytkownik: tylko wiersze, gdzie platnik_id = jego pracownik.nr
+  -- - faktury bez sensownego dopasowania: tylko admin
   --
   -- Uruchom po: kr-faktura-do-zaplaty.sql
   -- =============================================================================
@@ -57,36 +58,52 @@ COMMENT ON COLUMN public.kr_faktura_do_zaplaty.legacy_nazwa_pliku IS 'Legacy CSV
     FOR SELECT
     TO authenticated
     USING (
-      -- Admin widzi wszystko
       EXISTS (
         SELECT 1
         FROM public.pracownik p_admin
         WHERE p_admin.auth_user_id = auth.uid()
-          AND p_admin.is_active = true
-          AND p_admin.app_role = 'admin'
+          AND COALESCE(p_admin.is_active, true) = true
+          AND trim(coalesce(p_admin.app_role, '')) = 'admin'
       )
       OR
-      -- Kierownik widzi tylko KR, które prowadzi
+      (
+        EXISTS (
+          SELECT 1
+          FROM public.pracownik p_me
+          WHERE p_me.auth_user_id = auth.uid()
+            AND COALESCE(p_me.is_active, true) = true
+            AND trim(coalesce(p_me.app_role, '')) = 'kierownik'
+        )
+        AND (
+          trim(upper(coalesce(public.kr_faktura_do_zaplaty.kr::text, '')))
+            NOT IN ('000', 'KK', 'FOT')
+          OR (
+            trim(coalesce(public.kr_faktura_do_zaplaty.platnik_id::text, '')) <> ''
+            AND EXISTS (
+              SELECT 1
+              FROM public.pracownik p_plat
+              WHERE trim(coalesce(p_plat.nr::text, '')) = trim(coalesce(public.kr_faktura_do_zaplaty.platnik_id::text, ''))
+                AND COALESCE(p_plat.is_active, true) = true
+                AND trim(coalesce(p_plat.app_role, '')) IN ('uzytkownik', 'kierownik')
+            )
+          )
+        )
+      )
+      OR
       EXISTS (
         SELECT 1
         FROM public.pracownik p_me
-        JOIN public.kr k ON k.kr = public.kr_faktura_do_zaplaty.kr
         WHERE p_me.auth_user_id = auth.uid()
-          AND p_me.is_active = true
-          AND p_me.nr = k.osoba_prowadzaca
-      )
-      OR
-      -- Pracownik widzi swoje zgłoszenia
-      EXISTS (
-        SELECT 1
-        FROM public.pracownik p_me
-        WHERE p_me.auth_user_id = auth.uid()
-          AND p_me.is_active = true
-          AND p_me.nr = public.kr_faktura_do_zaplaty.zgloszil_pracownik_nr
+          AND COALESCE(p_me.is_active, true) = true
+          AND trim(coalesce(p_me.app_role, '')) = 'uzytkownik'
+          AND trim(coalesce(p_me.nr::text, '')) = trim(coalesce(public.kr_faktura_do_zaplaty.platnik_id::text, ''))
+          AND trim(coalesce(public.kr_faktura_do_zaplaty.platnik_id::text, '')) <> ''
       )
     );
 
   -- Mutacje tylko admin (najbezpieczniej na start).
+  -- Te same warunki „kto jest adminem” co w SELECT (COALESCE is_active, trim roli), inaczej UPDATE
+  -- mógł być zabroniony mimo że wiersz był widoczny (np. is_active NULL albo rola z białym znakiem).
   CREATE POLICY "auth_insert_kr_faktura_do_zaplaty"
     ON public.kr_faktura_do_zaplaty
     FOR INSERT
@@ -96,8 +113,8 @@ COMMENT ON COLUMN public.kr_faktura_do_zaplaty.legacy_nazwa_pliku IS 'Legacy CSV
         SELECT 1
         FROM public.pracownik p
         WHERE p.auth_user_id = auth.uid()
-          AND p.is_active = true
-          AND p.app_role = 'admin'
+          AND COALESCE(p.is_active, true) = true
+          AND trim(coalesce(p.app_role, '')) = 'admin'
       )
     );
 
@@ -110,8 +127,8 @@ COMMENT ON COLUMN public.kr_faktura_do_zaplaty.legacy_nazwa_pliku IS 'Legacy CSV
         SELECT 1
         FROM public.pracownik p
         WHERE p.auth_user_id = auth.uid()
-          AND p.is_active = true
-          AND p.app_role = 'admin'
+          AND COALESCE(p.is_active, true) = true
+          AND trim(coalesce(p.app_role, '')) = 'admin'
       )
     )
     WITH CHECK (
@@ -119,8 +136,8 @@ COMMENT ON COLUMN public.kr_faktura_do_zaplaty.legacy_nazwa_pliku IS 'Legacy CSV
         SELECT 1
         FROM public.pracownik p
         WHERE p.auth_user_id = auth.uid()
-          AND p.is_active = true
-          AND p.app_role = 'admin'
+          AND COALESCE(p.is_active, true) = true
+          AND trim(coalesce(p.app_role, '')) = 'admin'
       )
     );
 
@@ -133,8 +150,8 @@ COMMENT ON COLUMN public.kr_faktura_do_zaplaty.legacy_nazwa_pliku IS 'Legacy CSV
         SELECT 1
         FROM public.pracownik p
         WHERE p.auth_user_id = auth.uid()
-          AND p.is_active = true
-          AND p.app_role = 'admin'
+          AND COALESCE(p.is_active, true) = true
+          AND trim(coalesce(p.app_role, '')) = 'admin'
       )
     );
 

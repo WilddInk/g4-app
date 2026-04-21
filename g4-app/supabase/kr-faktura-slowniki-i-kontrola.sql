@@ -74,19 +74,28 @@ COMMENT ON VIEW public.kr_faktura_duplikaty IS
   'Potencjalne duplikaty wg klucza biznesowego: KR + data + sprzedawca + numer/plik + netto.';
 
 -- Widok: faktury niekompletne (braki w głównych polach).
+-- Uwagi: numer może być w legacy_nazwa_pliku; odbiorca w legacy_receiver_name;
+-- sprzedawca — nazwa albo NIP (kolumna lub legacy_issuer_id NIP_…); nr_konta nie jest wymagane.
 CREATE OR REPLACE VIEW public.kr_faktura_niekompletne AS
 SELECT *
 FROM public.kr_faktura_do_zaplaty f
 WHERE
   NULLIF(TRIM(COALESCE(f.kr, '')), '') IS NULL
   OR f.data_faktury IS NULL
-  OR NULLIF(TRIM(COALESCE(f.sprzedawca_nazwa, '')), '') IS NULL
-  OR NULLIF(TRIM(COALESCE(f.komu, '')), '') IS NULL
-  OR NULLIF(TRIM(COALESCE(f.numer_faktury, '')), '') IS NULL
+  OR (
+    NULLIF(TRIM(COALESCE(f.sprzedawca_nazwa, '')), '') IS NULL
+    AND NULLIF(TRIM(COALESCE(f.sprzedawca_nip, '')), '') IS NULL
+    AND NULLIF(TRIM(COALESCE(f.legacy_issuer_id, '')), '') IS NULL
+  )
+  OR NULLIF(TRIM(COALESCE(f.komu, f.legacy_receiver_name, '')), '') IS NULL
+  OR (
+    NULLIF(TRIM(COALESCE(f.numer_faktury, '')), '') IS NULL
+    AND NULLIF(TRIM(COALESCE(f.legacy_nazwa_pliku, '')), '') IS NULL
+  )
   OR f.kwota_brutto IS NULL;
 
 COMMENT ON VIEW public.kr_faktura_niekompletne IS
-  'Faktury z brakami wymaganych danych operacyjnych.';
+  'Faktury z brakami wymaganych danych operacyjnych (bez wymogu nr_konta).';
 
 GRANT SELECT ON public.kr_faktura_sprzedawca TO authenticated;
 GRANT SELECT ON public.kr_faktura_sprzedawca TO anon;
