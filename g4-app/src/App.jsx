@@ -10,6 +10,7 @@ import { supabase, supabaseApiHostname } from "./lib/supabase.js";
 import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 import { requireAuth } from "./config/requireAuth.js";
 import { grupaTypuCzasuWpisu } from "./domain/grupaTypuCzasuWpisu.js";
+import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { s } from "./styles/appDashboardStyles.js";
 import {
   dataDoInputa,
@@ -653,6 +654,108 @@ const ZADANIE_STATUS_W_BAZIE = LOG_STATUS_ZDARZENIA_W_BAZIE;
 /** Tickety aplikacyjne — statusy robocze + archiwum po zamknięciu przez zgłaszającego. */
 const APP_TICKET_STATUS_W_BAZIE = ["oczekuje", "w trakcie", "zamkniete"];
 
+const PODWYKONAWCA_MAPA_CENTER_PL = [52.05, 19.4];
+const PODWYKONAWCA_MIASTA_SUGESTIE = [
+  "Warszawa",
+  "Kraków",
+  "Łódź",
+  "Wrocław",
+  "Poznań",
+  "Gdańsk",
+  "Szczecin",
+  "Bydgoszcz",
+  "Lublin",
+  "Katowice",
+  "Białystok",
+  "Rzeszów",
+  "Olsztyn",
+  "Kielce",
+  "Opole",
+  "Toruń",
+  "Zielona Góra",
+  "Gorzów Wielkopolski",
+  "Bielsko-Biała",
+  "Częstochowa",
+];
+
+const PODWYKONAWCA_MIASTA_COORDS = {
+  warszawa: [52.2297, 21.0122],
+  krakow: [50.0647, 19.945],
+  lodz: [51.7592, 19.456],
+  wroclaw: [51.1079, 17.0385],
+  poznan: [52.4064, 16.9252],
+  gdansk: [54.352, 18.6466],
+  szczecin: [53.4285, 14.5528],
+  bydgoszcz: [53.1235, 18.0084],
+  lublin: [51.2465, 22.5684],
+  katowice: [50.2649, 19.0238],
+  bialystok: [53.1325, 23.1688],
+  rzeszow: [50.0412, 21.9991],
+  olsztyn: [53.7784, 20.48],
+  kielce: [50.8661, 20.6286],
+  opole: [50.6751, 17.9213],
+  torun: [53.0138, 18.5984],
+  "zielona gora": [51.9356, 15.5064],
+  "gorzow wielkopolski": [52.7368, 15.2288],
+  czestochowa: [50.8118, 19.1203],
+  "bielsko biala": [49.8224, 19.0469],
+  radom: [51.4027, 21.1471],
+  plock: [52.5468, 19.7064],
+  koszalin: [54.1944, 16.1722],
+  elblag: [54.1522, 19.4088],
+  gliwice: [50.2945, 18.6714],
+  sosnowiec: [50.2863, 19.1041],
+  slupsk: [54.4641, 17.0287],
+  legnica: [51.207, 16.155],
+  "nowy sacz": [49.6218, 20.6971],
+  "jelenia gora": [50.9044, 15.719],
+};
+
+function podwykonawcaMapaKluczLokalizacji(txt) {
+  return String(txt ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,;:()/-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function czyFakturaPasujeDoPodwykonawcy(row, nazwaFirmy) {
+  const wzorzec = podwykonawcaMapaKluczLokalizacji(nazwaFirmy);
+  if (!wzorzec) return false;
+  const kandydaci = [
+    row?.sprzedawca_nazwa,
+    row?.komu,
+    row?.legacy_receiver_name,
+    row?.legacy_payer_name,
+  ];
+  return kandydaci.some((v) => {
+    const txt = podwykonawcaMapaKluczLokalizacji(v);
+    return Boolean(txt) && (txt === wzorzec || txt.includes(wzorzec));
+  });
+}
+
+async function podwykonawcaGeocodePL(lokalizacjaRaw) {
+  const q = String(lokalizacjaRaw ?? "").trim();
+  if (!q) return null;
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=pl&limit=1&q=${encodeURIComponent(q)}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const first = data[0] ?? {};
+  const lat = Number(first.lat);
+  const lng = Number(first.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
 function etykietaStatusuAppTicket(statusRaw) {
   const s = String(statusRaw ?? "").trim().toLowerCase();
   if (s === "oczekuje") return "Oczekuje";
@@ -809,6 +912,7 @@ function podwykonawcaPustyForm() {
     lokalizacja: "",
     osoba_kontaktowa: "",
     telefon: "",
+    uwagi: "",
   };
 }
 
@@ -818,6 +922,7 @@ function podwykonawcaWierszDoFormu(row) {
     lokalizacja: row.lokalizacja != null ? String(row.lokalizacja) : "",
     osoba_kontaktowa: row.osoba_kontaktowa != null ? String(row.osoba_kontaktowa) : "",
     telefon: row.telefon != null ? String(row.telefon) : "",
+    uwagi: row.uwagi != null ? String(row.uwagi) : "",
   };
 }
 
@@ -1004,36 +1109,6 @@ function kwotaBruttoEtykieta(wartosc) {
       : Number.parseFloat(String(wartosc).replace(",", ".").replace(/\s/g, ""));
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " zł";
-}
-
-function fakturaKluczDuplikatu(row) {
-  const kr = String(row?.kr ?? "").trim().toLowerCase();
-  const data = String(row?.data_faktury ?? "").trim();
-  const sprzedawca = String(row?.sprzedawca_nazwa ?? row?.legacy_receiver_name ?? "")
-    .trim()
-    .toLowerCase();
-  const nr = String(row?.numer_faktury ?? row?.legacy_nazwa_pliku ?? "")
-    .trim()
-    .toLowerCase();
-  const netto = row?.kwota_netto == null ? "" : String(row.kwota_netto).trim();
-  return [kr, data, sprzedawca, nr, netto].join("|");
-}
-
-function czyFakturaNiekompletna(row) {
-  const kr = String(row?.kr ?? "").trim();
-  const data = String(row?.data_faktury ?? "").trim();
-  const odbiorca = String(row?.komu ?? row?.legacy_receiver_name ?? "").trim();
-  const numer =
-    String(row?.numer_faktury ?? "").trim() || String(row?.legacy_nazwa_pliku ?? "").trim();
-  const sprzedawca = String(row?.sprzedawca_nazwa ?? "").trim();
-  const rawId = row?.sprzedawca_nip || row?.legacy_issuer_id;
-  const id = identyfikatorPodatkowyZnormalizowany(rawId);
-  const nipZnany = id.length >= 5 || nipPolskiCyfry(rawId).length === 10;
-  const maSprzedawce = Boolean(sprzedawca) || nipZnany;
-  const brutto = row?.kwota_brutto;
-  const maBrutto = brutto != null && brutto !== "";
-  /** `nr_konta` celowo pomijane — przy szybkiej zapłacie zwykle puste. */
-  return !kr || !data || !maSprzedawce || !odbiorca || !numer || !maBrutto;
 }
 
 function czyKrTechniczneUkrywaneDlaNieAdmin(kr) {
@@ -1767,6 +1842,12 @@ export default function App() {
   const [kalFlotaMiesiac, setKalFlotaMiesiac] = useState(() => new Date().getMonth() + 1);
   const [pwEdycjaId, setPwEdycjaId] = useState(null);
   const [pwForm, setPwForm] = useState(() => podwykonawcaPustyForm());
+  const [pwGeoBusyId, setPwGeoBusyId] = useState(null);
+  const [pwGeoInfo, setPwGeoInfo] = useState(null);
+  const [pwMapaAktywneIds, setPwMapaAktywneIds] = useState(() => new Set());
+  const [podwykonawcaSekcja, setPodwykonawcaSekcja] = useState("katalog");
+  const pwGeoAutoWTrakcieRef = useRef(false);
+  const pwGeoAutoPrzetworzoneRef = useRef(new Set());
 
   const [krZleceniaPwList, setKrZleceniaPwList] = useState([]);
   const [krZleceniaPwFetchError, setKrZleceniaPwFetchError] = useState(null);
@@ -1787,6 +1868,8 @@ export default function App() {
   const [fakturyDoZaplatyOczekujaceFetchError, setFakturyDoZaplatyOczekujaceFetchError] = useState(null);
   /** Pełna baza faktur kosztowych (nie tylko „do zapłaty”) — osobny moduł. */
   const [fakturyKosztoweList, setFakturyKosztoweList] = useState([]);
+  const [fakturySekcja, setFakturySekcja] = useState("wszystkie");
+  const [fakturyPodwykonawcaFiltrNazwa, setFakturyPodwykonawcaFiltrNazwa] = useState("");
   const [fakturyKosztoweFetchError, setFakturyKosztoweFetchError] = useState(null);
   const [fakturyKosztoweLadowanieListy, setFakturyKosztoweLadowanieListy] = useState(false);
   const fakturyKosztoweSuroweRef = useRef([]);
@@ -1796,7 +1879,6 @@ export default function App() {
   const [fakturyTypySlownikList, setFakturyTypySlownikList] = useState([]);
   const [fakturyRodzajeKosztuSlownikList, setFakturyRodzajeKosztuSlownikList] = useState([]);
   const [fakturyKosztoweSzukaj, setFakturyKosztoweSzukaj] = useState("");
-  const [fakturyKosztoweTryb, setFakturyKosztoweTryb] = useState("wszystkie");
   const [fakturyKosztoweDataOd, setFakturyKosztoweDataOd] = useState(
     () => fakturyKosztoweDomyslnyZakresDatRokuKalendarzowego().od,
   );
@@ -1809,10 +1891,6 @@ export default function App() {
   const fakturyKosztoweSzukajDoListy = useDeferredValue(fakturyKosztoweSzukaj);
   const fakturyKosztoweFiltrKrDoListy = useDeferredValue(fakturyKosztoweFiltrKr);
   const fakturyKosztoweFiltryKolumnDoListy = useDeferredValue(fakturyKosztoweFiltryKolumn);
-  const [fakturyFolderSkanList, setFakturyFolderSkanList] = useState([]);
-  const [fakturyFolderSkanWybrane, setFakturyFolderSkanWybrane] = useState([]);
-  const [fakturyFolderImportSaving, setFakturyFolderImportSaving] = useState(false);
-  const fakturyFolderInputRef = useRef(null);
   /** Górny pasek przewijania poziomego — zsynchronizowany z kontenerem tabeli faktur kosztowych. */
   const fakturyKosztoweTabelaScrollGoraRef = useRef(null);
   const fakturyKosztoweTabelaScrollDolRef = useRef(null);
@@ -2761,70 +2839,6 @@ export default function App() {
     }
   }
 
-  function zeskanujFolderFakturPoPlikach(ev) {
-    const files = Array.from(ev?.target?.files ?? []);
-    if (files.length === 0) {
-      setFakturyFolderSkanList([]);
-      return;
-    }
-    const rows = files
-      .filter((f) => /\.pdf$/i.test(String(f.name ?? "")))
-      .map((f) => {
-        const name = String(f.name ?? "").trim();
-        const rel = String(f.webkitRelativePath ?? "").trim();
-        const key = `${rel}|${name}`;
-        const modifiedAt = Number.isFinite(Number(f.lastModified)) ? new Date(f.lastModified).toISOString() : "";
-        return {
-          key,
-          name,
-          relativePath: rel,
-          modifiedAt,
-          inBase: fakturyNazwaPlikuWBazieSet.has(name.toLowerCase()),
-        };
-      })
-      .sort((a, b) => {
-        const da = String(a.modifiedAt ?? "");
-        const db = String(b.modifiedAt ?? "");
-        if (da !== db) return db.localeCompare(da); // nowsze najpierw
-        return a.name.localeCompare(b.name, "pl", { sensitivity: "base", numeric: true });
-      });
-    setFakturyFolderSkanList(rows);
-    setFakturyFolderSkanWybrane([]);
-  }
-
-  async function wczytajWybraneBrakujaceFakturyZFolderu() {
-    if (!czyAdminAktywny) {
-      alert("Import do bazy jest dostępny tylko dla administratora.");
-      return;
-    }
-    const selected = fakturyFolderSkanList.filter((r) => !r.inBase && fakturyFolderSkanWybrane.includes(r.key));
-    if (selected.length === 0) {
-      alert("Nie wybrano żadnych brakujących plików do wczytania.");
-      return;
-    }
-    const payload = selected.map((r) => ({
-      kr: null,
-      komu: "DO_UZUPELNIENIA",
-      kwota_brutto: 0,
-      status: "do_zaplaty",
-      notatki: "Dodano z podglądu folderu PDF (bez uploadu pliku).",
-      legacy_nazwa_pliku: r.name,
-      legacy_pdf_file: sciezkaWindows(r.relativePath || r.name),
-      data_faktury: null,
-    }));
-    setFakturyFolderImportSaving(true);
-    const { error } = await supabase.from(FAKTURY_KOSZTOWE_TABELA_DB).insert(payload);
-    setFakturyFolderImportSaving(false);
-    if (error) {
-      console.error(error);
-      alert("Wczytanie do bazy: " + error.message);
-      return;
-    }
-    void fetchFakturyKosztoweWszystkie();
-    void fetchFakturyDoZaplatyOczekujace();
-    alert(`Dodano do bazy: ${payload.length} faktur (szkice do uzupełnienia).`);
-  }
-
   /** Pobiera **faktury sprzedażowe** (wiersze `faktury` z `etap_id` należącym do etapów tego KR). */
   async function fetchKrFakturySprzedazForKr(krKod) {
     const k = String(krKod ?? "").trim();
@@ -3166,7 +3180,7 @@ export default function App() {
     void fetchPracownicy();
   }
 
-  function przejdzDoPodwykonawcow() {
+  function przejdzDoPodwykonawcow(sekcja = "katalog") {
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
@@ -3185,12 +3199,13 @@ export default function App() {
     setZadanieForm(zadaniePustyForm());
     setPwEdycjaId(null);
     setPwForm(podwykonawcaPustyForm());
+    setPodwykonawcaSekcja(sekcja);
     setWidok("podwykonawca");
     void fetchPodwykonawcy();
     void fetchPracownicy();
   }
 
-  function przejdzDoFaktur() {
+  function przejdzDoMapyPodwykonawcow() {
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
@@ -3209,11 +3224,58 @@ export default function App() {
     setZadanieForm(zadaniePustyForm());
     setPwEdycjaId(null);
     setPwForm(podwykonawcaPustyForm());
+    setPodwykonawcaSekcja("mapa");
+    setWidok("mapa_podwykonawcow");
+    void fetchPodwykonawcy();
+    void fetchPracownicy();
+  }
+
+  function przelaczAktywnyPunktPodwykonawcy(id) {
+    const key = String(id);
+    setPwMapaAktywneIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function odznaczWszystkiePunktyPodwykonawcow() {
+    setPwMapaAktywneIds(new Set());
+  }
+
+  function przejdzDoFaktur(sekcja = "wszystkie") {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setFakturySekcja(sekcja);
+    setFakturyPodwykonawcaFiltrNazwa("");
     setWidok("faktury");
     void fetchFakturyDoZaplatyOczekujace();
     void fetchFakturyKosztoweWszystkie();
     if (czyAdminAktywny) {
     }
+  }
+
+  function przejdzDoFakturPodwykonawcyFirmy(nazwaFirmy) {
+    const nazwa = String(nazwaFirmy ?? "").trim();
+    przejdzDoFaktur("podwykonawcy");
+    setFakturyPodwykonawcaFiltrNazwa(nazwa);
   }
 
   function przejdzDoSamochody() {
@@ -3859,29 +3921,59 @@ export default function App() {
   }
 
   function wczytajPwDoEdycji(row) {
+    if (!row || row.id == null) return;
+    setPwGeoInfo(null);
     setPwEdycjaId(row.id);
     setPwForm(podwykonawcaWierszDoFormu(row));
   }
 
   function anulujPwEdycje() {
+    setPwGeoInfo(null);
     setPwEdycjaId(null);
     setPwForm(podwykonawcaPustyForm());
   }
 
   async function zapiszPodwykonawce(e) {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
     const nazwa = String(pwForm.nazwa_firmy ?? "").trim();
     if (!nazwa) {
       alert("Pole „Nazwa firmy” jest wymagane.");
       return;
     }
 
+    const lokalizacja = String(pwForm.lokalizacja ?? "").trim();
     const payload = {
       nazwa_firmy: nazwa,
-      lokalizacja: String(pwForm.lokalizacja ?? "").trim() || null,
+      lokalizacja: lokalizacja || null,
       osoba_kontaktowa: String(pwForm.osoba_kontaktowa ?? "").trim() || null,
       telefon: String(pwForm.telefon ?? "").trim() || null,
+      uwagi: String(pwForm.uwagi ?? "").trim() || null,
     };
+    try {
+      if (lokalizacja) {
+        const geo = await podwykonawcaGeocodePL(lokalizacja);
+        if (geo) {
+          payload.lokalizacja_lat = geo.lat;
+          payload.lokalizacja_lng = geo.lng;
+          setPwGeoInfo(`OK: punkt ustawiony automatycznie dla lokalizacji „${lokalizacja}”.`);
+        } else {
+          payload.lokalizacja_lat = null;
+          payload.lokalizacja_lng = null;
+          setPwGeoInfo(
+            `Nie znalazłam lokalizacji „${lokalizacja}”. Spróbuj wpisać samo miasto, np. „Kraków” albo „Kraków, małopolskie”.`
+          );
+        }
+      } else {
+        payload.lokalizacja_lat = null;
+        payload.lokalizacja_lng = null;
+        setPwGeoInfo(null);
+      }
+    } catch (_err) {
+      // Nie blokujemy zapisu podwykonawcy, gdy zewnętrzne geokodowanie chwilowo nie działa.
+      payload.lokalizacja_lat = null;
+      payload.lokalizacja_lng = null;
+      setPwGeoInfo("Nie udało się teraz pobrać punktu z mapy. Zapis jest OK, później kliknij „Popraw lokalizację”.");
+    }
 
     if (pwEdycjaId != null) {
       const { error } = await supabase
@@ -3921,6 +4013,38 @@ export default function App() {
     setPwEdycjaId(null);
     setPwForm(podwykonawcaPustyForm());
     await fetchPodwykonawcy();
+  }
+
+  async function poprawLokalizacjePodwykonawcy(row) {
+    const id = row?.id;
+    if (id == null) return;
+    const lokalizacja = String(row?.lokalizacja ?? "").trim();
+    if (!lokalizacja) {
+      alert("Najpierw wpisz lokalizację dla tego podwykonawcy.");
+      return;
+    }
+    setPwGeoBusyId(id);
+    try {
+      const geo = await podwykonawcaGeocodePL(lokalizacja);
+      if (!geo) {
+        alert("Nie udało się znaleźć tej lokalizacji na mapie. Spróbuj wpisać np. samą nazwę miasta.");
+        return;
+      }
+      const { error } = await supabase
+        .from("podwykonawca")
+        .update({ lokalizacja_lat: geo.lat, lokalizacja_lng: geo.lng })
+        .eq("id", id)
+        .select("id");
+      if (error) {
+        console.error(error);
+        alert(`Aktualizacja lokalizacji: ${error.message}`);
+        return;
+      }
+      setPwGeoInfo(`Gotowe: poprawiłam punkt mapy dla „${String(row?.nazwa_firmy ?? "").trim() || "podwykonawcy"}”.`);
+      await fetchPodwykonawcy();
+    } finally {
+      setPwGeoBusyId(null);
+    }
   }
 
   async function usunPodwykonawce(id) {
@@ -4741,21 +4865,6 @@ export default function App() {
     return m;
   }, [fakturyKosztoweList, mapaSprzedawcaPoNip]);
 
-  const fakturyKosztoweDuplikatyIds = useMemo(() => {
-    const licznik = new Map();
-    for (const row of fakturyKosztoweList) {
-      const key = fakturaKluczDuplikatu(row);
-      if (!key.replace(/\|/g, "")) continue;
-      licznik.set(key, (licznik.get(key) ?? 0) + 1);
-    }
-    const ids = new Set();
-    for (const row of fakturyKosztoweList) {
-      const key = fakturaKluczDuplikatu(row);
-      if ((licznik.get(key) ?? 0) > 1) ids.add(row.id);
-    }
-    return ids;
-  }, [fakturyKosztoweList]);
-
   const fakturyKosztoweListaWidoku = useMemo(() => {
     const q = tekstTrim(fakturyKosztoweSzukajDoListy).toLowerCase();
     const fk = tekstTrim(fakturyKosztoweFiltrKrDoListy).toLowerCase();
@@ -4787,12 +4896,6 @@ export default function App() {
 
       if (fk && !String(row.kr ?? "").toLowerCase().includes(fk)) continue;
 
-      if (fakturyKosztoweTryb === "duplikaty") {
-        if (!fakturyKosztoweDuplikatyIds.has(row.id)) continue;
-      } else if (fakturyKosztoweTryb === "niekompletne") {
-        if (!czyFakturaNiekompletna(row)) continue;
-      }
-
       out.push(row);
     }
 
@@ -4814,22 +4917,9 @@ export default function App() {
     fakturyKosztoweFiltryKolumnDoListy,
     fakturyKosztoweDataOd,
     fakturyKosztoweDataDo,
-    fakturyKosztoweTryb,
-    fakturyKosztoweDuplikatyIds,
     fakturyKosztoweSort,
     mapaSprzedawcaPoNip,
   ]);
-
-  const fakturyNazwaPlikuWBazieSet = useMemo(() => {
-    const out = new Set();
-    for (const row of fakturyKosztoweList) {
-      const a = nazwaPlikuZeSciezki(row?.legacy_pdf_file).toLowerCase();
-      const b = nazwaPlikuZeSciezki(row?.legacy_nazwa_pliku).toLowerCase();
-      if (a) out.add(a);
-      if (b) out.add(b);
-    }
-    return out;
-  }, [fakturyKosztoweList]);
   const fakturyOpcjeTypu = useMemo(() => {
     const m = new Map();
     for (const t of fakturyTypySlownikList) {
@@ -5093,6 +5183,165 @@ export default function App() {
       ),
     [podwykonawcyList]
   );
+  const podwykonawcyMapaPunkty = useMemo(
+    () =>
+      podwykonawcyPosortowani
+        .map((p) => {
+          const lokalizacjaRaw = String(p.lokalizacja ?? "").trim();
+          const lat = Number(p.lokalizacja_lat);
+          const lng = Number(p.lokalizacja_lng);
+          const coordsFromDb =
+            Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+          const klucz = podwykonawcaMapaKluczLokalizacji(lokalizacjaRaw);
+          const coordsFromDictionary = PODWYKONAWCA_MIASTA_COORDS[klucz];
+          const coords = coordsFromDb ?? coordsFromDictionary ?? null;
+          if (!coords) return null;
+          return {
+            id: p.id,
+            nazwa_firmy: String(p.nazwa_firmy ?? "").trim() || `id ${p.id}`,
+            osoba_kontaktowa: String(p.osoba_kontaktowa ?? "").trim(),
+            telefon: String(p.telefon ?? "").trim(),
+            uwagi: String(p.uwagi ?? "").trim(),
+            lokalizacja: lokalizacjaRaw,
+            coords,
+            source: coordsFromDb ? "db" : "slownik",
+          };
+        })
+        .filter(Boolean),
+    [podwykonawcyPosortowani]
+  );
+  const podwykonawcaFakturyLicznikMap = useMemo(() => {
+    const map = new Map();
+    const fakturyPodwykonawcy = fakturyKosztoweList.filter((row) =>
+      String(row?.typ_nazwy ?? "").trim().toLowerCase().includes("podwykonawca"),
+    );
+    for (const pw of podwykonawcyList) {
+      const nazwa = String(pw?.nazwa_firmy ?? "").trim();
+      if (!nazwa) continue;
+      const count = fakturyPodwykonawcy.reduce(
+        (acc, row) => (czyFakturaPasujeDoPodwykonawcy(row, nazwa) ? acc + 1 : acc),
+        0,
+      );
+      if (count > 0) map.set(pw.id, count);
+    }
+    return map;
+  }, [fakturyKosztoweList, podwykonawcyList]);
+  const podwykonawcyNazwySet = useMemo(() => {
+    const set = new Set();
+    for (const pw of podwykonawcyList) {
+      const nazwa = podwykonawcaMapaKluczLokalizacji(pw?.nazwa_firmy);
+      if (nazwa) set.add(nazwa);
+    }
+    return set;
+  }, [podwykonawcyList]);
+  const podwykonawcyMapaBraki = useMemo(
+    () =>
+      podwykonawcyPosortowani.filter((p) => {
+        const lat = Number(p.lokalizacja_lat);
+        const lng = Number(p.lokalizacja_lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) return false;
+        const lokalizacjaRaw = String(p.lokalizacja ?? "").trim();
+        if (!lokalizacjaRaw) return true;
+        const klucz = podwykonawcaMapaKluczLokalizacji(lokalizacjaRaw);
+        return !PODWYKONAWCA_MIASTA_COORDS[klucz];
+      }),
+    [podwykonawcyPosortowani]
+  );
+  const podwykonawcyLokalizacjaSugestie = useMemo(() => {
+    const set = new Set(PODWYKONAWCA_MIASTA_SUGESTIE);
+    podwykonawcyPosortowani.forEach((p) => {
+      const t = String(p.lokalizacja ?? "").trim();
+      if (t) set.add(t);
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, "pl", { sensitivity: "base" }));
+  }, [podwykonawcyPosortowani]);
+
+  useEffect(() => {
+    const dozwolone = new Set(podwykonawcyMapaPunkty.map((p) => String(p.id)));
+    setPwMapaAktywneIds((prev) => {
+      const next = new Set([...prev].filter((id) => dozwolone.has(String(id))));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [podwykonawcyMapaPunkty]);
+
+  useEffect(() => {
+    if (widok !== "mapa_podwykonawcow") return;
+    if (pwGeoAutoWTrakcieRef.current) return;
+    const kandydaci = podwykonawcyPosortowani.filter((p) => {
+      const id = p?.id;
+      if (id == null) return false;
+      if (pwGeoAutoPrzetworzoneRef.current.has(id)) return false;
+      const lokalizacja = String(p?.lokalizacja ?? "").trim();
+      if (!lokalizacja) return false;
+      const lat = Number(p?.lokalizacja_lat);
+      const lng = Number(p?.lokalizacja_lng);
+      return !(Number.isFinite(lat) && Number.isFinite(lng));
+    });
+    if (kandydaci.length === 0) return;
+
+    pwGeoAutoWTrakcieRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      let zapisane = 0;
+      let bezWyniku = 0;
+      let bledyZapisu = 0;
+      let kolumnyBrak = false;
+      for (const p of kandydaci) {
+        if (cancelled) break;
+        const id = p?.id;
+        const lokalizacja = String(p?.lokalizacja ?? "").trim();
+        if (id == null || !lokalizacja) continue;
+        try {
+          const geo = await podwykonawcaGeocodePL(lokalizacja);
+          if (geo) {
+            const { error } = await supabase
+              .from("podwykonawca")
+              .update({ lokalizacja_lat: geo.lat, lokalizacja_lng: geo.lng })
+              .eq("id", id)
+              .select("id");
+            if (!error) {
+              zapisane += 1;
+              pwGeoAutoPrzetworzoneRef.current.add(id);
+            } else {
+              bledyZapisu += 1;
+              const msg = String(error.message ?? "").toLowerCase();
+              if (msg.includes("lokalizacja_lat") || msg.includes("lokalizacja_lng") || msg.includes("column")) {
+                kolumnyBrak = true;
+              }
+            }
+          } else {
+            bezWyniku += 1;
+          }
+        } catch (_err) {
+          // Pomijamy pojedynczy błąd i lecimy dalej po reszcie listy.
+          bledyZapisu += 1;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+      }
+      if (!cancelled && zapisane > 0) {
+        setPwGeoInfo(`OK: automatycznie uzupełniłam punkty mapy dla ${zapisane} podwykonawców.`);
+        await fetchPodwykonawcy();
+      } else if (!cancelled && kandydaci.length > 0) {
+        if (kolumnyBrak) {
+          setPwGeoInfo(
+            "Brakuje kolumn geolokalizacji w bazie. Uruchom SQL: g4-app/supabase/podwykonawca-geolokalizacja-uwagi-kolumny.sql"
+          );
+        } else if (bezWyniku > 0 && bledyZapisu === 0) {
+          setPwGeoInfo(
+            "Nie udało się znaleźć części lokalizacji automatycznie. Wpisz np. samo miasto albo miasto + województwo."
+          );
+        } else if (bledyZapisu > 0) {
+          setPwGeoInfo("Automatyczna aktualizacja nie zapisała punktów. Odśwież i spróbuj ponownie za chwilę.");
+        }
+      }
+      pwGeoAutoWTrakcieRef.current = false;
+    })();
+
+    return () => {
+      cancelled = true;
+      pwGeoAutoWTrakcieRef.current = false;
+    };
+  }, [widok, podwykonawcyPosortowani]);
 
   function openEditKr(item) {
     setEditingKrKey(item.kr);
@@ -9743,7 +9992,7 @@ export default function App() {
         </div>
       ) : null}
 
-      {widok === "podwykonawca" && podwykonawcyFetchError ? (
+      {(widok === "podwykonawca" || widok === "mapa_podwykonawcow") && podwykonawcyFetchError ? (
         <div style={s.errBox} role="alert">
           <strong>Błąd pobierania podwykonawców.</strong> {podwykonawcyFetchError}
           <br />
@@ -12065,6 +12314,26 @@ export default function App() {
       {widok === "faktury" ? (
         <>
           <h2 style={{ ...s.h2, marginTop: 0 }}>Faktury kosztowe</h2>
+          {fakturySekcja === "podwykonawcy" ? (
+            <div style={{ ...op.sectionCard, marginBottom: "0.8rem", borderColor: "rgba(56,189,248,0.35)" }}>
+              <strong style={{ color: "#7dd3fc" }}>Widok: Podwykonawcy</strong>
+              <div style={{ ...op.muted, marginTop: "0.25rem", fontSize: "0.82rem" }}>
+                Pokazuję tylko faktury, gdzie pole <strong>Typ</strong> zawiera słowo „Podwykonawca”.
+              </div>
+              {fakturyPodwykonawcaFiltrNazwa ? (
+                <div style={{ ...op.muted, marginTop: "0.25rem", fontSize: "0.82rem" }}>
+                  Dodatkowy filtr INV: firma <strong>{fakturyPodwykonawcaFiltrNazwa}</strong>.
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, marginLeft: "0.55rem", fontSize: "0.74rem", padding: "0.12rem 0.4rem" }}
+                    onClick={() => setFakturyPodwykonawcaFiltrNazwa("")}
+                  >
+                    Wyczyść
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <p style={{ ...s.muted, marginBottom: "0.85rem", maxWidth: "56rem" }}>
             Lista faktur kosztowych jest <strong>wczytywana w całości</strong> z bazy (w granicach Twoich uprawnień). Domyślnie
             na górze ustawiony jest zakres dat: <strong>bieżący rok kalendarzowy</strong> — tabela pokazuje tylko ten podzbiór,
@@ -12227,130 +12496,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <div style={{ ...op.sectionCard, marginBottom: "0.8rem", borderColor: "rgba(248,113,113,0.3)" }}>
-              <h4 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.4rem", fontSize: "0.9rem" }}>
-                Folder „Faktury kosztowe” — kontrola braków
-              </h4>
-              <p style={{ ...op.muted, marginTop: 0, marginBottom: "0.45rem", fontSize: "0.8rem" }}>
-                Krok 1: odczyt folderu (bez wysyłania plików). Krok 2: zaznaczasz brakujące i dopiero klikasz „Wczytaj do bazy”.
-              </p>
-              <div style={{ ...s.btnRow, marginTop: 0 }}>
-                <input
-                  ref={fakturyFolderInputRef}
-                  type="file"
-                  accept=".pdf,application/pdf"
-                  multiple
-                  webkitdirectory=""
-                  directory=""
-                  style={{ display: "none" }}
-                  onChange={zeskanujFolderFakturPoPlikach}
-                />
-                <button type="button" style={s.btnGhost} onClick={() => fakturyFolderInputRef.current?.click()}>
-                  1. Wybierz folder PDF
-                </button>
-                <button
-                  type="button"
-                  style={{ ...s.btnGhost, fontSize: "0.78rem" }}
-                  onClick={() => {
-                    setFakturyFolderSkanList([]);
-                    setFakturyFolderSkanWybrane([]);
-                  }}
-                >
-                  2. Wyczyść listę
-                </button>
-                <button
-                  type="button"
-                  style={s.btn}
-                  disabled={fakturyFolderImportSaving || fakturyFolderSkanWybrane.length === 0}
-                  onClick={() => void wczytajWybraneBrakujaceFakturyZFolderu()}
-                >
-                  {fakturyFolderImportSaving ? "3. Wczytywanie..." : "3. Wczytaj zaznaczone BRAK do bazy"}
-                </button>
-              </div>
-              {fakturyFolderSkanList.length > 0 ? (
-                <div
-                  style={{
-                    marginTop: "0.55rem",
-                    maxHeight: "13rem",
-                    overflowY: "auto",
-                    borderTop: "1px solid #243244",
-                    paddingTop: "0.45rem",
-                  }}
-                >
-                  <p style={{ ...op.muted, margin: "0 0 0.35rem", fontSize: "0.78rem" }}>
-                    Brakujące: {fakturyFolderSkanList.filter((r) => !r.inBase).length} / {fakturyFolderSkanList.length}
-                  </p>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.74rem", color: "#94a3b8", marginBottom: "0.2rem" }}>
-                    <span>Data</span>
-                    <span>Nazwa pliku</span>
-                  </div>
-                  {fakturyFolderSkanList.map((r) => (
-                    <div
-                      key={r.key}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.35rem",
-                        fontSize: "0.77rem",
-                        color: r.inBase ? "#94a3b8" : "#fca5a5",
-                        fontWeight: r.inBase ? 400 : 700,
-                        marginBottom: "0.12rem",
-                      }}
-                      title={r.relativePath || r.name}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={r.inBase ? false : fakturyFolderSkanWybrane.includes(r.key)}
-                        disabled={r.inBase}
-                        onChange={(ev) =>
-                          setFakturyFolderSkanWybrane((prev) =>
-                            ev.target.checked ? [...prev, r.key] : prev.filter((k) => k !== r.key),
-                          )
-                        }
-                      />
-                      <span style={{ minWidth: "8.8rem", color: "#94a3b8", fontWeight: 500 }}>
-                        {r.modifiedAt ? new Date(r.modifiedAt).toLocaleDateString("pl-PL") : "—"}
-                      </span>
-                      <span style={{ minWidth: 0, overflow: "hidden" }}>
-                        {r.inBase ? "OK" : "BRAK"} —{" "}
-                        {tekstUcietyKoniecPrezentacja(r.relativePath || r.name, 72)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <div style={{ ...s.btnRow, marginBottom: "0.65rem" }}>
-              <button
-                type="button"
-                style={fakturyKosztoweTryb === "wszystkie" ? s.btn : s.btnGhost}
-                onClick={() => setFakturyKosztoweTryb("wszystkie")}
-              >
-                Wszystkie
-              </button>
-              <button
-                type="button"
-                style={fakturyKosztoweTryb === "duplikaty" ? s.btn : s.btnGhost}
-                onClick={() => setFakturyKosztoweTryb("duplikaty")}
-              >
-                Duplikaty
-              </button>
-              <button
-                type="button"
-                style={fakturyKosztoweTryb === "niekompletne" ? s.btn : s.btnGhost}
-                onClick={() => setFakturyKosztoweTryb("niekompletne")}
-              >
-                Niekompletne
-              </button>
-              <button
-                type="button"
-                style={s.btnGhost}
-                title="Przywraca kolejność z ostatniego wczytania z bazy"
-                onClick={() => setFakturyKosztoweSort({ key: null, dir: "asc" })}
-              >
-                Sortowanie: jak w bazie
-              </button>
-            </div>
             <details style={{ marginBottom: "0.65rem" }}>
               <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: "0.84rem", userSelect: "none" }}>
                 Filtrowanie według kolumn (opcjonalnie — każda kolumna osobno, spełnić muszą wszystkie wypełnione)
@@ -12392,8 +12537,21 @@ export default function App() {
               </div>
             </details>
             {(() => {
-              const list = fakturyKosztoweListaWidoku;
-              if (list.length === 0) {
+              const filtrNazwaPodwykonawcy = podwykonawcaMapaKluczLokalizacji(fakturyPodwykonawcaFiltrNazwa);
+              const list =
+                fakturySekcja === "podwykonawcy"
+                  ? fakturyKosztoweListaWidoku.filter((row) =>
+                      String(row?.typ_nazwy ?? "")
+                        .trim()
+                        .toLowerCase()
+                        .includes("podwykonawca"),
+                    )
+                  : fakturyKosztoweListaWidoku;
+              const listPoFirmie =
+                fakturySekcja === "podwykonawcy" && filtrNazwaPodwykonawcy
+                  ? list.filter((row) => czyFakturaPasujeDoPodwykonawcy(row, fakturyPodwykonawcaFiltrNazwa))
+                  : list;
+              if (listPoFirmie.length === 0) {
                 return (
                   <p style={{ ...op.muted, margin: 0, fontSize: "0.84rem" }}>
                     Brak wyników dla podanego filtra.
@@ -12555,7 +12713,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {list.map((row) => {
+                        {listPoFirmie.map((row) => {
                         const st = String(row.status ?? "do_zaplaty").trim();
                         const txtNazwa =
                           tekstTrim(row.legacy_nazwa_pliku) ||
@@ -12569,6 +12727,9 @@ export default function App() {
                         const txtTyp = tekstTrim(row.typ_nazwy) || "";
                         const txtNr = tekstTrim(row.numer_faktury) || "";
                         const txtLokalny = tekstTrim(row.legacy_pdf_file) ? String(row.legacy_pdf_file) : "";
+                        const czyPodwykonawcaZKatalogu =
+                          fakturySekcja === "podwykonawcy" &&
+                          podwykonawcyNazwySet.has(podwykonawcaMapaKluczLokalizacji(txtSprzedawca));
                         return (
                           <tr key={`faktury-modul-${row.id}`}>
                             {czyAdminAktywny && FAKTURY_KOSZTOWE_EDYCJA_WLACZONA ? (
@@ -12693,6 +12854,8 @@ export default function App() {
                                 ...FAKTURY_KOSZTOWE_TD,
                                 width: `${szerFakturyKolumny("sprzedawca")}px`,
                                 maxWidth: `${szerFakturyKolumny("sprzedawca")}px`,
+                                color: czyPodwykonawcaZKatalogu ? "#fb923c" : FAKTURY_KOSZTOWE_TD.color,
+                                fontWeight: czyPodwykonawcaZKatalogu ? 600 : FAKTURY_KOSZTOWE_TD.fontWeight,
                               }}
                               title={txtSprzedawca || undefined}
                             >
@@ -12897,7 +13060,11 @@ export default function App() {
             </p>
           ) : null}
 
+          <div>
+          {podwykonawcaSekcja === "zlecenia" ? (
+            <>
           <h3
+            id="pw-zlecenia"
             style={{
               fontSize: "1rem",
               fontWeight: 600,
@@ -13257,8 +13424,13 @@ export default function App() {
               ) : null}
             </>
           )}
+            </>
+          ) : null}
 
+          {podwykonawcaSekcja === "katalog" ? (
+            <>
           <h3
+            id="pw-katalog"
             style={{
               fontSize: "1rem",
               fontWeight: 600,
@@ -13280,57 +13452,195 @@ export default function App() {
                     <th style={s.th}>Lokalizacja</th>
                     <th style={s.th}>Osoba kontaktowa</th>
                     <th style={s.th}>Telefon</th>
+                    <th style={s.th}>Uwagi</th>
                     <th style={s.th} />
                   </tr>
                 </thead>
                 <tbody>
-                  {podwykonawcyList.map((row) => (
-                    <tr key={row.id}>
-                      <td style={s.td}>
-                        <strong style={{ color: "#f5f5f5" }}>
-                          {row.nazwa_firmy?.trim() ? row.nazwa_firmy : "—"}
-                        </strong>
-                      </td>
-                      <td style={s.td}>{row.lokalizacja?.trim() ? row.lokalizacja : "—"}</td>
-                      <td style={s.td}>{row.osoba_kontaktowa?.trim() ? row.osoba_kontaktowa : "—"}</td>
-                      <td style={s.td}>{row.telefon?.trim() ? row.telefon : "—"}</td>
-                      <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
-                        <button
-                          type="button"
-                          style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
-                          onClick={() => wczytajPwDoEdycji(row)}
-                        >
-                          Edytuj
-                        </button>{" "}
-                        <button
-                          type="button"
-                          style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
-                          onClick={() => usunPodwykonawce(row.id)}
-                        >
-                          Usuń
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {podwykonawcyList.map((row) => {
+                    const edytuje = pwEdycjaId != null && String(pwEdycjaId) === String(row.id);
+                    return (
+                      <tr key={row.id} style={edytuje ? { background: "rgba(99,102,241,0.1)" } : undefined}>
+                        <td style={s.td}>
+                          {edytuje ? (
+                            <input
+                              style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                              type="text"
+                              value={pwForm.nazwa_firmy}
+                              onChange={(ev) => setPwForm((f) => ({ ...f, nazwa_firmy: ev.target.value }))}
+                              required
+                            />
+                          ) : (
+                            <strong style={{ color: "#f5f5f5" }}>{row.nazwa_firmy?.trim() ? row.nazwa_firmy : "—"}</strong>
+                          )}
+                        </td>
+                        <td style={s.td}>
+                          {edytuje ? (
+                            <input
+                              style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                              type="text"
+                              list="pw-lokalizacja-sugestie"
+                              value={pwForm.lokalizacja}
+                              onChange={(ev) => setPwForm((f) => ({ ...f, lokalizacja: ev.target.value }))}
+                            />
+                          ) : row.lokalizacja?.trim() ? (
+                            row.lokalizacja
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td style={s.td}>
+                          {edytuje ? (
+                            <input
+                              style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                              type="text"
+                              value={pwForm.osoba_kontaktowa}
+                              onChange={(ev) => setPwForm((f) => ({ ...f, osoba_kontaktowa: ev.target.value }))}
+                            />
+                          ) : row.osoba_kontaktowa?.trim() ? (
+                            row.osoba_kontaktowa
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td style={s.td}>
+                          {edytuje ? (
+                            <input
+                              style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                              type="text"
+                              inputMode="tel"
+                              autoComplete="tel"
+                              value={pwForm.telefon}
+                              onChange={(ev) => setPwForm((f) => ({ ...f, telefon: ev.target.value }))}
+                            />
+                          ) : row.telefon?.trim() ? (
+                            row.telefon
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td style={{ ...s.td, maxWidth: "14rem" }}>
+                          {edytuje ? (
+                            <textarea
+                              style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box", minHeight: "2.5rem", resize: "vertical" }}
+                              value={pwForm.uwagi}
+                              onChange={(ev) => setPwForm((f) => ({ ...f, uwagi: ev.target.value }))}
+                              rows={2}
+                            />
+                          ) : (
+                            <span title={row.uwagi?.trim() ? row.uwagi : undefined}>
+                              {row.uwagi?.trim()
+                                ? row.uwagi.length > 56
+                                  ? `${row.uwagi.slice(0, 54)}…`
+                                  : row.uwagi
+                                : "—"}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                          {edytuje ? (
+                            <>
+                              <button
+                                type="button"
+                                style={{ ...s.btn, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                onClick={() => void zapiszPodwykonawce()}
+                              >
+                                Zapisz
+                              </button>{" "}
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                onClick={anulujPwEdycje}
+                              >
+                                Anuluj
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {(() => {
+                                const invCount = podwykonawcaFakturyLicznikMap.get(row.id) ?? 0;
+                                const invAktywny = invCount > 0;
+                                return (
+                                  <button
+                                    type="button"
+                                    style={{
+                                      ...s.btnGhost,
+                                      padding: "0.25rem 0.5rem",
+                                      fontSize: "0.75rem",
+                                      background: invAktywny ? "rgba(251,146,60,0.22)" : undefined,
+                                      borderColor: invAktywny ? "rgba(251,146,60,0.95)" : undefined,
+                                      color: invAktywny ? "#fdba74" : undefined,
+                                    }}
+                                    disabled={pwEdycjaId != null}
+                                    onClick={() => przejdzDoFakturPodwykonawcyFirmy(row.nazwa_firmy)}
+                                    title={
+                                      invAktywny
+                                        ? `Pokaż faktury podwykonawcy dla tej firmy (${invCount})`
+                                        : "Pokaż faktury podwykonawcy dla tej firmy"
+                                    }
+                                  >
+                                    INV{invAktywny ? ` (${invCount})` : ""}
+                                  </button>
+                                );
+                              })()}{" "}
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                disabled={pwEdycjaId != null}
+                                onClick={() => wczytajPwDoEdycji(row)}
+                              >
+                                Edytuj
+                              </button>{" "}
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                disabled={pwEdycjaId != null || pwGeoBusyId === row.id}
+                                onClick={() => void poprawLokalizacjePodwykonawcy(row)}
+                              >
+                                {pwGeoBusyId === row.id ? "Szukanie..." : "Popraw lokalizację"}
+                              </button>{" "}
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                disabled={pwEdycjaId != null}
+                                onClick={() => usunPodwykonawce(row.id)}
+                              >
+                                Usuń
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
+            </>
+          ) : null}
 
-          <h3
-            style={{
-              fontSize: "1rem",
-              fontWeight: 600,
-              color: "#fff",
-              margin: "1.5rem 0 0.65rem",
-            }}
-          >
-            {pwEdycjaId != null ? "Edycja podwykonawcy" : "Nowy podwykonawca"}
-          </h3>
-          <form
-            style={{ ...s.form, maxWidth: "min(36rem, 100%)", marginBottom: "2rem" }}
-            onSubmit={zapiszPodwykonawce}
-          >
+          {podwykonawcaSekcja === "nowy" ? (
+            <>
+            <h3
+              style={{
+                fontSize: "1rem",
+                fontWeight: 600,
+                color: "#fff",
+                margin: "1.5rem 0 0.65rem",
+              }}
+            >
+              Nowy podwykonawca
+            </h3>
+            {pwEdycjaId != null ? (
+              <p style={{ ...s.muted, marginBottom: "2rem" }}>
+                Trwa edycja wiersza w tabeli. Zapisz lub anuluj, aby dodać nowego podwykonawcę.
+              </p>
+            ) : (
+              <form
+                style={{ ...s.form, maxWidth: "min(36rem, 100%)", marginBottom: "2rem" }}
+                onSubmit={zapiszPodwykonawce}
+              >
             <label style={s.label}>
               Nazwa firmy <span style={{ color: "#fca5a5" }}>*</span>
               <input
@@ -13346,6 +13656,8 @@ export default function App() {
               <input
                 style={s.input}
                 type="text"
+                list="pw-lokalizacja-sugestie"
+                placeholder="np. Kraków albo Kraków, małopolskie"
                 value={pwForm.lokalizacja}
                 onChange={(ev) => setPwForm((f) => ({ ...f, lokalizacja: ev.target.value }))}
               />
@@ -13372,17 +13684,164 @@ export default function App() {
                 onChange={(ev) => setPwForm((f) => ({ ...f, telefon: ev.target.value }))}
               />
             </label>
+            <label style={s.label}>
+              Uwagi
+              <textarea
+                style={{ ...s.input, minHeight: "3rem", resize: "vertical" }}
+                value={pwForm.uwagi}
+                onChange={(ev) => setPwForm((f) => ({ ...f, uwagi: ev.target.value }))}
+                rows={2}
+              />
+            </label>
             <div style={s.btnRow}>
               <button type="submit" style={s.btn}>
-                {pwEdycjaId != null ? "Zapisz zmiany" : "Dodaj podwykonawcę"}
+                Dodaj podwykonawcę
               </button>
-              {pwEdycjaId != null ? (
-                <button type="button" style={s.btnGhost} onClick={anulujPwEdycje}>
-                  Anuluj edycję
-                </button>
-              ) : null}
             </div>
-          </form>
+              </form>
+            )}
+            {pwGeoInfo ? (
+              <div
+                style={{
+                  ...s.errBox,
+                  marginBottom: "1rem",
+                  borderColor: pwGeoInfo.startsWith("OK:")
+                    ? "rgba(16,185,129,0.45)"
+                    : "rgba(251,191,36,0.5)",
+                  color: pwGeoInfo.startsWith("OK:") ? "#86efac" : "#fde68a",
+                  background: "rgba(15,23,42,0.35)",
+                }}
+              >
+                {pwGeoInfo}
+              </div>
+            ) : null}
+            </>
+          ) : null}
+          <datalist id="pw-lokalizacja-sugestie">
+            {podwykonawcyLokalizacjaSugestie.map((x) => (
+              <option key={x} value={x} />
+            ))}
+          </datalist>
+          </div>
+        </>
+      ) : null}
+
+      {widok === "mapa_podwykonawcow" ? (
+        <>
+          <h2 style={{ ...s.h2, marginTop: 0 }}>Mapa podwykonawców (Polska)</h2>
+          <div>
+          <p style={{ ...s.muted, marginBottom: "0.8rem", maxWidth: "52rem" }}>
+            Pinezki są ustawiane automatycznie na podstawie pola <strong>lokalizacja</strong>. Kliknij pinezkę, aby zobaczyć
+            kontakt do firmy.
+          </p>
+          {podwykonawcyMapaPunkty.length === 0 ? (
+            <p style={s.muted}>Brak punktów na mapie — uzupełnij lokalizację podwykonawców nazwą miasta.</p>
+          ) : (
+            <div style={{ ...op.sectionCard, padding: "0.6rem", marginBottom: "0.85rem" }}>
+              <div
+                style={{
+                  borderRadius: "12px",
+                  overflow: "hidden",
+                  border: "1px solid rgba(148,163,184,0.3)",
+                }}
+              >
+                <MapContainer center={PODWYKONAWCA_MAPA_CENTER_PL} zoom={6} style={{ height: "520px", width: "100%" }}>
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  {podwykonawcyMapaPunkty.map((p) => (
+                    (() => {
+                      const aktywny = pwMapaAktywneIds.has(String(p.id));
+                      return (
+                    <CircleMarker
+                      key={`pw-marker-${p.id}-${aktywny ? "on" : "off"}`}
+                      center={p.coords}
+                      radius={aktywny ? 10 : 8}
+                      eventHandlers={{ click: () => przelaczAktywnyPunktPodwykonawcy(p.id) }}
+                      pathOptions={
+                        aktywny
+                          ? { color: "#16a34a", weight: 3, fillColor: "#22c55e", fillOpacity: 0.95 }
+                          : { color: "#0ea5e9", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.7 }
+                      }
+                    >
+                      <Popup>
+                        <div style={{ minWidth: "14rem" }}>
+                          <strong>{p.nazwa_firmy}</strong>
+                          <div style={{ marginTop: "0.35rem" }}>
+                            <div>
+                              <strong>Lokalizacja:</strong> {p.lokalizacja || "—"}
+                            </div>
+                            <div>
+                              <strong>Kontakt:</strong> {p.osoba_kontaktowa || "—"}
+                            </div>
+                            <div>
+                              <strong>Telefon:</strong> {p.telefon || "—"}
+                            </div>
+                            <div>
+                              <strong>Uwagi:</strong> {p.uwagi || "—"}
+                            </div>
+                            <div>
+                              <strong>Źródło punktu:</strong> {p.source === "db" ? "automatyczne geokodowanie" : "słownik zapasowy"}
+                            </div>
+                          </div>
+                        </div>
+                      </Popup>
+                    </CircleMarker>
+                      );
+                    })()
+                  ))}
+                </MapContainer>
+              </div>
+              <div style={{ marginTop: "0.65rem" }}>
+                <div style={{ ...s.btnRow, flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.45rem" }}>
+                  <button
+                    type="button"
+                    style={{ ...s.btnGhost, fontSize: "0.76rem", padding: "0.25rem 0.5rem" }}
+                    onClick={odznaczWszystkiePunktyPodwykonawcow}
+                    disabled={pwMapaAktywneIds.size === 0}
+                  >
+                    Odznacz All
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                  {podwykonawcyMapaPunkty.map((p) => {
+                    const aktywny = pwMapaAktywneIds.has(String(p.id));
+                    return (
+                      <button
+                        key={`pw-mapa-filtr-${p.id}`}
+                        type="button"
+                        onClick={() => przelaczAktywnyPunktPodwykonawcy(p.id)}
+                        style={{
+                          ...s.btnGhost,
+                          fontSize: "0.75rem",
+                          padding: "0.24rem 0.48rem",
+                          background: aktywny ? "rgba(34,197,94,0.22)" : undefined,
+                          borderColor: aktywny ? "rgba(34,197,94,0.95)" : undefined,
+                          color: aktywny ? "#86efac" : undefined,
+                        }}
+                        title="Kliknij, aby podświetlić lub odznaczyć punkt na mapie"
+                      >
+                        {p.nazwa_firmy}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+          {podwykonawcyMapaBraki.length > 0 ? (
+            <div style={{ ...s.errBox, marginBottom: "1rem" }}>
+              <strong>Nie udało się nanieść części wpisów.</strong> Uzupełnij lokalizację i kliknij przy firmie
+              <strong> Popraw lokalizację</strong>. Braki:{" "}
+              {podwykonawcyMapaBraki
+                .slice(0, 8)
+                .map((p) => String(p.nazwa_firmy ?? "").trim() || `id ${p.id}`)
+                .join(", ")}
+              {podwykonawcyMapaBraki.length > 8 ? ` i ${podwykonawcyMapaBraki.length - 8} więcej.` : "."}
+            </div>
+          ) : null}
+          </div>
         </>
       ) : null}
 
@@ -17780,14 +18239,99 @@ export default function App() {
               </div>
             ))}
             <div style={op.navSectionLabel}>Zasoby</div>
+            <div>
+              <button
+                type="button"
+                style={{
+                  ...op.navBtn,
+                  ...(widok === "podwykonawca" ||
+                  widok === "mapa_podwykonawcow" ||
+                  (widok === "faktury" && fakturySekcja === "podwykonawcy")
+                    ? op.navBtnActive
+                    : {}),
+                  marginBottom: 0,
+                }}
+                onClick={przejdzDoPodwykonawcow}
+              >
+                Podwykonawcy
+              </button>
+              <HelpLinijka wlaczony={trybHelp}>Katalog firm zewnętrznych.</HelpLinijka>
+              {widok === "podwykonawca" ||
+              widok === "mapa_podwykonawcow" ||
+              (widok === "faktury" && fakturySekcja === "podwykonawcy") ? (
+                <div style={{ marginTop: "0.3rem", marginBottom: "0.45rem", paddingLeft: "0.9rem", borderLeft: "1px solid rgba(148,163,184,0.25)", display: "grid", gap: "0.25rem" }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...op.navBtn,
+                      fontSize: "0.77rem",
+                      padding: "0.36rem 0.5rem",
+                      ...(podwykonawcaSekcja === "katalog" && widok === "podwykonawca" ? op.navBtnActive : {}),
+                      marginBottom: 0,
+                    }}
+                    onClick={() => przejdzDoPodwykonawcow("katalog")}
+                  >
+                    Katalog firm
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...op.navBtn,
+                      fontSize: "0.77rem",
+                      padding: "0.36rem 0.5rem",
+                      ...(podwykonawcaSekcja === "mapa" && widok === "mapa_podwykonawcow" ? op.navBtnActive : {}),
+                      marginBottom: 0,
+                    }}
+                    onClick={() => {
+                      setPodwykonawcaSekcja("mapa");
+                      przejdzDoMapyPodwykonawcow();
+                    }}
+                  >
+                    Mapa podwykonawców
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...op.navBtn,
+                      fontSize: "0.77rem",
+                      padding: "0.36rem 0.5rem",
+                      ...(podwykonawcaSekcja === "zlecenia" && widok === "podwykonawca" ? op.navBtnActive : {}),
+                      marginBottom: 0,
+                    }}
+                    onClick={() => przejdzDoPodwykonawcow("zlecenia")}
+                  >
+                    Aktualne zlecenia
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...op.navBtn,
+                      fontSize: "0.77rem",
+                      padding: "0.36rem 0.5rem",
+                      ...(podwykonawcaSekcja === "nowy" && widok === "podwykonawca" ? op.navBtnActive : {}),
+                      marginBottom: 0,
+                    }}
+                    onClick={() => przejdzDoPodwykonawcow("nowy")}
+                  >
+                    Nowy podwykonawca
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...op.navBtn,
+                      fontSize: "0.77rem",
+                      padding: "0.36rem 0.5rem",
+                      ...(widok === "faktury" && fakturySekcja === "podwykonawcy" ? op.navBtnActive : {}),
+                      marginBottom: 0,
+                    }}
+                    onClick={() => przejdzDoFaktur("podwykonawcy")}
+                  >
+                    Faktury podwykonawcy
+                  </button>
+                </div>
+              ) : null}
+            </div>
             {[
-              {
-                id: "podwykonawca",
-                label: "Podwykonawcy",
-                fn: przejdzDoPodwykonawcow,
-                w: "podwykonawca",
-                help: "Katalog firm zewnętrznych.",
-              },
               {
                 id: "teren",
                 label: "Teren",
