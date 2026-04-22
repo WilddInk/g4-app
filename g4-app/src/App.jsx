@@ -650,15 +650,19 @@ const LOG_STATUS_ZDARZENIA_W_BAZIE = ["w trakcie", "ukończone", "oczekuje"];
 /** Status zadania ogólnego (tabela zadania) — te same etykiety co w LOG. */
 const ZADANIE_STATUS_W_BAZIE = LOG_STATUS_ZDARZENIA_W_BAZIE;
 
-/** Tickety aplikacyjne — lekki dziennik zgłoszeń i wdrożeń. */
-const APP_TICKET_STATUS_W_BAZIE = ["oczekuje", "w trakcie", "zrobione"];
+/** Tickety aplikacyjne — statusy robocze + archiwum po zamknięciu przez zgłaszającego. */
+const APP_TICKET_STATUS_W_BAZIE = ["oczekuje", "w trakcie", "zamkniete"];
 
 function etykietaStatusuAppTicket(statusRaw) {
   const s = String(statusRaw ?? "").trim().toLowerCase();
   if (s === "oczekuje") return "Oczekuje";
   if (s === "w trakcie") return "W trakcie";
-  if (s === "zrobione") return "Zrobione";
+  if (s === "zamkniete") return "Zamknięte (archiwum)";
   return String(statusRaw ?? "").trim() || "—";
+}
+
+function czyAppTicketZamkniety(statusRaw) {
+  return String(statusRaw ?? "").trim().toLowerCase() === "zamkniete";
 }
 
 function zadanieCzyUkonczoneStatus(statusRaw) {
@@ -802,6 +806,7 @@ function zadanieWierszDoFormu(row) {
 function podwykonawcaPustyForm() {
   return {
     nazwa_firmy: "",
+    lokalizacja: "",
     osoba_kontaktowa: "",
     telefon: "",
   };
@@ -810,6 +815,7 @@ function podwykonawcaPustyForm() {
 function podwykonawcaWierszDoFormu(row) {
   return {
     nazwa_firmy: row.nazwa_firmy != null ? String(row.nazwa_firmy) : "",
+    lokalizacja: row.lokalizacja != null ? String(row.lokalizacja) : "",
     osoba_kontaktowa: row.osoba_kontaktowa != null ? String(row.osoba_kontaktowa) : "",
     telefon: row.telefon != null ? String(row.telefon) : "",
   };
@@ -1728,6 +1734,11 @@ export default function App() {
   const [appTicketNowyTresc, setAppTicketNowyTresc] = useState("");
   const [appTicketNowyMsg, setAppTicketNowyMsg] = useState(null);
   const [appTicketEdycja, setAppTicketEdycja] = useState({});
+  const [appTicketPokazArchiwum, setAppTicketPokazArchiwum] = useState(false);
+  const [appTicketWybranyId, setAppTicketWybranyId] = useState(null);
+  const [appTicketWiadomosci, setAppTicketWiadomosci] = useState([]);
+  const [appTicketWiadomosciErr, setAppTicketWiadomosciErr] = useState(null);
+  const [appTicketNowaWiadomosc, setAppTicketNowaWiadomosc] = useState("");
 
   const [podwykonawcyList, setPodwykonawcyList] = useState([]);
   const [podwykonawcyFetchError, setPodwykonawcyFetchError] = useState(null);
@@ -2159,6 +2170,28 @@ export default function App() {
     }
     setAppTicketyFetchError(null);
     setAppTicketyList(data ?? []);
+  }
+
+  async function fetchAppTicketWiadomosci(ticketId) {
+    const idNum = Number(ticketId);
+    if (!Number.isFinite(idNum) || idNum <= 0) {
+      setAppTicketWiadomosci([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("app_ticket_wiadomosc")
+      .select("*")
+      .eq("ticket_id", idNum)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+    if (error) {
+      console.error("Błąd pobierania wiadomości ticketu:", error);
+      setAppTicketWiadomosciErr(error.message);
+      setAppTicketWiadomosci([]);
+      return;
+    }
+    setAppTicketWiadomosciErr(null);
+    setAppTicketWiadomosci(data ?? []);
   }
 
   async function fetchPodwykonawcy() {
@@ -3731,18 +3764,9 @@ export default function App() {
     const odpowiedz = String(appTicketWartoscEdycji(row, "odpowiedz") ?? "").trim() || null;
     const patch = { status, odpowiedz };
 
-    if (status === "zrobione") {
-      const maDate = row?.data_zrobienia != null && String(row.data_zrobienia).trim() !== "";
-      if (!maDate) patch.data_zrobienia = dzisiajDataYYYYMMDD();
+    if (status === "w trakcie") {
       const podpisRaw = String(appTicketWartoscEdycji(row, "podpis_wdrozenia") ?? "").trim();
-      if (!podpisRaw) {
-        const podpisDom = `${String(pracownikPowiazanyZSesja?.imie_nazwisko ?? "").trim()} (${String(
-          pracownikPowiazanyZSesja?.nr ?? "",
-        ).trim()})`.trim();
-        patch.podpis_wdrozenia = podpisDom || null;
-      } else {
-        patch.podpis_wdrozenia = podpisRaw;
-      }
+      if (podpisRaw) patch.podpis_wdrozenia = podpisRaw;
     }
 
     const { error } = await supabase.from("app_ticket").update(patch).eq("id", id);
@@ -3762,7 +3786,7 @@ export default function App() {
       pracownikPowiazanyZSesja?.nr ?? "",
     ).trim()})`.trim();
     const patch = {
-      status: "zrobione",
+      status: "w trakcie",
       data_zrobienia: dzisiajDataYYYYMMDD(),
       podpis_wdrozenia: podpis || null,
     };
@@ -3775,6 +3799,51 @@ export default function App() {
       return;
     }
     await fetchAppTickety();
+  }
+
+  async function zamknijAppTicketJakoZglaszajacy(row) {
+    const id = row?.id;
+    if (id == null) return;
+    const mojNr = String(pracownikPowiazanyZSesja?.nr ?? "").trim();
+    const zglNr = String(row?.zglaszajacy_nr ?? "").trim();
+    if (!mojNr || mojNr !== zglNr) return;
+    if (!window.confirm("Zamknąć ticket i przenieść go do archiwum?")) return;
+    const patch = { status: "zamkniete" };
+    if (!row?.data_zrobienia) patch.data_zrobienia = dzisiajDataYYYYMMDD();
+    const { error } = await supabase.from("app_ticket").update(patch).eq("id", id);
+    if (error) {
+      console.error(error);
+      alert(`Zamykanie ticketu: ${error.message}`);
+      return;
+    }
+    await fetchAppTickety();
+  }
+
+  async function dodajWiadomoscDoAppTicketu(e) {
+    e.preventDefault();
+    const ticketId = Number(appTicketWybranyId);
+    const tresc = String(appTicketNowaWiadomosc ?? "").trim();
+    const nr = String(pracownikPowiazanyZSesja?.nr ?? "").trim();
+    if (!Number.isFinite(ticketId) || ticketId <= 0) return;
+    if (!nr) {
+      alert("Brak numeru pracownika dla zalogowanej sesji.");
+      return;
+    }
+    if (!tresc) return;
+    const { error } = await supabase.from("app_ticket_wiadomosc").insert([
+      {
+        ticket_id: ticketId,
+        nadawca_nr: nr,
+        tresc,
+      },
+    ]);
+    if (error) {
+      console.error(error);
+      alert(`Dodawanie wiadomości: ${error.message}`);
+      return;
+    }
+    setAppTicketNowaWiadomosc("");
+    await fetchAppTicketWiadomosci(ticketId);
   }
 
   async function usunAppTicket(id) {
@@ -3809,6 +3878,7 @@ export default function App() {
 
     const payload = {
       nazwa_firmy: nazwa,
+      lokalizacja: String(pwForm.lokalizacja ?? "").trim() || null,
       osoba_kontaktowa: String(pwForm.osoba_kontaktowa ?? "").trim() || null,
       telefon: String(pwForm.telefon ?? "").trim() || null,
     };
@@ -4275,6 +4345,16 @@ export default function App() {
   }, [widok]);
 
   useEffect(() => {
+    if (widok !== "app_tickety") return;
+    if (appTicketWybranyId == null) {
+      setAppTicketWiadomosci([]);
+      setAppTicketWiadomosciErr(null);
+      return;
+    }
+    void fetchAppTicketWiadomosci(appTicketWybranyId);
+  }, [widok, appTicketWybranyId]);
+
+  useEffect(() => {
     if (!requireAuth) {
       void (async () => {
         try {
@@ -4567,6 +4647,13 @@ export default function App() {
         return String(b?.id ?? "").localeCompare(String(a?.id ?? ""), "pl", { sensitivity: "base", numeric: true });
       }),
     [appTicketyList],
+  );
+  const appTicketyWidoczne = useMemo(
+    () =>
+      appTicketyPosortowane.filter((t) =>
+        appTicketPokazArchiwum ? czyAppTicketZamkniety(t?.status) : !czyAppTicketZamkniety(t?.status),
+      ),
+    [appTicketyPosortowane, appTicketPokazArchiwum],
   );
 
   const sprzetListaWidoku = useMemo(() => {
@@ -11690,11 +11777,10 @@ export default function App() {
           <div style={op.heroCard}>
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Tickety / dziennik uwag aplikacji</h2>
             <p style={{ ...op.muted, marginBottom: "0.35rem", maxWidth: "52rem" }}>
-              Roboczy moduł zgłoszeń do aplikacji: kto zgłasza, treść, odpowiedź, status i podpis wdrożenia.
+              Roboczy moduł zgłoszeń do aplikacji: zgłoszenie, odpowiedź i dialog między zgłaszającym a zespołem.
             </p>
             <p style={{ ...op.muted, margin: 0, fontSize: "0.8rem" }}>
-              Statusy: <strong>oczekuje</strong>, <strong>w trakcie</strong>, <strong>zrobione</strong>. Wdrożenie zapisuje datę
-              i podpis.
+              Ticket trafia do <strong>archiwum</strong> dopiero po zamknięciu przez osobę zgłaszającą.
             </p>
           </div>
 
@@ -11747,8 +11833,35 @@ export default function App() {
             ) : null}
           </form>
 
-          {appTicketyFetchError ? null : appTicketyPosortowane.length === 0 ? (
-            <p style={s.muted}>Brak zgłoszeń — dodaj pierwsze wpisem powyżej.</p>
+          <div style={{ ...op.sectionCard, marginBottom: "0.85rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={{
+                ...s.btnGhost,
+                ...(appTicketPokazArchiwum
+                  ? { borderColor: "rgba(148,163,184,0.35)", color: "#cbd5e1" }
+                  : { borderColor: "rgba(56,189,248,0.45)", color: "#7dd3fc", background: "rgba(56,189,248,0.12)" }),
+              }}
+              onClick={() => setAppTicketPokazArchiwum(false)}
+            >
+              Aktywne ({appTicketyPosortowane.filter((t) => !czyAppTicketZamkniety(t?.status)).length})
+            </button>
+            <button
+              type="button"
+              style={{
+                ...s.btnGhost,
+                ...(appTicketPokazArchiwum
+                  ? { borderColor: "rgba(16,185,129,0.45)", color: "#86efac", background: "rgba(16,185,129,0.12)" }
+                  : { borderColor: "rgba(148,163,184,0.35)", color: "#cbd5e1" }),
+              }}
+              onClick={() => setAppTicketPokazArchiwum(true)}
+            >
+              Archiwum ({appTicketyPosortowane.filter((t) => czyAppTicketZamkniety(t?.status)).length})
+            </button>
+          </div>
+
+          {appTicketyFetchError ? null : appTicketyWidoczne.length === 0 ? (
+            <p style={s.muted}>{appTicketPokazArchiwum ? "Archiwum jest puste." : "Brak aktywnych zgłoszeń — dodaj pierwsze wpisem powyżej."}</p>
           ) : (
             <div style={{ ...s.tableWrap, borderRadius: "16px", overflow: "hidden", marginBottom: "1.25rem" }}>
               <table style={{ ...s.table, fontSize: "0.9rem", lineHeight: 1.4 }}>
@@ -11765,7 +11878,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {appTicketyPosortowane.map((row) => {
+                  {appTicketyWidoczne.map((row) => {
                     const reporter =
                       podpisOsobyProwadzacej(row.zglaszajacy_nr, mapaProwadzacychId) ||
                       String(row.zglaszajacy_nr ?? "").trim() ||
@@ -11774,16 +11887,19 @@ export default function App() {
                     const status = APP_TICKET_STATUS_W_BAZIE.includes(statusRaw) ? statusRaw : "oczekuje";
                     const odpVal = String(appTicketWartoscEdycji(row, "odpowiedz") ?? "").trim();
                     const podpisVal = String(appTicketWartoscEdycji(row, "podpis_wdrozenia") ?? "").trim();
+                    const mojNr = String(pracownikPowiazanyZSesja?.nr ?? "").trim();
+                    const czyZglaszajacy = mojNr && mojNr === String(row.zglaszajacy_nr ?? "").trim();
+                    const zamkniety = czyAppTicketZamkniety(status);
                     return (
                       <tr key={row.id}>
                         <td style={s.td}>
-                          {czyMozeObslugiwacAppTickety ? (
+                          {czyMozeObslugiwacAppTickety && !zamkniety ? (
                             <select
                               style={{ ...s.input, padding: "0.38rem 0.45rem", fontSize: "0.8rem" }}
                               value={status}
                               onChange={(ev) => appTicketUstawEdycja(row.id, { status: ev.target.value })}
                             >
-                              {APP_TICKET_STATUS_W_BAZIE.map((st) => (
+                              {APP_TICKET_STATUS_W_BAZIE.filter((st) => st !== "zamkniete").map((st) => (
                                 <option key={st} value={st}>
                                   {etykietaStatusuAppTicket(st)}
                                 </option>
@@ -11801,7 +11917,7 @@ export default function App() {
                           <div style={{ whiteSpace: "pre-wrap" }}>{String(row.tresc_zgloszenia ?? "").trim() || "—"}</div>
                         </td>
                         <td style={s.td}>
-                          {czyMozeObslugiwacAppTickety ? (
+                          {czyMozeObslugiwacAppTickety && !zamkniety ? (
                             <textarea
                               style={{ ...s.input, minHeight: "4.2rem", resize: "vertical", fontSize: "0.84rem" }}
                               value={odpVal}
@@ -11815,7 +11931,7 @@ export default function App() {
                         <td style={s.td}>{dataDoInputa(row.data_zgloszenia) || "—"}</td>
                         <td style={s.td}>{dataDoInputa(row.data_zrobienia) || "—"}</td>
                         <td style={s.td}>
-                          {czyMozeObslugiwacAppTickety ? (
+                          {czyMozeObslugiwacAppTickety && !zamkniety ? (
                             <input
                               style={{ ...s.input, padding: "0.38rem 0.45rem", fontSize: "0.82rem" }}
                               value={podpisVal}
@@ -11828,7 +11944,7 @@ export default function App() {
                         </td>
                         <td style={s.td}>
                           <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", minWidth: "7rem" }}>
-                            {czyMozeObslugiwacAppTickety ? (
+                            {czyMozeObslugiwacAppTickety && !zamkniety ? (
                               <>
                                 <button
                                   type="button"
@@ -11842,10 +11958,26 @@ export default function App() {
                                   style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.22rem 0.4rem" }}
                                   onClick={() => void oznaczAppTicketWdrozonePrzezeMnie(row)}
                                 >
-                                  Wdrożone przeze mnie
+                                  Wdrożone (czeka na zamknięcie)
                                 </button>
                               </>
                             ) : null}
+                            {czyZglaszajacy && !zamkniety ? (
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.2rem 0.35rem", color: "#86efac" }}
+                                onClick={() => void zamknijAppTicketJakoZglaszajacy(row)}
+                              >
+                                Zamknij (do archiwum)
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.2rem 0.35rem" }}
+                              onClick={() => setAppTicketWybranyId(row.id)}
+                            >
+                              Dialog
+                            </button>
                             {czyAdminAktywny ? (
                               <button
                                 type="button"
@@ -11864,6 +11996,69 @@ export default function App() {
               </table>
             </div>
           )}
+
+          {appTicketWybranyId != null ? (
+            <div style={{ ...op.sectionCard, marginBottom: "1.25rem" }}>
+              <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Dialog ticketu #{appTicketWybranyId}</h3>
+              {appTicketWiadomosciErr ? (
+                <div style={{ ...s.errBox, marginBottom: "0.65rem" }}>
+                  <strong>Błąd dialogu.</strong> {appTicketWiadomosciErr}
+                </div>
+              ) : null}
+              <div
+                style={{
+                  border: "1px solid rgba(148,163,184,0.25)",
+                  borderRadius: "12px",
+                  padding: "0.65rem",
+                  background: "rgba(15,23,42,0.45)",
+                  display: "grid",
+                  gap: "0.5rem",
+                  marginBottom: "0.65rem",
+                }}
+              >
+                {appTicketWiadomosci.length === 0 ? (
+                  <div style={op.muted}>Brak wiadomości — dodaj pierwszą odpowiedź.</div>
+                ) : (
+                  appTicketWiadomosci.map((m) => {
+                    const nadNr = String(m.nadawca_nr ?? "").trim();
+                    const nadawca = podpisOsobyProwadzacej(nadNr, mapaProwadzacychId) || nadNr || "—";
+                    return (
+                      <div
+                        key={m.id}
+                        style={{
+                          border: "1px solid rgba(71,85,105,0.35)",
+                          borderRadius: "10px",
+                          background: "rgba(30,41,59,0.65)",
+                          padding: "0.45rem 0.55rem",
+                        }}
+                      >
+                        <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.2rem" }}>
+                          {nadawca} · {dataLogowaniaEtykieta(m.created_at)}
+                        </div>
+                        <div style={{ whiteSpace: "pre-wrap", color: "#e2e8f0" }}>{String(m.tresc ?? "").trim() || "—"}</div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <form onSubmit={dodajWiadomoscDoAppTicketu} style={{ display: "grid", gap: "0.45rem" }}>
+                <textarea
+                  style={{ ...s.input, minHeight: "4rem", resize: "vertical" }}
+                  value={appTicketNowaWiadomosc}
+                  onChange={(ev) => setAppTicketNowaWiadomosc(ev.target.value)}
+                  placeholder="Napisz wiadomość do zgłaszającego / osoby wdrażającej…"
+                />
+                <div style={s.btnRow}>
+                  <button type="submit" style={s.btn}>
+                    Wyślij wiadomość
+                  </button>
+                  <button type="button" style={s.btnGhost} onClick={() => setAppTicketWybranyId(null)}>
+                    Zamknij dialog
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : null}
         </>
       ) : null}
 
@@ -13082,6 +13277,7 @@ export default function App() {
                 <thead>
                   <tr>
                     <th style={s.th}>Nazwa firmy</th>
+                    <th style={s.th}>Lokalizacja</th>
                     <th style={s.th}>Osoba kontaktowa</th>
                     <th style={s.th}>Telefon</th>
                     <th style={s.th} />
@@ -13095,6 +13291,7 @@ export default function App() {
                           {row.nazwa_firmy?.trim() ? row.nazwa_firmy : "—"}
                         </strong>
                       </td>
+                      <td style={s.td}>{row.lokalizacja?.trim() ? row.lokalizacja : "—"}</td>
                       <td style={s.td}>{row.osoba_kontaktowa?.trim() ? row.osoba_kontaktowa : "—"}</td>
                       <td style={s.td}>{row.telefon?.trim() ? row.telefon : "—"}</td>
                       <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
@@ -13142,6 +13339,15 @@ export default function App() {
                 value={pwForm.nazwa_firmy}
                 onChange={(ev) => setPwForm((f) => ({ ...f, nazwa_firmy: ev.target.value }))}
                 required
+              />
+            </label>
+            <label style={s.label}>
+              Lokalizacja
+              <input
+                style={s.input}
+                type="text"
+                value={pwForm.lokalizacja}
+                onChange={(ev) => setPwForm((f) => ({ ...f, lokalizacja: ev.target.value }))}
               />
             </label>
             <label style={s.label}>
@@ -17537,7 +17743,7 @@ export default function App() {
                 fn: przejdzDoAppTicketow,
                 w: "app_tickety",
                 help:
-                  "Dziennik zgłoszeń do aplikacji: kto zgłasza, treść, odpowiedź, status (oczekuje / w trakcie / zrobione) oraz podpis i data wdrożenia.",
+                  "Dziennik zgłoszeń do aplikacji: zgłoszenie, dialog, status (oczekuje / w trakcie / zamknięte) oraz archiwum po zamknięciu przez zgłaszającego.",
               },
               {
                 id: "czas_pracy",
