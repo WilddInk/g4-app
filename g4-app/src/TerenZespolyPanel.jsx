@@ -60,7 +60,13 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
 
   const wybranyZespol = useMemo(
     () => zespoly.find((z) => z.id === selectedZespolId) ?? null,
-    [zespoly, selectedZespolId]
+    [zespoly, selectedZespolId],
+  );
+
+  /** Opcje selectów: jak w Zespół — wyłącznie aktywni (`is_active !== false`). */
+  const pracownicyOpcjeSelect = useMemo(
+    () => pracownicy.filter((p) => p.is_active !== false),
+    [pracownicy],
   );
 
   const zakresMiesiaca = useMemo(() => {
@@ -363,11 +369,25 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
             Filtr pracownika
             <select style={s.input} value={filterPracZadania} onChange={(ev) => setFilterPracZadania(ev.target.value)}>
               <option value="">— wszyscy —</option>
-              {pracownicy.map((p) => (
-                <option key={p.nr} value={String(p.nr).trim()}>
-                  {etykietaPrac(pracownicy, p.nr)}
-                </option>
-              ))}
+              {(() => {
+                const cur = String(filterPracZadania ?? "").trim();
+                const nrs = new Set(pracownicyOpcjeSelect.map((p) => String(p.nr).trim()));
+                const orphan = cur !== "" && !nrs.has(cur);
+                return (
+                  <>
+                    {orphan ? (
+                      <option key={`orphan-${cur}`} value={cur}>
+                        {cur} (nie w liście)
+                      </option>
+                    ) : null}
+                    {pracownicyOpcjeSelect.map((p) => (
+                      <option key={p.nr} value={String(p.nr).trim()}>
+                        {etykietaPrac(pracownicy, p.nr)}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
             </select>
           </label>
           <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginLeft: "auto" }}>
@@ -543,11 +563,25 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
               onChange={(ev) => setFormZadanie((f) => ({ ...f, pracownik_nr: ev.target.value }))}
             >
               <option value="">— nie przypisano / później —</option>
-              {pracownicy.map((p) => (
-                <option key={p.nr} value={String(p.nr).trim()}>
-                  {etykietaPrac(pracownicy, p.nr)}
-                </option>
-              ))}
+              {(() => {
+                const cur = String(formZadanie.pracownik_nr ?? "").trim();
+                const nrs = new Set(pracownicyOpcjeSelect.map((p) => String(p.nr).trim()));
+                const orphan = cur !== "" && !nrs.has(cur);
+                return (
+                  <>
+                    {orphan ? (
+                      <option key={`orphan-zad-${cur}`} value={cur}>
+                        {cur} (nie w liście)
+                      </option>
+                    ) : null}
+                    {pracownicyOpcjeSelect.map((p) => (
+                      <option key={p.nr} value={String(p.nr).trim()}>
+                        {etykietaPrac(pracownicy, p.nr)}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
             </select>
           </label>
           <label style={s.label}>
@@ -736,7 +770,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
               Dodaj pracownika
               <select style={s.input} value={dodajPracNr} onChange={(ev) => setDodajPracNr(ev.target.value)}>
                 <option value="">— wybierz —</option>
-                {pracownicy
+                {pracownicyOpcjeSelect
                   .filter((p) => !czlonkowie.includes(String(p.nr).trim()))
                   .map((p) => (
                     <option key={p.nr} value={String(p.nr).trim()}>

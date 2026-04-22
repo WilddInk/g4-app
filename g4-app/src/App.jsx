@@ -1,4 +1,4 @@
-import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { FakturaKosztowaEdycjaModal } from "./FakturaKosztowaEdycjaModal.jsx";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
@@ -10,6 +10,7 @@ import { supabase, supabaseApiHostname } from "./lib/supabase.js";
 import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 import { requireAuth } from "./config/requireAuth.js";
 import { grupaTypuCzasuWpisu } from "./domain/grupaTypuCzasuWpisu.js";
+import { czyDzienRoboczyPl } from "./lib/swietoPl.js";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { s } from "./styles/appDashboardStyles.js";
 import {
@@ -68,6 +69,35 @@ function pulpitLogWymagaUwagi(row) {
 /** Widok LOG: jest tekst w „Wymagane działanie” — podświetl to pole i „Odpowiedzialny”. */
 function logWidokPodswietlGdyJestWymaganeDzialanie(row) {
   return !!tekstTrim(row.wymagane_dzialanie);
+}
+
+function dataIsoLokalna(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function liczBrakujaceDniGodzinMiesiaca(wpisy) {
+  const dzis = new Date();
+  const rok = dzis.getFullYear();
+  const miesiac = dzis.getMonth();
+  const doDnia = dzis.getDate() - 1;
+  if (doDnia < 1) return [];
+  const mapa = new Map();
+  for (const w of wpisy ?? []) {
+    const ds = String(w?.data ?? "").slice(0, 10);
+    if (!ds) continue;
+    mapa.set(ds, (mapa.get(ds) ?? 0) + (Number(w?.godziny) || 0) + (Number(w?.nadgodziny) || 0));
+  }
+  const out = [];
+  for (let d = 1; d <= doDnia; d++) {
+    const data = new Date(rok, miesiac, d);
+    if (!czyDzienRoboczyPl(data)) continue;
+    const iso = dataIsoLokalna(data);
+    if ((mapa.get(iso) ?? 0) <= 0) out.push(iso);
+  }
+  return out;
 }
 
 /** PW: planowy termin zlecenia minął (dzień kalendarzowy), a „Odebrane” nie jest zaznaczone. */
@@ -142,6 +172,19 @@ function stylPolaUwagiPulpitu(czyUwaga) {
     borderColor: "rgba(248,113,113,0.95)",
     boxShadow: "0 0 0 1px rgba(248,113,113,0.45)",
     backgroundColor: "rgba(248,113,113,0.14)",
+  };
+}
+
+function czyWartoscPusta(v) {
+  return String(v ?? "").trim() === "";
+}
+
+function stylPolaBrakWymagane(czyBrak) {
+  if (!czyBrak) return {};
+  return {
+    borderColor: "rgba(250,204,21,0.72)",
+    boxShadow: "0 0 0 1px rgba(250,204,21,0.34)",
+    backgroundColor: "rgba(250,204,21,0.09)",
   };
 }
 
@@ -256,8 +299,10 @@ function stylTerminuHarmonogramu(planRaw, dziśYmd) {
   };
 }
 
-/** Heurystyka kategorii zadania ogólnego (pole dział + słowa kluczowe) — bez zmian w bazie. */
+/** Tekst do kolumny „Typ zadania”: najpierw pole z bazy, potem heurystyka tekstu (stare rekordy). */
 function zadaniaEtykietaKategorii(row) {
+  const typZ = tekstTrim(row?.typ_zadania);
+  if (typZ) return typZ;
   const blob = [row.zadanie, row.dzial, row.opis]
     .map((x) => (x != null ? String(x).toLowerCase() : ""))
     .join(" ");
@@ -651,33 +696,13 @@ const LOG_STATUS_ZDARZENIA_W_BAZIE = ["w trakcie", "ukończone", "oczekuje"];
 /** Status zadania ogólnego (tabela zadania) — te same etykiety co w LOG. */
 const ZADANIE_STATUS_W_BAZIE = LOG_STATUS_ZDARZENIA_W_BAZIE;
 
+/** Wartości pola `zadania.typ_zadania` — ta sama kolejność w formularzu. */
+const ZADANIE_TYPY_WYBORU = ["Biurowe", "Płatność", "Zakupy", "Inne", "Terenowe", "Pracownicze", "Sprzęt"];
+
 /** Tickety aplikacyjne — statusy robocze + archiwum po zamknięciu przez zgłaszającego. */
 const APP_TICKET_STATUS_W_BAZIE = ["oczekuje", "w trakcie", "zamkniete"];
 
 const PODWYKONAWCA_MAPA_CENTER_PL = [52.05, 19.4];
-const PODWYKONAWCA_MIASTA_SUGESTIE = [
-  "Warszawa",
-  "Kraków",
-  "Łódź",
-  "Wrocław",
-  "Poznań",
-  "Gdańsk",
-  "Szczecin",
-  "Bydgoszcz",
-  "Lublin",
-  "Katowice",
-  "Białystok",
-  "Rzeszów",
-  "Olsztyn",
-  "Kielce",
-  "Opole",
-  "Toruń",
-  "Zielona Góra",
-  "Gorzów Wielkopolski",
-  "Bielsko-Biała",
-  "Częstochowa",
-];
-
 const PODWYKONAWCA_MIASTA_COORDS = {
   warszawa: [52.2297, 21.0122],
   krakow: [50.0647, 19.945],
@@ -736,6 +761,18 @@ function czyFakturaPasujeDoPodwykonawcy(row, nazwaFirmy) {
   });
 }
 
+function kodPocztowyZnormalizowany(raw) {
+  const txt = String(raw ?? "").trim();
+  if (!txt) return "";
+  const cyfry = txt.replace(/\D/g, "");
+  if (cyfry.length === 5) return `${cyfry.slice(0, 2)}-${cyfry.slice(2)}`;
+  return txt;
+}
+
+function czyKodPocztowyPoprawny(raw) {
+  return /^\d{2}-\d{3}$/.test(String(raw ?? "").trim());
+}
+
 async function podwykonawcaGeocodePL(lokalizacjaRaw) {
   const q = String(lokalizacjaRaw ?? "").trim();
   if (!q) return null;
@@ -773,6 +810,34 @@ function zadanieCzyUkonczoneStatus(statusRaw) {
   return st === "ukończone" || st === "ukonczone" || st === "zakończone" || st === "zakonczone";
 }
 
+function zadanieCzyWArchiwum(row) {
+  return row?.w_archiwum === true;
+}
+
+/** Termin realizacji — pole `deadline`, fallback dla starych wierszy: `data_planowana`. */
+function zadanieDeadlineSortKey(row) {
+  const raw = row?.deadline ?? row?.data_planowana;
+  return dataDoSortuYYYYMMDD(raw);
+}
+
+/** Po terminie deadline: brak odbioru, nie archiwum, status nie „ukończone”. */
+function zadaniePoTerminieDeadline(row, dziśYYYYMMDD) {
+  const dl = zadanieDeadlineSortKey(row);
+  if (!dl || !dziśYYYYMMDD) return false;
+  if (dl >= dziśYYYYMMDD) return false;
+  if (zadanieCzyWArchiwum(row)) return false;
+  if (tekstTrim(row?.data_odbioru)) return false;
+  if (zadanieCzyUkonczoneStatus(row?.status)) return false;
+  return true;
+}
+
+/** Wolna kolejka — brak wykonawcy i status nie jest domknięty. */
+function zadanieBezOdpDoPrzejecia(row) {
+  if (tekstTrim(row?.osoba_odpowiedzialna)) return false;
+  if (zadanieCzyUkonczoneStatus(row?.status)) return false;
+  return true;
+}
+
 function zadanieKluczKolumnyKanban(statusRaw) {
   const st = String(statusRaw ?? "").trim().toLowerCase();
   if (zadanieCzyUkonczoneStatus(st)) return "ukonczone";
@@ -780,6 +845,9 @@ function zadanieKluczKolumnyKanban(statusRaw) {
   if (st === "oczekuje") return "oczekuje";
   return "inne";
 }
+
+/** Przeliczenie „dzień roboczy” → roboczogodziny przy estymacji zadań (spójnie z normą 8 h). */
+const ROB_H_NA_DZIEN_ROBOCZY_ZADANIE = 8;
 
 /** Typ sprzętu w tabeli `sprzet` (lista + pole własne przy „z bazy”). */
 const SPRZET_TYP_W_BAZIE = ["komputer", "drukarka", "ksero", "inne"];
@@ -874,21 +942,82 @@ function zadaniePustyForm() {
   return {
     kr: "",
     zadanie: "",
+    typ_zadania: "",
     dzial: "",
     osoba_odpowiedzialna: "",
     osoba_zlecajaca: "",
     status: "oczekuje",
-    data_planowana: "",
-    data_realna: "",
+    deadline: "",
+    estymacja_godzin: "",
+    estymacja_jednostka: "h",
     zagrozenie: "",
     opis: "",
   };
 }
 
+/**
+ * Parsuje estymację z formularza → `estymacja_godzin` zawsze w roboczogodzinach + jednostka wpisu (h/d).
+ */
+function estymacjaZadaniaDoBazyZFormu(rawWartosc, jednostkaForm) {
+  const t = String(rawWartosc ?? "").trim().replace(",", ".");
+  const jednostka = jednostkaForm === "d" ? "d" : "h";
+  if (t === "") return { ok: true, godzRobocze: null, jednostkaZapis: null };
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) {
+    return {
+      ok: false,
+      message:
+        jednostka === "d"
+          ? 'Estymacja w dniach: podaj nieujemną liczbę (np. „2”, „0,5”).'
+          : 'Estymacja w godzinach: podaj nieujemną liczbę roboczogodzin (np. „2”, „1,5”).',
+    };
+  }
+  const vv = Math.round(n * 100) / 100;
+  if (jednostka === "d") {
+    const rob = vv * ROB_H_NA_DZIEN_ROBOCZY_ZADANIE;
+    return {
+      ok: true,
+      godzRobocze: Math.round(rob * 100) / 100,
+      jednostkaZapis: "d",
+    };
+  }
+  return { ok: true, godzRobocze: vv, jednostkaZapis: "h" };
+}
+
+/** Tekst do tabel / kart; `null` gdy brak wartości. Przy wpisie w dniach dopisywane są roboczogodziny. */
+function zadanieTekstEstymacjiGodzin(row) {
+  const v = row?.estymacja_godzin;
+  if (v == null || v === "") return null;
+  const gh = Number(v);
+  if (!Number.isFinite(gh)) return null;
+  const jednostka = row?.estymacja_jednostka === "d" ? "d" : "h";
+  const hTxt = gh.toLocaleString("pl-PL", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
+  const robHTxt = `${hTxt} rob. h`;
+  if (jednostka === "d") {
+    const dni = gh / ROB_H_NA_DZIEN_ROBOCZY_ZADANIE;
+    const dTxt = dni.toLocaleString("pl-PL", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
+    return `${dTxt} dni rob. (${robHTxt})`;
+  }
+  return robHTxt;
+}
+
 function zadanieWierszDoFormu(row) {
+  const jednostkaZ = row.estymacja_jednostka === "d" ? "d" : "h";
+  const eg = row.estymacja_godzin;
+  let egStr = "";
+  if (eg != null && eg !== "" && Number.isFinite(Number(eg))) {
+    const gh = Number(eg);
+    if (jednostkaZ === "d") {
+      const dni = gh / ROB_H_NA_DZIEN_ROBOCZY_ZADANIE;
+      egStr = String(Math.round(dni * 100) / 100);
+    } else {
+      egStr = String(Math.round(gh * 100) / 100);
+    }
+  }
   return {
     kr: row.kr != null && String(row.kr).trim() !== "" ? String(row.kr).trim() : "",
     zadanie: row.zadanie != null ? String(row.zadanie) : "",
+    typ_zadania: row.typ_zadania != null ? String(row.typ_zadania).trim() : "",
     dzial: row.dzial != null ? String(row.dzial) : "",
     osoba_odpowiedzialna:
       row.osoba_odpowiedzialna != null && row.osoba_odpowiedzialna !== ""
@@ -899,8 +1028,9 @@ function zadanieWierszDoFormu(row) {
         ? String(row.osoba_zlecajaca)
         : "",
     status: row.status != null ? String(row.status) : "",
-    data_planowana: dataDoInputa(row.data_planowana),
-    data_realna: dataDoInputa(row.data_realna),
+    deadline: dataDoInputa(row.deadline ?? row.data_planowana),
+    estymacja_godzin: egStr,
+    estymacja_jednostka: jednostkaZ,
     zagrozenie: boolDoTakNie(row.zagrozenie),
     opis: row.opis != null ? String(row.opis) : "",
   };
@@ -1113,7 +1243,12 @@ function kwotaBruttoEtykieta(wartosc) {
 
 function czyKrTechniczneUkrywaneDlaNieAdmin(kr) {
   const k = String(kr ?? "").trim().toUpperCase();
-  return k === "000" || k === "KK" || k === "FOT";
+  return k === "000" || k === "KK";
+}
+
+function czyKrUkryteGlobalnie(kr) {
+  const k = String(kr ?? "").trim().toUpperCase();
+  return k === "FOT" || k === "KK";
 }
 
 /** Prawdziwy admin bez podglądu „jako ktoś inny” — pełna baza faktur kosztowych. */
@@ -1645,7 +1780,7 @@ function HelpLinijka({ wlaczony, children }) {
 const KR_PROJEKT_MENU = [
   {
     id: "przeglad",
-    label: "Przegląd",
+    label: "Tablica KR",
     help: "Pierwszy ekran projektu: skrót etapów, co pilne, ostatnie zgłoszenia i szybkie przejścia.",
   },
   {
@@ -1767,6 +1902,11 @@ export default function App() {
   const [widokPwDlaKr, setWidokPwDlaKr] = useState(null);
   /** Pulpit / oś czasu — złączone ETAP, PW, LOG chronologicznie dla jednego KR. */
   const [widokPulpitDlaKr, setWidokPulpitDlaKr] = useState(null);
+  const [krSekcjaMenu2, setKrSekcjaMenu2] = useState("nieprzydzielone");
+  const [taskSekcja, setTaskSekcja] = useState("moje");
+  /** Sidebar TASK: rozwijane podmenu Z KR / Teren / Ogólne (pod pozycją „Zadania”). */
+  const [navTaskZakresOtwarte, setNavTaskZakresOtwarte] = useState(false);
+  const [krMenu2Rozwiniete, setKrMenu2Rozwiniete] = useState(true);
   /** Pulpit: pierwszy klucz sortowania — data; potem typ (ETAP/PW/LOG), potem kolejność dodania. */
   const [pulpitSortDaty, setPulpitSortDaty] = useState("asc");
   /** Podstrona pulpitu: przegląd (skrót), pełna oś, lub treść jak zakładki karty projektu. */
@@ -1804,6 +1944,9 @@ export default function App() {
   const [zadaniaFiltrTylkoOdpowiedzialny, setZadaniaFiltrTylkoOdpowiedzialny] = useState(false);
   /** "" = wszystkie, "__bez_kr__" = tylko ogólne (bez projektu), inaczej kod KR */
   const [zadaniaFiltrKr, setZadaniaFiltrKr] = useState("");
+  const [zadaniaPokazArchiwum, setZadaniaPokazArchiwum] = useState(false);
+  /** Delegacja zadania bez osoby odpowiedzialnej — wybrany nr pracownika per id zadania. */
+  const [zadanieDelegujWyborNr, setZadanieDelegujWyborNr] = useState({});
   const [appTicketyList, setAppTicketyList] = useState([]);
   const [appTicketyFetchError, setAppTicketyFetchError] = useState(null);
   const [appTicketNowyTresc, setAppTicketNowyTresc] = useState("");
@@ -1814,6 +1957,12 @@ export default function App() {
   const [appTicketWiadomosci, setAppTicketWiadomosci] = useState([]);
   const [appTicketWiadomosciErr, setAppTicketWiadomosciErr] = useState(null);
   const [appTicketNowaWiadomosc, setAppTicketNowaWiadomosc] = useState("");
+  const [dashboardBrakiGodzin, setDashboardBrakiGodzin] = useState({
+    loading: false,
+    error: null,
+    dni: [],
+  });
+  const [dashboardBrakiBlink, setDashboardBrakiBlink] = useState(true);
 
   const [podwykonawcyList, setPodwykonawcyList] = useState([]);
   const [podwykonawcyFetchError, setPodwykonawcyFetchError] = useState(null);
@@ -2272,6 +2421,32 @@ export default function App() {
     setAppTicketWiadomosci(data ?? []);
   }
 
+  async function fetchDashboardBrakiGodzin() {
+    const nr = pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) {
+      setDashboardBrakiGodzin({ loading: false, error: null, dni: [] });
+      return;
+    }
+    const dzis = new Date();
+    const od = new Date(dzis.getFullYear(), dzis.getMonth(), 1);
+    const odIso = dataIsoLokalna(od);
+    const doIso = dataIsoLokalna(dzis);
+    setDashboardBrakiGodzin((prev) => ({ ...prev, loading: true, error: null }));
+    const { data, error } = await supabase
+      .from("czas_pracy_wpis")
+      .select("data, godziny, nadgodziny")
+      .eq("pracownik_nr", nr)
+      .gte("data", odIso)
+      .lte("data", doIso);
+    if (error) {
+      console.error("Błąd pobierania braków godzin na dashboard:", error);
+      setDashboardBrakiGodzin({ loading: false, error: error.message, dni: [] });
+      return;
+    }
+    const braki = liczBrakujaceDniGodzinMiesiaca(data ?? []);
+    setDashboardBrakiGodzin({ loading: false, error: null, dni: braki });
+  }
+
   async function fetchPodwykonawcy() {
     setPodwykonawcyFetchError(null);
     const { data, error } = await supabase
@@ -2378,7 +2553,13 @@ export default function App() {
       setKrFakturyDoZaplatyFetchError(null);
       return;
     }
-    const ukrywajTechniczne = !czyAdminAktywny || podgladJakoInny;
+    if (czyKrUkryteGlobalnie(k)) {
+      krFakturyDoZaplatySuroweRef.current = [];
+      setKrFakturyDoZaplatyList([]);
+      setKrFakturyDoZaplatyFetchError(null);
+      return;
+    }
+    const ukrywajTechniczne = (!czyAdminAktywny && !czyKierownikAktywny) || podgladJakoInny;
     if (ukrywajTechniczne && czyKrTechniczneUkrywaneDlaNieAdmin(k)) {
       krFakturyDoZaplatySuroweRef.current = [];
       setKrFakturyDoZaplatyList([]);
@@ -3147,6 +3328,59 @@ export default function App() {
     void fetchPracownicy();
   }
 
+  function przejdzDoTask(sekcja = "moje") {
+    setTaskSekcja(sekcja);
+    if (sekcja === "app") {
+      przejdzDoAppTicketow();
+      return;
+    }
+    przejdzDoZadania();
+    if (sekcja === "wszystkie") {
+      setZadaniaFiltrPracNr("");
+      setZadaniaFiltrTylkoOdpowiedzialny(false);
+      setZadaniaFiltrKr("");
+      return;
+    }
+    if (sekcja === "moje") {
+      setZadaniaFiltrKr("");
+      if (nrZalogowanegoDoZadan) {
+        setZadaniaFiltrPracNr(nrZalogowanegoDoZadan);
+        setZadaniaFiltrTylkoOdpowiedzialny(true);
+      } else {
+        setZadaniaFiltrPracNr("");
+        setZadaniaFiltrTylkoOdpowiedzialny(false);
+      }
+      return;
+    }
+    if (sekcja === "z_kr") {
+      setZadaniaFiltrPracNr("");
+      setZadaniaFiltrTylkoOdpowiedzialny(false);
+      setZadaniaFiltrKr("__tylko_z_kr__");
+      return;
+    }
+    if (sekcja === "teren") {
+      setZadaniaFiltrPracNr("");
+      setZadaniaFiltrTylkoOdpowiedzialny(false);
+      setZadaniaFiltrKr("__tylko_z_kr__");
+      return;
+    }
+    if (sekcja === "ogolne") {
+      setZadaniaFiltrPracNr("");
+      setZadaniaFiltrTylkoOdpowiedzialny(false);
+      setZadaniaFiltrKr("__bez_kr__");
+      return;
+    }
+    if (sekcja === "nowe") {
+      setZadaniaFiltrPracNr("");
+      setZadaniaFiltrTylkoOdpowiedzialny(false);
+      setZadaniaFiltrKr("");
+      setZadanieEdycjaId(null);
+      setZadanieForm(zadaniePustyForm());
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+  }
+
   /** Moduł Zadania: filtr „tylko zadania przypisane do kodów KR z listy kart (nie ogólne, nie osierocone kody). */
   function przejdzDoZadanTylkoZKartamiKr() {
     setZadaniaFiltrKr("__tylko_z_kr__");
@@ -3228,6 +3462,13 @@ export default function App() {
     setWidok("mapa_podwykonawcow");
     void fetchPodwykonawcy();
     void fetchPracownicy();
+  }
+
+  function przejdzDoMapyPodwykonawcowZFirma(idFirmy) {
+    const idTxt = String(idFirmy ?? "").trim();
+    przejdzDoMapyPodwykonawcow();
+    if (!idTxt) return;
+    setPwMapaAktywneIds(new Set([idTxt]));
   }
 
   function przelaczAktywnyPunktPodwykonawcy(id) {
@@ -3676,15 +3917,25 @@ export default function App() {
       opts?.krWymuszony != null && String(opts.krWymuszony).trim() !== ""
         ? String(opts.krWymuszony).trim()
         : null;
+    const estym = estymacjaZadaniaDoBazyZFormu(
+      zadanieForm.estymacja_godzin,
+      zadanieForm.estymacja_jednostka,
+    );
+    if (!estym.ok) {
+      alert(estym.message);
+      return;
+    }
     const payload = {
       kr: krForced ?? (String(zadanieForm.kr ?? "").trim() || null),
       zadanie: zTxt,
+      typ_zadania: String(zadanieForm.typ_zadania ?? "").trim() || null,
       dzial: String(zadanieForm.dzial ?? "").trim() || null,
       osoba_odpowiedzialna: String(zadanieForm.osoba_odpowiedzialna ?? "").trim() || null,
       osoba_zlecajaca: String(zadanieForm.osoba_zlecajaca ?? "").trim() || null,
       status: statusDoBazy,
-      data_planowana: String(zadanieForm.data_planowana ?? "").trim() || null,
-      data_realna: String(zadanieForm.data_realna ?? "").trim() || null,
+      deadline: String(zadanieForm.deadline ?? "").trim() || null,
+      estymacja_godzin: estym.godzRobocze,
+      estymacja_jednostka: estym.jednostkaZapis,
       zagrozenie: takNieDoBool(zadanieForm.zagrozenie),
       opis: String(zadanieForm.opis ?? "").trim() || null,
     };
@@ -3702,7 +3953,7 @@ export default function App() {
           "Zapis zadania: " +
             error.message +
             (String(error.message).includes("column") || String(error.message).includes("schema")
-              ? "\n\nSprawdź strukturę tabeli zadania w bazie. Kolumna kr: g4-app/supabase/zadania-kolumna-kr.sql"
+              ? "\n\nSprawdź strukturę tabeli zadania w bazie (kr: zadania-kolumna-kr.sql; typ: zadania-typ-zadania.sql; deadline/odbiór: zadania-deadline-odbior-archiwum.sql; estymacja: zadania-estymacja-godzin.sql + zadania-estymacja-jednostka.sql)."
               : "") +
             "\n\nUruchom sekcję zadania w g4-app/supabase/rls-policies-anon.sql (RLS + GRANT)."
         );
@@ -3718,6 +3969,9 @@ export default function App() {
             error.message +
             (String(error.message).toLowerCase().includes("kr")
               ? "\n\nUruchom g4-app/supabase/zadania-kolumna-kr.sql w SQL Editor."
+              : "") +
+            (String(error.message).includes("estymacja") || String(error.message).includes("column")
+              ? "\n\nKolumny: typ — zadania-typ-zadania.sql; deadline/odbiór/archiwum — zadania-deadline-odbior-archiwum.sql; estymacja — zadania-estymacja-godzin.sql oraz zadania-estymacja-jednostka.sql"
               : "") +
             "\n\nUruchom sekcję zadania w g4-app/supabase/rls-policies-anon.sql."
         );
@@ -3743,14 +3997,6 @@ export default function App() {
     if (!st || !ZADANIE_STATUS_W_BAZIE.includes(st)) return;
     const row = zadaniaList.find((z) => z.id === rowId);
     const patch = { status: st };
-    if (zadanieCzyUkonczoneStatus(st)) {
-      const maReal =
-        row != null &&
-        row.data_realna != null &&
-        String(row.data_realna).trim() !== "" &&
-        dataDoInputa(row.data_realna) !== "";
-      if (!maReal) patch.data_realna = dzisiajDataYYYYMMDD();
-    }
     const { error } = await supabase.from("zadania").update(patch).eq("id", rowId);
     if (error) {
       console.error(error);
@@ -3772,6 +4018,52 @@ export default function App() {
       anulujZadanieEdycje();
     }
     await fetchZadania();
+  }
+
+  /**
+   * Ustawia osobę odpowiedzialną przy zadaniu z „wolnej kolejki”.
+   * `podejmij` — tylko na siebie (widok efektywny); `delegacja` — admin / kierownik na dowolnego pracownika.
+   */
+  async function ustawOdpowiedzialnegoZadania(rowId, osobaNr, opts) {
+    const trybDelegacji = opts?.tryb === "delegacja";
+    const cel = String(osobaNr ?? "").trim();
+    if (!cel) {
+      alert("Wybierz numer pracownika.");
+      return false;
+    }
+    const ctx = obliczPracownikWidokuDlaSesji(pracownicy, session, adminPodgladPracownikNr);
+    const rola = String(ctx.pracownikSesja?.app_role ?? "").trim().toLowerCase();
+    const mojNr =
+      ctx.pracownikWidokEfektywny?.nr != null ? String(ctx.pracownikWidokEfektywny.nr).trim() : "";
+    if (trybDelegacji) {
+      if (rola !== "admin" && rola !== "kierownik") {
+        alert("Tylko administrator lub kierownik może delegować zadanie do wybranej osoby.");
+        return false;
+      }
+    } else {
+      if (!mojNr || cel !== mojNr) {
+        alert("Możesz przypisać to zadanie tylko na siebie (podejmij).");
+        return false;
+      }
+    }
+    const row = zadaniaList.find((z) => z.id === rowId);
+    if (!row) return false;
+    if (tekstTrim(row.osoba_odpowiedzialna)) {
+      alert("To zadanie ma już osobę odpowiedzialną — użyj edycji, aby ją zmienić.");
+      return false;
+    }
+    if (zadanieCzyUkonczoneStatus(row.status)) {
+      alert("Nie można przypisać wykonawcy do zadania uznawanego za zakończone.");
+      return false;
+    }
+    const { error } = await supabase.from("zadania").update({ osoba_odpowiedzialna: cel }).eq("id", rowId);
+    if (error) {
+      console.error(error);
+      alert("Przypisanie osoby odpowiedzialnej: " + error.message);
+      return false;
+    }
+    await fetchZadania();
+    return true;
   }
 
   async function dodajAppTicket(e) {
@@ -3941,7 +4233,11 @@ export default function App() {
       return;
     }
 
-    const lokalizacja = String(pwForm.lokalizacja ?? "").trim();
+    const lokalizacja = kodPocztowyZnormalizowany(pwForm.lokalizacja);
+    if (lokalizacja && !czyKodPocztowyPoprawny(lokalizacja)) {
+      alert("Kod pocztowy ma zły format. Wpisz: 00-000.");
+      return;
+    }
     const payload = {
       nazwa_firmy: nazwa,
       lokalizacja: lokalizacja || null,
@@ -3955,13 +4251,11 @@ export default function App() {
         if (geo) {
           payload.lokalizacja_lat = geo.lat;
           payload.lokalizacja_lng = geo.lng;
-          setPwGeoInfo(`OK: punkt ustawiony automatycznie dla lokalizacji „${lokalizacja}”.`);
+          setPwGeoInfo(`OK: punkt ustawiony automatycznie dla kodu pocztowego „${lokalizacja}”.`);
         } else {
           payload.lokalizacja_lat = null;
           payload.lokalizacja_lng = null;
-          setPwGeoInfo(
-            `Nie znalazłam lokalizacji „${lokalizacja}”. Spróbuj wpisać samo miasto, np. „Kraków” albo „Kraków, małopolskie”.`
-          );
+          setPwGeoInfo(`Nie znalazłam kodu pocztowego „${lokalizacja}”. Wpisz kod w formacie 00-000.`);
         }
       } else {
         payload.lokalizacja_lat = null;
@@ -3972,7 +4266,7 @@ export default function App() {
       // Nie blokujemy zapisu podwykonawcy, gdy zewnętrzne geokodowanie chwilowo nie działa.
       payload.lokalizacja_lat = null;
       payload.lokalizacja_lng = null;
-      setPwGeoInfo("Nie udało się teraz pobrać punktu z mapy. Zapis jest OK, później kliknij „Popraw lokalizację”.");
+      setPwGeoInfo("Nie udało się teraz pobrać punktu z mapy. Zapis jest OK, później kliknij „LOK”.");
     }
 
     if (pwEdycjaId != null) {
@@ -4018,16 +4312,20 @@ export default function App() {
   async function poprawLokalizacjePodwykonawcy(row) {
     const id = row?.id;
     if (id == null) return;
-    const lokalizacja = String(row?.lokalizacja ?? "").trim();
+    const lokalizacja = kodPocztowyZnormalizowany(row?.lokalizacja);
     if (!lokalizacja) {
-      alert("Najpierw wpisz lokalizację dla tego podwykonawcy.");
+      alert("Najpierw wpisz kod pocztowy dla tego podwykonawcy.");
+      return;
+    }
+    if (!czyKodPocztowyPoprawny(lokalizacja)) {
+      alert("Kod pocztowy ma zły format. Wpisz: 00-000.");
       return;
     }
     setPwGeoBusyId(id);
     try {
       const geo = await podwykonawcaGeocodePL(lokalizacja);
       if (!geo) {
-        alert("Nie udało się znaleźć tej lokalizacji na mapie. Spróbuj wpisać np. samą nazwę miasta.");
+        alert("Nie udało się znaleźć tego kodu pocztowego na mapie.");
         return;
       }
       const { error } = await supabase
@@ -4037,7 +4335,7 @@ export default function App() {
         .select("id");
       if (error) {
         console.error(error);
-        alert(`Aktualizacja lokalizacji: ${error.message}`);
+        alert(`Aktualizacja kodu pocztowego: ${error.message}`);
         return;
       }
       setPwGeoInfo(`Gotowe: poprawiłam punkt mapy dla „${String(row?.nazwa_firmy ?? "").trim() || "podwykonawcy"}”.`);
@@ -4395,6 +4693,12 @@ export default function App() {
   }, [widok]);
 
   useEffect(() => {
+    if (widok === "zadania" && ["z_kr", "teren", "ogolne"].includes(taskSekcja)) {
+      setNavTaskZakresOtwarte(true);
+    }
+  }, [widok, taskSekcja]);
+
+  useEffect(() => {
     if (!requireAuth) {
       setAuthReady(true);
       return;
@@ -4687,15 +4991,18 @@ export default function App() {
     return krList.find((row) => String(row.kr) === k) ?? null;
   }, [krList, wybranyKrKlucz]);
 
+  /** Lista do list rozwijanych (np. zadania, zgłoszenia): tylko aktywni — jak pole „Aktywny” w Zespół (`is_active !== false`). */
   const pracownicyPosortowani = useMemo(
     () =>
-      [...pracownicy].sort((a, b) =>
-        String(a.imie_nazwisko ?? "").localeCompare(String(b.imie_nazwisko ?? ""), "pl", {
-          sensitivity: "base",
-          numeric: true,
-        })
-      ),
-    [pracownicy]
+      [...pracownicy]
+        .filter((p) => p.is_active !== false)
+        .sort((a, b) =>
+          String(a.imie_nazwisko ?? "").localeCompare(String(b.imie_nazwisko ?? ""), "pl", {
+            sensitivity: "base",
+            numeric: true,
+          }),
+        ),
+    [pracownicy],
   );
 
   /** Czas pracy — lista wyboru: tylko aktywni (`is_active` jak w Zespół), kolejność wg KR (osoba_prowadzaca), potem nazwisko. */
@@ -4955,6 +5262,272 @@ export default function App() {
   const czyMozeEdytowacTickTeren = czyAdminAktywny || czyKierownikAktywny;
   const czyMozeObslugiwacAppTickety = czyAdminAktywny || czyKierownikAktywny;
 
+  async function zglosWykonanieZadania(rowId) {
+    const nr =
+      pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) {
+      alert("Brak przypisanego numeru pracownika do sesji.");
+      return;
+    }
+    const row = zadaniaList.find((z) => z.id === rowId);
+    if (!row) return;
+    const od = String(row.osoba_odpowiedzialna ?? "").trim();
+    if (!od) {
+      alert("Uzupełnij osobę odpowiedzialną — wtedy można zgłosić wykonanie.");
+      return;
+    }
+    if (od !== nr) {
+      alert("Zgłoszenie wykonania może złożyć tylko osoba odpowiedzialna za zadanie.");
+      return;
+    }
+    if (row.wykonanie_zgloszone_at) {
+      alert("Wykonanie zostało już zgłoszone.");
+      return;
+    }
+    if (tekstTrim(row.data_odbioru)) {
+      alert("To zadanie ma już potwierdzony odbiór.");
+      return;
+    }
+    const { error } = await supabase
+      .from("zadania")
+      .update({ wykonanie_zgloszone_at: new Date().toISOString() })
+      .eq("id", rowId);
+    if (error) {
+      console.error(error);
+      alert(
+        "Zapis zgłoszenia: " +
+          error.message +
+          "\n\nJeśli brakuje kolumn — uruchom g4-app/supabase/zadania-deadline-odbior-archiwum.sql",
+      );
+      return;
+    }
+    await fetchZadania();
+  }
+
+  async function potwierdzOdbiorZadania(rowId) {
+    const nr =
+      pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) {
+      alert("Brak przypisanego numeru pracownika do sesji.");
+      return;
+    }
+    const row = zadaniaList.find((z) => z.id === rowId);
+    if (!row) return;
+    const zl = String(row.osoba_zlecajaca ?? "").trim();
+    if (!zl) {
+      alert("Uzupełnij osobę zlecającą — tylko ona potwierdza odbiór.");
+      return;
+    }
+    if (zl !== nr) {
+      alert("Potwierdzenie odbioru może złożyć tylko osoba zlecająca.");
+      return;
+    }
+    if (!row.wykonanie_zgloszone_at) {
+      alert("Najpierw wykonawca musi zgłosić wykonanie zadania.");
+      return;
+    }
+    if (tekstTrim(row.data_odbioru)) {
+      alert("Odbiór jest już zapisany.");
+      return;
+    }
+    const d = dzisiajDataYYYYMMDD();
+    const { error } = await supabase.from("zadania").update({ data_odbioru: d }).eq("id", rowId);
+    if (error) {
+      console.error(error);
+      alert(
+        "Potwierdzenie odbioru: " +
+          error.message +
+          "\n\nJeśli brakuje kolumn — uruchom g4-app/supabase/zadania-deadline-odbior-archiwum.sql",
+      );
+      return;
+    }
+    await fetchZadania();
+  }
+
+  async function przeniesZadanieDoArchiwum(rowId) {
+    const nr =
+      pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) return;
+    const row = zadaniaList.find((z) => z.id === rowId);
+    if (!row) return;
+    if (!tekstTrim(row.data_odbioru)) {
+      alert("Najpierw ustaw datę odbioru (potwierdzenie przez osobę zlecającą).");
+      return;
+    }
+    if (row.w_archiwum === true) return;
+    const zl = String(row.osoba_zlecajaca ?? "").trim();
+    const od = String(row.osoba_odpowiedzialna ?? "").trim();
+    if (zl !== nr && od !== nr) {
+      alert("Do archiwum może przenieść osoba zlecająca lub odpowiedzialna.");
+      return;
+    }
+    if (!window.confirm("Przenieść zadanie do archiwum? Zniknie z listy roboczej (chyba że włączysz „Pokaż archiwum”).")) return;
+    const { error } = await supabase
+      .from("zadania")
+      .update({ w_archiwum: true, status: "ukończone" })
+      .eq("id", rowId);
+    if (error) {
+      console.error(error);
+      alert(
+        "Archiwum: " +
+          error.message +
+          "\n\nJeśli brakuje kolumn — uruchom g4-app/supabase/zadania-deadline-odbior-archiwum.sql",
+      );
+      return;
+    }
+    await fetchZadania();
+  }
+
+  function komorkaPrzeplywuZadania(row) {
+    const nr =
+      pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    const od = String(row.osoba_odpowiedzialna ?? "").trim();
+    const zl = String(row.osoba_zlecajaca ?? "").trim();
+    const maWyk = !!row.wykonanie_zgloszone_at;
+    const maOdb = tekstTrim(row.data_odbioru);
+    const arch = row.w_archiwum === true;
+
+    const pokazZglos = nr && od === nr && !maWyk && !maOdb && !arch;
+    const pokazPotwierdz = nr && zl === nr && maWyk && !maOdb && !arch && Boolean(zl);
+    const pokazPotwBrakZlec = nr && maWyk && !maOdb && !arch && !zl;
+    const pokazArch = !arch && maOdb && nr && (zl === nr || od === nr);
+
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.2rem",
+          alignItems: "flex-start",
+          maxWidth: "13rem",
+        }}
+      >
+        {maWyk && !maOdb ? (
+          <span style={{ fontSize: "0.72rem", color: "#86efac" }}>Wykonanie zgłoszone</span>
+        ) : null}
+        {maOdb ? (
+          <span style={{ fontSize: "0.72rem", color: "#93c5fd" }}>
+            Data odbioru: {dataDoInputa(row.data_odbioru)}
+          </span>
+        ) : null}
+        {arch ? <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Archiwum</span> : null}
+        {pokazZglos ? (
+          <button
+            type="button"
+            style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.18rem 0.4rem" }}
+            onClick={() => void zglosWykonanieZadania(row.id)}
+          >
+            Zgłoś wykonanie
+          </button>
+        ) : null}
+        {pokazPotwierdz ? (
+          <button
+            type="button"
+            style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.18rem 0.4rem" }}
+            onClick={() => void potwierdzOdbiorZadania(row.id)}
+          >
+            Potwierdź odbiór
+          </button>
+        ) : null}
+        {pokazPotwBrakZlec ? (
+          <span style={{ fontSize: "0.68rem", color: "#fca5a5", lineHeight: 1.35 }}>
+            Brak zlecającego w polu — dopisz w edycji.
+          </span>
+        ) : null}
+        {pokazArch ? (
+          <button
+            type="button"
+            style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.18rem 0.4rem" }}
+            onClick={() => void przeniesZadanieDoArchiwum(row.id)}
+          >
+            Do archiwum
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const renderZadanieWolnyOdpowiedzialny = useCallback(
+    (row) => {
+      if (!zadanieBezOdpDoPrzejecia(row)) return null;
+      const rid = String(row.id);
+      const mojNr =
+        pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+      const mozeDelegowac = czyAdminAktywny || czyKierownikAktywny;
+      const sel = zadanieDelegujWyborNr[rid] ?? "";
+      return (
+        <div
+          style={{
+            marginTop: "0.35rem",
+            paddingTop: "0.35rem",
+            borderTop: "1px solid rgba(148,163,184,0.14)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.35rem",
+          }}
+        >
+          <span style={{ fontSize: "0.68rem", color: "#94a3b8", fontWeight: 600 }}>
+            Bez odpowiedzialnego — przypisz:
+          </span>
+          {mojNr ? (
+            <button
+              type="button"
+              style={{ ...s.btn, padding: "0.28rem 0.45rem", fontSize: "0.76rem", alignSelf: "flex-start" }}
+              onClick={() => void ustawOdpowiedzialnegoZadania(row.id, mojNr, { tryb: "podejmij" })}
+            >
+              Podejmij na siebie
+            </button>
+          ) : (
+            <span style={{ fontSize: "0.72rem", color: "#64748b" }}>
+              Brak numeru pracownika przy koncie — poproś kierownika o delegację.
+            </span>
+          )}
+          {mozeDelegowac ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", alignItems: "center" }}>
+              <select
+                style={{ ...s.input, padding: "0.28rem 0.4rem", fontSize: "0.76rem", minWidth: "11rem" }}
+                value={sel}
+                onChange={(ev) =>
+                  setZadanieDelegujWyborNr((prev) => ({ ...prev, [rid]: ev.target.value }))
+                }
+              >
+                <option value="">— deleguj do —</option>
+                {pracownicyPosortowani.map((p) => (
+                  <option key={String(p.nr)} value={String(p.nr)}>
+                    {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                style={{ ...s.btnGhost, padding: "0.28rem 0.45rem", fontSize: "0.76rem" }}
+                onClick={async () => {
+                  const ok = await ustawOdpowiedzialnegoZadania(row.id, sel, { tryb: "delegacja" });
+                  if (ok) {
+                    setZadanieDelegujWyborNr((prev) => {
+                      const next = { ...prev };
+                      delete next[rid];
+                      return next;
+                    });
+                  }
+                }}
+              >
+                Deleguj
+              </button>
+            </div>
+          ) : null}
+        </div>
+      );
+    },
+    [
+      zadanieDelegujWyborNr,
+      pracownikWidokEfektywny?.nr,
+      czyAdminAktywny,
+      czyKierownikAktywny,
+      pracownicyPosortowani,
+    ],
+  );
+
   const sprzetPrzydzialMojList = useMemo(() => {
     const nr = pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
     if (!nr) return [];
@@ -5010,11 +5583,12 @@ export default function App() {
   }, [czyAdminAktywny, pracownikPowiazanyZSesja, pracownikWidokEfektywny]);
 
   useEffect(() => {
-    const ukrywajTechniczne = !czyAdminAktywny || podgladJakoInny;
+    const ukrywajTechniczne = (!czyAdminAktywny && !czyKierownikAktywny) || podgladJakoInny;
+    const baza = krZApiPelen.filter((r) => !czyKrUkryteGlobalnie(r.kr));
     setKrList(
       ukrywajTechniczne
-        ? krZApiPelen.filter((r) => !czyKrTechniczneUkrywaneDlaNieAdmin(r.kr))
-        : [...krZApiPelen],
+        ? baza.filter((r) => !czyKrTechniczneUkrywaneDlaNieAdmin(r.kr))
+        : [...baza],
     );
   }, [czyAdminAktywny, podgladJakoInny, krZApiPelen]);
 
@@ -5173,6 +5747,21 @@ export default function App() {
     setMojeDokFiltrDataDo("");
   }, [widok, pracownikWidokEfektywny?.nr]);
 
+  useEffect(() => {
+    if (widok !== "dashboard") return;
+    if (requireAuth && !session?.user) return;
+    void fetchDashboardBrakiGodzin();
+  }, [widok, requireAuth, session?.user, pracownikWidokEfektywny?.nr]);
+
+  useEffect(() => {
+    if (dashboardBrakiGodzin.dni.length === 0) {
+      setDashboardBrakiBlink(true);
+      return;
+    }
+    const id = window.setInterval(() => setDashboardBrakiBlink((v) => !v), 520);
+    return () => window.clearInterval(id);
+  }, [dashboardBrakiGodzin.dni.length]);
+
   const podwykonawcyPosortowani = useMemo(
     () =>
       [...podwykonawcyList].sort((a, b) =>
@@ -5247,15 +5836,6 @@ export default function App() {
       }),
     [podwykonawcyPosortowani]
   );
-  const podwykonawcyLokalizacjaSugestie = useMemo(() => {
-    const set = new Set(PODWYKONAWCA_MIASTA_SUGESTIE);
-    podwykonawcyPosortowani.forEach((p) => {
-      const t = String(p.lokalizacja ?? "").trim();
-      if (t) set.add(t);
-    });
-    return [...set].sort((a, b) => a.localeCompare(b, "pl", { sensitivity: "base" }));
-  }, [podwykonawcyPosortowani]);
-
   useEffect(() => {
     const dozwolone = new Set(podwykonawcyMapaPunkty.map((p) => String(p.id)));
     setPwMapaAktywneIds((prev) => {
@@ -5344,6 +5924,10 @@ export default function App() {
   }, [widok, podwykonawcyPosortowani]);
 
   function openEditKr(item) {
+    if (!czyAdminAktywny && !czyKierownikAktywny) {
+      alert("Edycja KR jest dostępna dla ról: admin i kierownik.");
+      return;
+    }
     setEditingKrKey(item.kr);
     void fetchPracownicy();
     setEditForm({
@@ -5370,11 +5954,17 @@ export default function App() {
 
   /** Z tabeli — szczegóły KR z od razu włączoną edycją wszystkich pól tabeli `kr`. */
   function otworzEdycjeKrZTabeli(item) {
-    setWybranyKrKlucz(String(item.kr).trim());
+    const k = String(item.kr).trim();
+    setWidok("kr");
+    setKrMenu2Rozwiniete(true);
+    setKrSekcjaMenu2("informacje");
+    setKrProjektSekcja("przeglad");
+    setWybranyKrKlucz(k);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
     setWidokInfoDlaKr(null);
     setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
     setDziennikWpisy([]);
     setDziennikFetchError(null);
     setLogEdycjaId(null);
@@ -5760,6 +6350,11 @@ export default function App() {
       setWidokPwDlaKr(null);
       setWidokPulpitDlaKr(null);
       void fetchDziennikForKr(String(item.kr).trim());
+      void fetchKrZleceniaPwForKr(String(item.kr).trim());
+      void fetchKrFakturyDoZaplatyForKr(String(item.kr).trim());
+      void fetchCzasPracyWpisyDlaKr(String(item.kr).trim());
+      void fetchPracownicy();
+      void fetchZadania();
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -6154,6 +6749,50 @@ export default function App() {
     const k = String(widokPulpitDlaKr).trim();
     return krList.find((row) => String(row.kr) === k) ?? null;
   }, [krList, widokPulpitDlaKr]);
+  const rekordKrMenuBoczne = useMemo(() => {
+    const kandydaci = [
+      wybranyKrKlucz,
+      widokPulpitDlaKr,
+      widokKmDlaKr,
+      widokLogDlaKr,
+      widokPwDlaKr,
+      widokInfoDlaKr,
+    ];
+    for (const k of kandydaci) {
+      const kod = String(k ?? "").trim();
+      if (!kod) continue;
+      const rek = krList.find((row) => String(row.kr) === kod) ?? null;
+      if (rek) return rek;
+    }
+    return null;
+  }, [krList, wybranyKrKlucz, widokPulpitDlaKr, widokKmDlaKr, widokLogDlaKr, widokPwDlaKr, widokInfoDlaKr]);
+  const krMenu3PoSekcji = useMemo(
+    () => ({
+      informacje: ["edycja", "przeglad", "jednostki", "rozszerzenia", "umowa", "terminy"],
+      realizacja: ["zadania_kr", "os", "ryzyka", "geant", "zgloszenia"],
+      zasoby: ["podwykonawcy", "zespol"],
+      budzet: ["budzet", "koszty", "faktury"],
+    }),
+    [],
+  );
+  const krMenu3IdsAktywnejSekcji = useMemo(() => {
+    if (krSekcjaMenu2 === "nieprzydzielone") {
+      const przypisane = new Set(
+        Object.entries(krMenu3PoSekcji).flatMap(([, ids]) => ids),
+      );
+      return KR_PROJEKT_MENU.map((m) => m.id).filter((id) => !przypisane.has(id));
+    }
+    return krMenu3PoSekcji[krSekcjaMenu2] ?? [];
+  }, [krSekcjaMenu2, krMenu3PoSekcji]);
+  const krMenu3PozycjeAktywnejSekcji = useMemo(() => {
+    const mapa = new Map(KR_PROJEKT_MENU.map((m) => [m.id, m]));
+    mapa.set("edycja", {
+      id: "edycja",
+      label: "EDYCJA",
+      help: "Otwiera formularz edycji aktualnie wybranego KR.",
+    });
+    return krMenu3IdsAktywnejSekcji.map((id) => mapa.get(id)).filter(Boolean);
+  }, [krMenu3IdsAktywnejSekcji]);
 
   function pulpitEdytujKarte(karta) {
     if (!rekordKrPulpit) return;
@@ -6504,17 +7143,32 @@ export default function App() {
     setEditingKrKey(null);
   }
 
+  async function nawigujMenuZAutoZapisem(akcja) {
+    const aktualnieEdytowanyKr = String(editingKrKey ?? "").trim();
+    if (aktualnieEdytowanyKr) {
+      await saveEditKr(aktualnieEdytowanyKr, { silent: true, keepEditing: false });
+      setEditingKrKey(null);
+    }
+    akcja();
+  }
+
   /**
    * Zapis pól tabeli `kr`. `staryKrWiersza` — wartość klucza z bazy przy otwarciu edycji (WHERE).
    * `editForm.kr` może być nowym kodem KR; przy zmianie kodu w bazie muszą być zsynchronizowane
    * powiązania (np. ON UPDATE CASCADE na `etapy.kr`), inaczej Postgres zwróci błąd FK.
    */
-  async function saveEditKr(staryKrWiersza) {
+  async function saveEditKr(staryKrWiersza, opts) {
+    const silent = opts?.silent === true;
+    const keepEditing = opts?.keepEditing === true;
+    if (!czyAdminAktywny && !czyKierownikAktywny) {
+      if (!silent) alert("Zapis KR jest dostępny dla ról: admin i kierownik.");
+      return false;
+    }
     const staryKr = String(staryKrWiersza).trim();
     const nowyKr = String(editForm.kr ?? "").trim();
     if (!nowyKr) {
-      alert("Pole KR jest wymagane.");
-      return;
+      if (!silent) alert("Pole KR jest wymagane.");
+      return false;
     }
 
     if (nowyKr !== staryKr) {
@@ -6522,8 +7176,8 @@ export default function App() {
         (r) => String(r.kr).trim() === nowyKr && String(r.kr).trim() !== staryKr
       );
       if (kolizja) {
-        alert("Ten kod KR już istnieje w tabeli. Podaj unikalny kod.");
-        return;
+        if (!silent) alert("Ten kod KR już istnieje w tabeli. Podaj unikalny kod.");
+        return false;
       }
     }
 
@@ -6536,8 +7190,8 @@ export default function App() {
     const statusDoBazy =
       statusWart === "" ? null : KR_STATUS_W_BAZIE.includes(statusWart) ? statusWart : null;
     if (statusWart !== "" && statusDoBazy === null) {
-      alert("Nieprawidłowy status. Wybierz jedną z opcji listy.");
-      return;
+      if (!silent) alert("Nieprawidłowy status. Wybierz jedną z opcji listy.");
+      return false;
     }
 
     const { data, error } = await supabase
@@ -6565,27 +7219,31 @@ export default function App() {
     if (error) {
       console.error(error);
       const msg = String(error.message);
-      alert(
-        "Zapis KR: " +
-          msg +
-          "\n\nJeśli to „brak uprawnień”, uruchom rls-policies-anon.sql. " +
-          (msg.toLowerCase().includes("foreign") || msg.toLowerCase().includes("fk")
-            ? "\nZmiana kodu KR wymaga aktualizacji powiązanych wierszy (np. etapy) lub CASCADE w bazie."
-            : "") +
-          (msg.toLowerCase().includes("column") || msg.toLowerCase().includes("schema")
-            ? "\n\nOpcjonalne pola KR: g4-app/supabase/kr-dodatkowe-pola.sql."
-            : "")
-      );
-      return;
+      if (!silent) {
+        alert(
+          "Zapis KR: " +
+            msg +
+            "\n\nJeśli to „brak uprawnień”, uruchom rls-policies-anon.sql albo kr-rls-update-admin-kierownik.sql. " +
+            (msg.toLowerCase().includes("foreign") || msg.toLowerCase().includes("fk")
+              ? "\nZmiana kodu KR wymaga aktualizacji powiązanych wierszy (np. etapy) lub CASCADE w bazie."
+              : "") +
+            (msg.toLowerCase().includes("column") || msg.toLowerCase().includes("schema")
+              ? "\n\nOpcjonalne pola KR: g4-app/supabase/kr-dodatkowe-pola.sql."
+              : "")
+        );
+      }
+      return false;
     }
 
     if (!data?.length) {
-      alert(
-        "Nie zapisano żadnego wiersza (baza zwróciła 0 rekordów). " +
-          "Zwykle przyczyna: brak polityki UPDATE dla roli anon na tabeli kr albo brak GRANT UPDATE. " +
-          "Uruchom ponownie plik g4-app/supabase/rls-policies-anon.sql w SQL Editor."
-      );
-      return;
+      if (!silent) {
+        alert(
+          "Nie zapisano żadnego wiersza (baza zwróciła 0 rekordów). " +
+            "Zwykle przyczyna: brak polityki UPDATE dla roli anon na tabeli kr albo brak GRANT UPDATE. " +
+            "Uruchom ponownie plik g4-app/supabase/rls-policies-anon.sql w SQL Editor."
+        );
+      }
+      return false;
     }
 
     if (nowyKr !== staryKr) {
@@ -6596,18 +7254,25 @@ export default function App() {
         .eq("kr", staryKr);
       if (errPw) {
         console.error(errPw);
-        alert(
-          "Kod KR zaktualizowany, ale powiązania zleceń PW mogły nie zostać przeniesione: " +
-            errPw.message +
-            "\n\nSprawdź tabelę kr_zlecenie_podwykonawcy lub uruchom migrację kr-zlecenie-podwykonawcy.sql."
-        );
+        if (!silent) {
+          alert(
+            "Kod KR zaktualizowany, ale powiązania zleceń PW mogły nie zostać przeniesione: " +
+              errPw.message +
+              "\n\nSprawdź tabelę kr_zlecenie_podwykonawcy lub uruchom migrację kr-zlecenie-podwykonawcy.sql."
+          );
+        }
       }
     }
-    setEditingKrKey(null);
+    if (keepEditing) {
+      setEditingKrKey(nowyKr);
+    } else {
+      setEditingKrKey(null);
+    }
     await fetchKR();
     await fetchEtapy();
     await fetchKrZleceniaPwForKr(nowyKr);
     void fetchWszystkieZleceniaPw();
+    return true;
   }
 
   async function addKR(e) {
@@ -6755,7 +7420,10 @@ export default function App() {
   const liczbaZadanTylkoPowiazanychZKr = zadaniaTylkoPowiazaneZKr.length;
 
   const liczbaOtwartychZadanTylkoPowiazanychZKr = useMemo(
-    () => zadaniaTylkoPowiazaneZKr.filter((z) => !zadanieCzyUkonczoneStatus(z.status)).length,
+    () =>
+      zadaniaTylkoPowiazaneZKr.filter(
+        (z) => !zadanieCzyUkonczoneStatus(z.status) && !zadanieCzyWArchiwum(z),
+      ).length,
     [zadaniaTylkoPowiazaneZKr],
   );
 
@@ -6777,19 +7445,24 @@ export default function App() {
       list = list.filter((z) => String(z.kr ?? "").trim() === fk);
     }
     const fnr = String(zadaniaFiltrPracNr ?? "").trim();
-    if (!fnr) return list;
+    if (!fnr) {
+      if (!zadaniaPokazArchiwum) list = list.filter((z) => z.w_archiwum !== true);
+      return list;
+    }
     list = list.filter((z) => {
       const o = String(z.osoba_odpowiedzialna ?? "").trim();
       const zl = String(z.osoba_zlecajaca ?? "").trim();
       if (zadaniaFiltrTylkoOdpowiedzialny) return o === fnr;
       return o === fnr || zl === fnr;
     });
+    if (!zadaniaPokazArchiwum) list = list.filter((z) => z.w_archiwum !== true);
     return list;
   }, [
     zadaniaList,
     zadaniaFiltrPracNr,
     zadaniaFiltrTylkoOdpowiedzialny,
     zadaniaFiltrKr,
+    zadaniaPokazArchiwum,
     kodyAktywnychKr,
   ]);
 
@@ -6802,9 +7475,15 @@ export default function App() {
     });
   }, [zadaniaPrzefiltrowane, nrZalogowanegoDoZadan]);
 
+  /** TASK > Moje — tylko „moje” rekordy; pozostałe sekcje TASK — pełny wynik filtrów (bez tego przycięcia). */
+  const zadaniaListaWidokuZadan = useMemo(() => {
+    if (taskSekcja === "moje") return zadaniaMojePrzefiltrowane;
+    return zadaniaPrzefiltrowane;
+  }, [taskSekcja, zadaniaMojePrzefiltrowane, zadaniaPrzefiltrowane]);
+
   const zadaniaKanbanBuckets = useMemo(() => {
     const buckets = { oczekuje: [], w_trakcie: [], ukonczone: [], inne: [] };
-    for (const row of zadaniaMojePrzefiltrowane) {
+    for (const row of zadaniaListaWidokuZadan) {
       buckets[zadanieKluczKolumnyKanban(row.status)].push(row);
     }
     const sortWiersze = (rows) =>
@@ -6821,7 +7500,7 @@ export default function App() {
       buckets[k] = sortWiersze(buckets[k]);
     }
     return buckets;
-  }, [zadaniaMojePrzefiltrowane]);
+  }, [zadaniaListaWidokuZadan]);
 
   const liczbaOpoznionychEtapow = useMemo(() => {
     let n = 0;
@@ -6885,20 +7564,14 @@ export default function App() {
       }
     }
     for (const row of zadaniaList) {
-      const plan = dataDoSortuYYYYMMDD(row.data_planowana);
-      if (
-        plan &&
-        plan < dziśDash &&
-        !tekstTrim(row.data_realna) &&
-        !zadanieCzyUkonczoneStatus(row.status)
-      ) {
+      if (zadaniePoTerminieDeadline(row, dziśDash)) {
         const krTxt = tekstTrim(row.kr);
         const zadLabel = tekstTrim(row.zadanie) || row.id;
         out.push({
           severity: "wazny",
           text: krTxt
-            ? `Zadanie przeterminowane (${row.kr}): ${zadLabel}.`
-            : `Zadanie ogólne przeterminowane: ${zadLabel}.`,
+            ? `Zadanie po terminie (${row.kr}): ${zadLabel}.`
+            : `Zadanie ogólne po terminie: ${zadLabel}.`,
           target: { kind: "zadanie", row },
         });
       }
@@ -6908,57 +7581,53 @@ export default function App() {
 
   /** Zakładki „karty projektu” — wspólne dla widoku KR i trybu hub (etapy / LOG / PW / pulpit). */
   function renderKrProjektPills(item) {
-    if (!item) return null;
-    const podDoAktywnejPill = {
-      przeglad: "przeglad",
-      os: "os",
-      geant: "terminy",
-      faktury: "faktury",
-      koszty: "koszty",
-      budzet: "budzet",
-      jednostki: "jednostki",
-      podwykonawcy: "podwykonawcy",
-      zlecenia: "zlecenia",
-      dziennik: "zgloszenia",
-      karta: "przeglad",
-      umowa: "umowa",
-      zadania: "zadania_kr",
-      informacja: "ryzyka",
-      terminy: "terminy",
-      zespol: "zespol",
-      rozszerzenia: "rozszerzenia",
+    return null;
+  }
+
+  function etykietaMenuZIkona(id, label) {
+    const ikony = {
+      kr: "🧭",
+      informacje: "📘",
+      realizacja: "🚀",
+      zasoby: "🧰",
+      budzet: "💰",
+      nieprzydzielone: "🗂️",
+      edycja: "✏️",
+      przeglad: "📊",
+      jednostki: "📐",
+      rozszerzenia: "🧩",
+      umowa: "📜",
+      terminy: "📅",
+      zadania_kr: "✅",
+      os: "🛰️",
+      ryzyka: "⚠️",
+      geant: "📈",
+      zgloszenia: "🗒️",
+      podwykonawcy: "🤝",
+      zespol: "👥",
+      koszty: "🧮",
+      faktury: "🧾",
+      task_wszystkie: "📋",
+      task_moje: "🧑",
+      task_nowe: "➕",
+      task_z_kr: "🧷",
+      task_teren: "🗺️",
+      task_ogolne: "📥",
+      task_app: "💡",
+      dashboard: "🏠",
+      przydzial_sprzetu: "🎒",
+      moje_dokumenty: "📁",
+      czas_pracy: "⏱️",
+      faktury: "🧾",
+      ostrzezenia: "📣",
+      podwykonawca: "🤝",
+      teren: "🧭",
+      sprzet: "🛠️",
+      samochody: "🚗",
+      pracownik: "👥",
     };
-    const activeId = widokPulpitDlaKr
-      ? podDoAktywnejPill[pulpitPodstrona] ?? "przeglad"
-      : widokKmDlaKr
-        ? "etapy"
-        : widokLogDlaKr
-          ? "zgloszenia"
-          : widokPwDlaKr
-            ? krProjektSekcja === "podwykonawcy"
-              ? "podwykonawcy"
-              : "zlecenia"
-            : krProjektSekcja;
-    return (
-      <nav style={op.pillsRow} aria-label="Sekcje projektu">
-        {KR_PROJEKT_MENU.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              maxWidth: trybHelp ? "min(100%, 12.5rem)" : undefined,
-            }}
-          >
-            <button type="button" style={op.pill(activeId === m.id)} onClick={() => przejdzDoSekcjiKr(item, m.id)}>
-              {m.label}
-            </button>
-            <HelpLinijka wlaczony={trybHelp}>{m.help}</HelpLinijka>
-          </div>
-        ))}
-      </nav>
-    );
+    const ico = ikony[id] ?? "•";
+    return `${ico} ${label}`;
   }
 
   /** Lewe drzewo nawigacji pulpitu (jak panel KR na starcie). */
@@ -7042,7 +7711,7 @@ export default function App() {
             >
               {k}
             </div>
-            {btnLeaf("przeglad", "Przegląd — zagrożenia i zadania")}
+            {btnLeaf("przeglad", "Tablica KR — pełny obraz projektu")}
             {btnLeaf("os", "Oś czasu (ETAP · PW · LOG)")}
             {btnLeaf("geant", "Geant (harmonogram projektu)")}
             {btnLeaf("faktury", "Faktury kosztowe")}
@@ -7076,7 +7745,9 @@ export default function App() {
       return false;
     });
     const zadaniaKr = zadaniaList.filter((z) => String(z.kr ?? "").trim() === kr);
-    const zadaniaOtwarte = zadaniaKr.filter((z) => !zadanieCzyUkonczoneStatus(z.status));
+    const zadaniaOtwarte = zadaniaKr.filter(
+      (z) => !zadanieCzyUkonczoneStatus(z.status) && !zadanieCzyWArchiwum(z),
+    );
     const krytyczne = alerty.filter((a) => a.severity === "krytyczny").length;
     const wazne = alerty.filter((a) => a.severity === "wazny").length;
     const listaEtapow = etapyWedlugKr.get(item.kr) ?? [];
@@ -7248,13 +7919,8 @@ export default function App() {
             <ul style={{ margin: "0.85rem 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
               {zadaniaKr.slice(0, 8).map((row) => {
                 const zt = kmTekstDoKomorki(row.zadanie);
-                const plan = dataDoSortuYYYYMMDD(row.data_planowana);
-                const przeterm =
-                  plan &&
-                  plan < d0 &&
-                  !tekstTrim(row.data_realna) &&
-                  !zadanieCzyUkonczoneStatus(row.status);
-                const ukoncz = zadanieCzyUkonczoneStatus(row.status);
+                const przeterm = zadaniePoTerminieDeadline(row, d0);
+                const ukoncz = zadanieCzyUkonczoneStatus(row.status) || zadanieCzyWArchiwum(row);
                 return (
                   <li
                     key={row.id}
@@ -7277,8 +7943,13 @@ export default function App() {
                       {zt.text}
                     </div>
                     <div style={{ fontSize: "0.8rem", color: theme.muted, marginTop: "0.35rem" }}>
-                      Plan: {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"} · Realizacja:{" "}
-                      {row.data_realna ? dataDoInputa(row.data_realna) : "—"}
+                      Deadline:{" "}
+                      {row.deadline || row.data_planowana
+                        ? dataDoInputa(row.deadline ?? row.data_planowana)
+                        : "—"}
+                      {tekstTrim(row.data_odbioru) ? (
+                        <> · Odbiór: {dataDoInputa(row.data_odbioru)}</>
+                      ) : null}
                     </div>
                   </li>
                 );
@@ -7523,11 +8194,208 @@ export default function App() {
     );
 
     if (sekcja === "przeglad") {
+      const krK = String(item.kr ?? "").trim();
       const etapyRyzyko = listaEtapow.filter((e) => pulpitKmWymagaUwagi(e, d0)).length;
       const logOtwarte = dziennikWpisy.filter((r) => pulpitLogWymagaUwagi(r)).length;
       const pwPoTerminie = krZleceniaPwList.filter((z) => pulpitPwWymagaUwagi(z, d0)).length;
+      const listaZadanDlaKr = zadaniaList.filter(
+        (z) => String(z.kr ?? "").trim() === krK,
+      );
+      const listaFakturKr = krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK);
+      const etapyZakonczone = listaEtapow.filter((e) => {
+        const stEt = String(e.status ?? "").toLowerCase();
+        return (
+          stEt.includes("zakoń") ||
+          stEt.includes("zakon") ||
+          stEt.includes("rozlicz") ||
+          stEt.includes("odebran")
+        );
+      }).length;
+      const zadaniaDomkniete = listaZadanDlaKr.filter(
+        (z) => zadanieCzyUkonczoneStatus(z.status) || zadanieCzyWArchiwum(z),
+      ).length;
+      const procEtapow = listaEtapow.length
+        ? Math.round((etapyZakonczone / listaEtapow.length) * 100)
+        : 0;
+      const procZadan = listaZadanDlaKr.length
+        ? Math.round((zadaniaDomkniete / listaZadanDlaKr.length) * 100)
+        : 0;
+      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
+      const sumaGodzinPracy = krCzasPracyWpisyList.reduce((acc, w) => {
+        if (grupaTypuCzasuWpisu(w.typ) !== "praca") return acc;
+        return acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0);
+      }, 0);
+      const roboczogodzinyWgPracownika = Array.from(
+        krCzasPracyWpisyList.reduce((map, row) => {
+          if (grupaTypuCzasuWpisu(row.typ) !== "praca") return map;
+          const nr = String(row.pracownik_nr ?? "").trim() || "—";
+          const h = (Number(row.godziny) || 0) + (Number(row.nadgodziny) || 0);
+          map.set(nr, (map.get(nr) ?? 0) + h);
+          return map;
+        }, new Map()).entries(),
+      ).sort((a, b) => b[1] - a[1]);
+      const etykietaPrac = (nr) => {
+        const p = pracownicy.find((x) => String(x.nr ?? "").trim() === String(nr ?? "").trim());
+        return p?.imie_nazwisko?.trim() ? `${nr} — ${p.imie_nazwisko.trim()}` : String(nr ?? "—");
+      };
+      const grupyFaktur = Array.from(
+        listaFakturKr.reduce((map, row) => {
+          const key =
+            String(row.typ_nazwy ?? "").trim() ||
+            String(row.rodzaj_kosztu_nazwa ?? "").trim() ||
+            String(row.rodzaj_kosztu ?? "").trim() ||
+            "Nieokreślony";
+          map.set(key, (map.get(key) ?? 0) + (Number(row.kwota_brutto) || 0));
+          return map;
+        }, new Map()).entries(),
+      ).sort((a, b) => b[1] - a[1]);
+      const pracownicyZaangazowani = new Set(roboczogodzinyWgPracownika.map(([nr]) => String(nr))).size;
+      const podwykonawcySet = new Set(
+        krZleceniaPwList
+          .map((z) =>
+            z.podwykonawca && typeof z.podwykonawca === "object" && !Array.isArray(z.podwykonawca)
+              ? String(z.podwykonawca.nazwa_firmy ?? "").trim()
+              : "",
+          )
+          .filter(Boolean),
+      );
+      const okresStart = item.okres_projektu_od
+        ? dataDoInputa(item.okres_projektu_od)
+        : listaEtapow
+            .map((e) => dataDoSortuYYYYMMDD(e.data_planowana))
+            .filter(Boolean)
+            .sort()[0] ?? "—";
+      const okresKoniec = item.okres_projektu_do
+        ? dataDoInputa(item.okres_projektu_do)
+        : [...listaEtapow]
+            .map((e) => dataDoSortuYYYYMMDD(e.data_planowana))
+            .filter(Boolean)
+            .sort()
+            .slice(-1)[0] ?? "—";
+      const sygnalyAlarmowe = etapyRyzyko + logOtwarte + pwPoTerminie;
+      const poziomAlarmu = Math.min(100, sygnalyAlarmowe * 18);
+      const poziomAlarmuKolor =
+        poziomAlarmu >= 65 ? "#f87171" : poziomAlarmu >= 35 ? "#fbbf24" : "#34d399";
+      const panelPasek = (etykieta, wartosc, wypelnienie, glow) => (
+        <div style={{ marginTop: "0.42rem" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              fontSize: "0.74rem",
+              color: "#cbd5e1",
+              marginBottom: "0.2rem",
+            }}
+          >
+            <span>{etykieta}</span>
+            <strong style={{ color: "#f8fafc" }}>{wartosc}%</strong>
+          </div>
+          <div
+            style={{
+              height: "8px",
+              borderRadius: "999px",
+              background: "rgba(148,163,184,0.18)",
+              overflow: "hidden",
+              border: "1px solid rgba(148,163,184,0.22)",
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.max(0, Math.min(100, wartosc))}%`,
+                height: "100%",
+                borderRadius: "999px",
+                background: wypelnienie,
+                boxShadow: `0 0 16px ${glow}`,
+                transition: "width 0.25s ease",
+              }}
+            />
+          </div>
+        </div>
+      );
       return (
         <>
+          <div
+            style={{
+              marginBottom: "1rem",
+              borderRadius: "16px",
+              border: "1px solid rgba(56,189,248,0.25)",
+              background:
+                "linear-gradient(135deg, rgba(2,6,23,0.96) 0%, rgba(15,23,42,0.92) 45%, rgba(30,41,59,0.88) 100%)",
+              boxShadow: "0 0 0 1px rgba(14,165,233,0.14), 0 14px 34px -20px rgba(14,165,233,0.75)",
+              padding: "0.95rem 1rem 1rem",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "space-between",
+                gap: "0.4rem 0.8rem",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.08em", color: "#67e8f9", fontWeight: 800 }}>
+                TABLICA KR · Centrum informacji
+              </div>
+              <div style={{ fontSize: "0.76rem", color: "#93c5fd" }}>
+                Projekt: <strong style={{ color: "#ffffff" }}>{item.kr}</strong> ·{" "}
+                {item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "bez nazwy"}
+              </div>
+            </div>
+            <div
+              style={{
+                marginTop: "0.7rem",
+                display: "grid",
+                gridTemplateColumns: "1.3fr 1fr",
+                gap: "0.8rem",
+              }}
+            >
+              <div
+                style={{
+                  border: "1px solid rgba(71,85,105,0.42)",
+                  borderRadius: "12px",
+                  padding: "0.72rem 0.78rem",
+                  background: "rgba(2,6,23,0.48)",
+                }}
+              >
+                <div style={{ fontSize: "0.72rem", color: "#cbd5e1", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Postęp misji
+                </div>
+                {panelPasek("Etapy zakończone", procEtapow, "linear-gradient(90deg,#22d3ee,#3b82f6)", "rgba(56,189,248,0.6)")}
+                {panelPasek("Zadania domknięte", procZadan, "linear-gradient(90deg,#34d399,#22c55e)", "rgba(34,197,94,0.55)")}
+                {panelPasek("Poziom alarmu", poziomAlarmu, `linear-gradient(90deg,${poziomAlarmuKolor},#fb7185)`, "rgba(248,113,113,0.55)")}
+              </div>
+              <div
+                style={{
+                  border: "1px solid rgba(71,85,105,0.42)",
+                  borderRadius: "12px",
+                  padding: "0.72rem 0.78rem",
+                  background: "rgba(2,6,23,0.48)",
+                  display: "grid",
+                  gap: "0.35rem",
+                }}
+              >
+                <div style={{ fontSize: "0.72rem", color: "#cbd5e1", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Szybka diagnostyka
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#e2e8f0" }}>
+                  Sygnały alarmowe:{" "}
+                  <strong style={{ color: poziomAlarmuKolor }}>{sygnalyAlarmowe}</strong>
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+                  Etapy domknięte: <strong style={{ color: "#f8fafc" }}>{etapyZakonczone}</strong> / {listaEtapow.length}
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+                  Zadania domknięte: <strong style={{ color: "#f8fafc" }}>{zadaniaDomkniete}</strong> / {listaZadanDlaKr.length}
+                </div>
+                <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+                  Status projektu:{" "}
+                  <strong style={{ color: "#f8fafc" }}>{item.status?.trim() ? item.status : "—"}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
           <div style={{ ...op.kpiGrid, marginBottom: "1rem" }}>
             <div style={op.kpiCard("rgba(56,189,248,0.22)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>Etapy</div>
@@ -7544,6 +8412,18 @@ export default function App() {
             <div style={op.kpiCard("rgba(248,113,113,0.28)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>Etapy z ryzykiem</div>
               <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{etapyRyzyko}</div>
+            </div>
+            <div style={op.kpiCard("rgba(249,115,22,0.25)")}>
+              <div style={{ ...op.muted, fontSize: "0.7rem" }}>Faktury kosztowe (brutto)</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#f8fafc" }}>
+                {kwotaBruttoEtykieta(sumaFakturBrutto)}
+              </div>
+            </div>
+            <div style={op.kpiCard("rgba(34,197,94,0.22)")}>
+              <div style={{ ...op.muted, fontSize: "0.7rem" }}>Roboczogodziny (praca)</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#f8fafc" }}>
+                {sumaGodzinPracy.toFixed(2)} h
+              </div>
             </div>
           </div>
 
@@ -7645,52 +8525,64 @@ export default function App() {
               </ul>
             )}
           </div>
-
-          <div style={s.btnRow}>
-            <button
-              type="button"
-              style={s.btn}
-              onClick={() => otworzPulpitDlaKr(item, { hub: true, podstrona: "os" })}
-            >
-              Oś czasu (pełny pulpit)
-            </button>
-            <button type="button" style={s.btnGhost} onClick={() => otworzKmDlaKr(item, { hub: true })}>
-              Tabela etapów (ETAP)
-            </button>
-            <button type="button" style={s.btnGhost} onClick={() => otworzLogDlaKr(item, { hub: true })}>
-              Pełna obsługa zgłoszeń (LOG)
-            </button>
-            <button type="button" style={s.btnGhost} onClick={() => otworzPwDlaKr(item, { hub: true })}>
-              Edycja zleceń PW
-            </button>
-            <button type="button" style={s.btnGhost} onClick={() => przejdzDoSekcjiKr(item, "faktury")}>
-              Faktury kosztowe (rama)
-            </button>
-            <button type="button" style={s.btnGhost} onClick={() => przejdzDoSekcjiKr(item, "zadania_kr")}>
-              Zadania przy tym KR
-            </button>
+          <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)", marginBottom: "1rem" }}>
+            <h3 style={{ ...op.sectionTitle, marginTop: 0, fontSize: "0.88rem" }}>Parametry realizacji KR</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "0.6rem" }}>
+              <div style={{ ...op.kpiCard("rgba(99,102,241,0.18)") }}>
+                <div style={{ ...op.muted, fontSize: "0.72rem" }}>Okres realizacji</div>
+                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#f8fafc" }}>{okresStart} — {okresKoniec}</div>
+              </div>
+              <div style={{ ...op.kpiCard("rgba(56,189,248,0.18)") }}>
+                <div style={{ ...op.muted, fontSize: "0.72rem" }}>Zaangażowani pracownicy</div>
+                <div style={{ fontSize: "1.12rem", fontWeight: 800, color: "#f8fafc" }}>{pracownicyZaangazowani}</div>
+              </div>
+              <div style={{ ...op.kpiCard("rgba(14,165,233,0.18)") }}>
+                <div style={{ ...op.muted, fontSize: "0.72rem" }}>Podwykonawcy w KR</div>
+                <div style={{ fontSize: "1.12rem", fontWeight: 800, color: "#f8fafc" }}>{podwykonawcySet.size}</div>
+              </div>
+              <div style={{ ...op.kpiCard("rgba(250,204,21,0.2)") }}>
+                <div style={{ ...op.muted, fontSize: "0.72rem" }}>Zadania (otwarte / wszystkie)</div>
+                <div style={{ fontSize: "1.02rem", fontWeight: 800, color: "#f8fafc" }}>
+                  {Math.max(0, listaZadanDlaKr.length - zadaniaDomkniete)} / {listaZadanDlaKr.length}
+                </div>
+              </div>
+            </div>
           </div>
-
-          <OpFutureModule title="Budżet / finanse (koncepcja przy tej KR)">
-            Szczegóły kosztów i szkic list — w zakładce{" "}
-            <button
-              type="button"
-              onClick={() => przejdzDoSekcjiKr(item, "faktury")}
-              style={{
-                background: "none",
-                border: "none",
-                color: "#7dd3fc",
-                cursor: "pointer",
-                font: "inherit",
-                fontWeight: 600,
-                textDecoration: "underline",
-                padding: 0,
-              }}
-            >
-              Faktury kosztowe
-            </button>
-            . FS (sprzedaż) — przy etapach i na pulpicie (INV).
-          </OpFutureModule>
+          <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)", marginBottom: "1rem" }}>
+            <h3 style={{ ...op.sectionTitle, marginTop: 0, fontSize: "0.88rem" }}>Struktura kosztów i pracy</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "0.8rem" }}>
+              <div>
+                <h4 style={{ ...op.sectionTitle, fontSize: "0.78rem", marginBottom: "0.45rem" }}>Top typy kosztów</h4>
+                {grupyFaktur.length === 0 ? (
+                  <p style={{ ...s.muted, margin: 0 }}>Brak faktur kosztowych dla tej KR.</p>
+                ) : (
+                  <ul style={{ margin: 0, paddingLeft: "1rem", color: "#e2e8f0", fontSize: "0.8rem", lineHeight: 1.45 }}>
+                    {grupyFaktur.slice(0, 5).map(([typ, suma]) => (
+                      <li key={typ}>
+                        <span style={{ color: "#cbd5e1" }}>{typ}</span> —{" "}
+                        <strong style={{ color: "#f8fafc" }}>{kwotaBruttoEtykieta(suma)}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <h4 style={{ ...op.sectionTitle, fontSize: "0.78rem", marginBottom: "0.45rem" }}>Roboczogodziny wg pracownika</h4>
+                {roboczogodzinyWgPracownika.length === 0 ? (
+                  <p style={{ ...s.muted, margin: 0 }}>Brak wpisów czasu pracy typu „praca”.</p>
+                ) : (
+                  <ul style={{ margin: 0, paddingLeft: "1rem", color: "#e2e8f0", fontSize: "0.8rem", lineHeight: 1.45 }}>
+                    {roboczogodzinyWgPracownika.slice(0, 6).map(([nr, h]) => (
+                      <li key={String(nr)}>
+                        <span style={{ color: "#cbd5e1" }}>{etykietaPrac(nr)}</span> —{" "}
+                        <strong style={{ color: "#f8fafc" }}>{Number(h).toFixed(2)} h</strong>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
         </>
       );
     }
@@ -7744,13 +8636,15 @@ export default function App() {
                 <thead>
                   <tr>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Zadanie</th>
-                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Kategoria</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Typ zadania</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#7dd3fc" }}>Dział</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Odpow.</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Zlecający</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#a7f3d0" }}>Status</th>
-                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Plan</th>
-                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Real</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#a5b4fc" }}>Estym.</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Deadline</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Data odbioru</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Przepływ</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }} />
                   </tr>
                 </thead>
@@ -7759,12 +8653,7 @@ export default function App() {
                     const zt = kmTekstDoKomorki(row.zadanie);
                     const kat = zadaniaEtykietaKategorii(row);
                     const stRow = String(row.status ?? "").trim();
-                    const plan = dataDoSortuYYYYMMDD(row.data_planowana);
-                    const przeterm =
-                      plan &&
-                      plan < d0 &&
-                      !tekstTrim(row.data_realna) &&
-                      !zadanieCzyUkonczoneStatus(row.status);
+                    const przeterm = zadaniePoTerminieDeadline(row, d0);
                     return (
                       <tr
                         key={row.id}
@@ -7794,8 +8683,9 @@ export default function App() {
                         <td style={{ ...s.td, ...s.dzialWartosc, padding: "0.55rem 0.7rem" }}>
                           {row.dzial?.trim() ? row.dzial : "—"}
                         </td>
-                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
-                          {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem", verticalAlign: "top" }}>
+                          <div>{podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}</div>
+                          {renderZadanieWolnyOdpowiedzialny(row)}
                         </td>
                         <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
                           {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
@@ -7817,11 +8707,27 @@ export default function App() {
                             ))}
                           </select>
                         </td>
-                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
-                          {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"}
+                        <td
+                          style={{
+                            ...s.td,
+                            padding: "0.55rem 0.7rem",
+                            fontFamily: "ui-monospace, monospace",
+                            fontSize: "0.82rem",
+                            color: "#a5b4fc",
+                          }}
+                        >
+                          {zadanieTekstEstymacjiGodzin(row) ?? "—"}
                         </td>
                         <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
-                          {row.data_realna ? dataDoInputa(row.data_realna) : "—"}
+                          {row.deadline || row.data_planowana
+                            ? dataDoInputa(row.deadline ?? row.data_planowana)
+                            : "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
+                          {tekstTrim(row.data_odbioru) ? dataDoInputa(row.data_odbioru) : "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem", verticalAlign: "top" }}>
+                          {komorkaPrzeplywuZadania(row)}
                         </td>
                         <td style={{ ...s.td, padding: "0.55rem 0.7rem", textAlign: "right", whiteSpace: "nowrap" }}>
                           <button
@@ -7868,6 +8774,32 @@ export default function App() {
               />
             </label>
             <label style={s.label}>
+              Typ zadania
+              <select
+                style={s.input}
+                value={String(zadanieForm.typ_zadania ?? "")}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, typ_zadania: ev.target.value }))}
+              >
+                <option value="">— nie ustawiono (heurystyka w kolumnie Typ zadania) —</option>
+                {ZADANIE_TYPY_WYBORU.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+                {(() => {
+                  const cur = String(zadanieForm.typ_zadania ?? "").trim();
+                  if (cur && !ZADANIE_TYPY_WYBORU.includes(cur)) {
+                    return (
+                      <option key={`kr-orphan-${cur}`} value={cur}>
+                        {cur} (z bazy)
+                      </option>
+                    );
+                  }
+                  return null;
+                })()}
+              </select>
+            </label>
+            <label style={s.label}>
               Dział
               <input
                 style={s.input}
@@ -7905,6 +8837,24 @@ export default function App() {
                 })()}
               </select>
             </label>
+            <div style={{ ...s.btnRow, marginTop: "-0.3rem" }}>
+              <button
+                type="button"
+                style={{ ...s.btnGhost, fontSize: "0.8rem", padding: "0.3rem 0.55rem" }}
+                onClick={() =>
+                  setZadanieForm((f) => ({
+                    ...f,
+                    osoba_odpowiedzialna: "",
+                    status: String(f.status ?? "").trim() || "nowe",
+                  }))
+                }
+              >
+                Kolejka wolnych mocy (bez osoby odpowiedzialnej)
+              </button>
+            </div>
+            <p style={{ ...s.muted, margin: "-0.1rem 0 0", fontSize: "0.76rem" }}>
+              Takie zadanie może czekać nieprzypisane, aż pojawi się wolne okno w produkcji.
+            </p>
             <label style={s.label}>
               Osoba zlecająca — <code style={s.code}>pracownik.nr</code>
               <select
@@ -7962,24 +8912,48 @@ export default function App() {
               </select>
             </label>
             <label style={s.label}>
-              Data planowana
+              Termin realizacji (deadline)
               <input
                 style={s.input}
                 type="date"
-                value={zadanieForm.data_planowana}
-                onChange={(ev) =>
-                  setZadanieForm((f) => ({ ...f, data_planowana: ev.target.value }))
-                }
+                value={zadanieForm.deadline}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, deadline: ev.target.value }))}
               />
+              <span style={{ ...s.muted, fontSize: "0.76rem", display: "block", marginTop: "0.25rem", lineHeight: 1.4 }}>
+                Jedna data graniczna. Datę odbioru ustala osoba zlecająca po zgłoszeniu wykonania przez wykonawcę — nie
+                edytuje się tutaj.
+              </span>
             </label>
             <label style={s.label}>
-              Data realna
-              <input
-                style={s.input}
-                type="date"
-                value={zadanieForm.data_realna}
-                onChange={(ev) => setZadanieForm((f) => ({ ...f, data_realna: ev.target.value }))}
-              />
+              Estymacja czasu
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.25rem" }}>
+                <input
+                  style={{ ...s.input, flex: "1 1 8rem", minWidth: "7rem" }}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={zadanieForm.estymacja_jednostka === "d" ? "np. 2 lub 0,5 dnia" : "np. 8 lub 2,5 h"}
+                  value={zadanieForm.estymacja_godzin}
+                  onChange={(ev) =>
+                    setZadanieForm((f) => ({ ...f, estymacja_godzin: ev.target.value }))
+                  }
+                />
+                <select
+                  style={{ ...s.input, flex: "1 1 14rem", minWidth: "12rem" }}
+                  value={zadanieForm.estymacja_jednostka === "d" ? "d" : "h"}
+                  onChange={(ev) =>
+                    setZadanieForm((f) => ({ ...f, estymacja_jednostka: ev.target.value }))
+                  }
+                >
+                  <option value="h">Godziny robocze (rob. h)</option>
+                  <option value="d">
+                    Dni robocze (1 dzień = {ROB_H_NA_DZIEN_ROBOCZY_ZADANIE} rob. h)
+                  </option>
+                </select>
+              </div>
+              <span style={{ fontSize: "0.76rem", color: "#94a3b8", marginTop: "0.3rem", display: "block", lineHeight: 1.45 }}>
+                W bazie zapisujemy zawsze <strong>roboczogodziny</strong>; przy wyborze dni roboczych wartość jest mnożona
+                przez {ROB_H_NA_DZIEN_ROBOCZY_ZADANIE}. W listach przy dniach pokazywany jest też przelicznik na rob. h.
+              </span>
             </label>
             <label style={s.label}>
               Zagrożenie
@@ -8029,7 +9003,7 @@ export default function App() {
       const nazwaPrac = (nr) => {
         const n = String(nr ?? "").trim();
         if (!n) return "—";
-        const p = pracownicyPosortowani.find((x) => String(x.nr ?? "").trim() === n);
+        const p = pracownicy.find((x) => String(x.nr ?? "").trim() === n);
         return p?.imie_nazwisko?.trim() ? `${n} — ${p.imie_nazwisko.trim()}` : n;
       };
       const sumaWszystkich = krCzasPracyWpisyList.reduce(
@@ -8210,7 +9184,7 @@ export default function App() {
         }, new Map()).entries()
       ).sort((a, b) => b[1] - a[1]);
       const etykietaPrac = (nr) => {
-        const p = pracownicyPosortowani.find((x) => String(x.nr ?? "").trim() === String(nr ?? "").trim());
+        const p = pracownicy.find((x) => String(x.nr ?? "").trim() === String(nr ?? "").trim());
         return p?.imie_nazwisko?.trim() ? `${nr} — ${p.imie_nazwisko.trim()}` : String(nr ?? "—");
       };
       return (
@@ -9201,6 +10175,33 @@ export default function App() {
               <span style={{ color: theme.danger }}>G</span>
               4 Geodezja · Panel przepływu informacji
             </h1>
+            {dashboardBrakiGodzin.dni.length > 0 ? (
+              <div
+                role="alert"
+                style={{
+                  marginTop: "0.55rem",
+                  padding: "0.48rem 0.75rem",
+                  borderRadius: "10px",
+                  border: dashboardBrakiBlink
+                    ? "2px solid rgba(248,113,113,1)"
+                    : "2px solid rgba(254,202,202,0.45)",
+                  backgroundImage:
+                    "repeating-linear-gradient(45deg, rgba(220,38,38,0.92) 0 14px, rgba(250,204,21,0.95) 14px 28px)",
+                  color: "#111827",
+                  fontWeight: 900,
+                  letterSpacing: "0.01em",
+                  boxShadow: dashboardBrakiBlink
+                    ? "0 0 0 2px rgba(248,113,113,0.18), 0 0 18px rgba(248,113,113,0.35)"
+                    : "0 0 0 1px rgba(248,113,113,0.12)",
+                  transform: dashboardBrakiBlink ? "scale(1.005)" : "scale(0.998)",
+                  transition: "all 90ms linear",
+                  textAlign: "center",
+                }}
+                title="Uzupełnij zaległe wpisy czasu pracy"
+              >
+                !!! UZUPEŁNIJ GODZINY ZA ZALEGŁE DNI ROBOCZE ({dashboardBrakiGodzin.dni.length}) !!!
+              </div>
+            ) : null}
           </header>
           {requireAuth && session?.user ? (
             <div style={{ width: "100%", marginBottom: "0.75rem" }}>
@@ -9435,6 +10436,40 @@ export default function App() {
                           </>
                         )}
                       </p>
+                    ) : null}
+                    {dashboardBrakiGodzin.error ? (
+                      <div
+                        style={{
+                          ...s.errBox,
+                          marginBottom: "0.85rem",
+                          borderColor: "rgba(248,113,113,0.45)",
+                          background: "rgba(127,29,29,0.25)",
+                        }}
+                      >
+                        <strong>! Brak statusu godzin.</strong> {dashboardBrakiGodzin.error}
+                      </div>
+                    ) : null}
+                    {!dashboardBrakiGodzin.error && dashboardBrakiGodzin.dni.length > 0 ? (
+                      <div
+                        role="alert"
+                        style={{
+                          marginBottom: "0.85rem",
+                          padding: "0.55rem 0.7rem",
+                          borderRadius: "10px",
+                          border: dashboardBrakiBlink
+                            ? "1px solid rgba(248,113,113,0.95)"
+                            : "1px solid rgba(248,113,113,0.35)",
+                          background: dashboardBrakiBlink ? "rgba(220,38,38,0.3)" : "rgba(127,29,29,0.16)",
+                          color: "#fecaca",
+                          fontSize: "0.84rem",
+                          lineHeight: 1.45,
+                          boxShadow: dashboardBrakiBlink ? "0 0 0 2px rgba(248,113,113,0.16)" : "none",
+                          transition: "all 120ms linear",
+                        }}
+                      >
+                        <strong>! Brak wpisów godzin</strong> w poprzednich dniach roboczych tego miesiąca (
+                        {dashboardBrakiGodzin.dni.length}). Uzupełnij je w module <strong>Czas pracy</strong>.
+                      </div>
                     ) : null}
                     <div style={{ ...op.kpiGrid, marginBottom: "1rem" }}>
                       <OpKpiCard
@@ -11326,25 +12361,56 @@ export default function App() {
       {widok === "zadania" ? (
         <>
           <div style={op.heroCard}>
-            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Moje zadania</h2>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>
+              {taskSekcja === "wszystkie"
+                ? "Zadania"
+                : taskSekcja === "moje"
+                  ? "Moje zadania"
+                  : taskSekcja === "nowe"
+                    ? "Nowe zadanie"
+                    : taskSekcja === "z_kr"
+                      ? "Zadania — z KR"
+                      : taskSekcja === "teren"
+                        ? "Zadania — Teren"
+                        : taskSekcja === "ogolne"
+                          ? "Zadania — ogólne"
+                          : "Zadania"}
+            </h2>
             {trybHelp ? (
               <>
                 <p style={{ ...op.muted, marginBottom: "0.35rem", maxWidth: "44rem" }}>
-                  Tu widzisz tylko zadania, które <strong>zleciła zalogowana osoba</strong> albo które są do niej{" "}
-                  <strong>przypisane</strong> jako odpowiedzialnej. Pole <strong>Projekt (KR)</strong> filtruje ten zakres po
-                  kodzie projektu.
+                  {taskSekcja === "moje" ? (
+                    <>
+                      Tu widzisz <strong>tylko swoje</strong> zadania — które <strong>zleciłaś/eś</strong> albo które są do
+                      Ciebie <strong>przypisane</strong> jako osoba odpowiedzialna. Pole <strong>Projekt (KR)</strong>{" "}
+                      dodatkowo zawęża ten widok po kodzie projektu.
+                    </>
+                  ) : taskSekcja === "wszystkie" ? (
+                    <>
+                      Widok startowy <strong>wszystkich zadań</strong> — bez ustawionego filtra KR ani pracownika. Zawężenie:
+                      pola <strong>Projekt (KR)</strong> i <strong>Pracownik</strong> poniżej.
+                    </>
+                  ) : (
+                    <>
+                      Lista zadań wg filtrów (KR, pracownik). Skróty menu{" "}
+                      <strong style={{ color: "#fdba74" }}>Z KR</strong>, <strong style={{ color: "#fdba74" }}>Teren</strong>,{" "}
+                      <strong style={{ color: "#fdba74" }}>Ogólne</strong> ustawiają wstępny zakres — możesz go zmienić w
+                      filtrach.
+                    </>
+                  )}
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.15rem" }}>
-                  {["Samochody", "Komputery", "Sprzęt", "Biuro", "Organizacyjne"].map((kat) => (
+                  {ZADANIE_TYPY_WYBORU.map((kat) => (
                     <span key={kat} style={op.badge("rgba(71,85,105,0.35)", "#cbd5e1")}>
                       {kat}
                     </span>
                   ))}
                 </div>
                 <p style={{ ...op.muted, margin: 0, fontSize: "0.76rem" }}>
-                  Tabela <code style={s.code}>zadania</code> — kolumna <code style={s.code}>kr</code> (SQL:{" "}
-                  <code style={s.code}>zadania-kolumna-kr.sql</code>). Filtr <strong>Projekt (KR)</strong> działa w tabeli i
-                  Kanbanie. Osoby z zakładki <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
+                  Tabela <code style={s.code}>zadania</code>: <code style={s.code}>kr</code> (
+                  <code style={s.code}>zadania-kolumna-kr.sql</code>), <code style={s.code}>typ_zadania</code> (
+                  <code style={s.code}>zadania-typ-zadania.sql</code>). Filtr <strong>Projekt (KR)</strong> w tabeli i Kanbanie.
+                  Osoby z <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
                 </p>
               </>
             ) : null}
@@ -11485,9 +12551,32 @@ export default function App() {
               />
               Tylko jako osoba odpowiedzialna
             </label>
-            {zadaniaFiltrPracNr || zadaniaFiltrKr || nrZalogowanegoDoZadan ? (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                cursor: "pointer",
+                color: "#e2e8f0",
+                fontSize: "0.88rem",
+                fontWeight: 500,
+                marginBottom: "0.15rem",
+              }}
+            >
+              <input
+                type="checkbox"
+                style={{ width: "1.05rem", height: "1.05rem", flexShrink: 0, accentColor: "#64748b" }}
+                checked={zadaniaPokazArchiwum}
+                onChange={(ev) => setZadaniaPokazArchiwum(ev.target.checked)}
+              />
+              Pokaż archiwum
+            </label>
+            {zadaniaFiltrPracNr ||
+            zadaniaFiltrKr ||
+            nrZalogowanegoDoZadan ||
+            taskSekcja === "wszystkie" ? (
               <span style={{ color: "#94a3b8", fontSize: "0.86rem", alignSelf: "center" }}>
-                Wynik: {zadaniaMojePrzefiltrowane.length}
+                Wynik: {zadaniaListaWidokuZadan.length}
                 {zadaniaFiltrKr === "__bez_kr__"
                   ? " (bez KR)"
                   : zadaniaFiltrKr === "__tylko_z_kr__"
@@ -11495,7 +12584,9 @@ export default function App() {
                     : zadaniaFiltrKr
                       ? ` (KR ${zadaniaFiltrKr})`
                       : ""}
-                {nrZalogowanegoDoZadan ? ` · moje (nr ${nrZalogowanegoDoZadan})` : ""}
+                {taskSekcja === "moje" && nrZalogowanegoDoZadan
+                  ? ` · moje (nr ${nrZalogowanegoDoZadan})`
+                  : ""}
                 {zadaniaFiltrPracNr
                   ? zadaniaFiltrTylkoOdpowiedzialny
                     ? " · tylko wykonawca"
@@ -11506,10 +12597,16 @@ export default function App() {
           </div>
 
           {zadaniaFetchError ? null : zadaniaList.length === 0 ? (
-            <p style={s.muted}>Brak zadań — dodaj pierwsze formularzem poniżej.</p>
-          ) : zadaniaMojePrzefiltrowane.length === 0 ? (
             <p style={s.muted}>
-              Brak Twoich zadań dla wybranego filtra — zmień filtr KR lub ustawienia dodatkowe.
+              {["z_kr", "teren", "ogolne"].includes(taskSekcja)
+                ? "Brak zadań — dodaj pierwsze w menu TASK → „Nowe zadanie”."
+                : "Brak zadań — dodaj pierwsze formularzem poniżej."}
+            </p>
+          ) : zadaniaListaWidokuZadan.length === 0 ? (
+            <p style={s.muted}>
+              {taskSekcja === "moje"
+                ? "Brak Twoich zadań dla wybranego filtra — zmień filtr KR lub ustawienia dodatkowe."
+                : "Brak zadań dla wybranych filtrów — zmień filtr KR lub pracownika."}
             </p>
           ) : zadaniaWidok === "kanban" ? (
             <div
@@ -11547,6 +12644,7 @@ export default function App() {
                     {zadaniaKanbanBuckets[col.key].map((row) => {
                       const zt = kmTekstDoKomorki(row.zadanie);
                       const cur = String(row.status ?? "").trim();
+                      const etGodz = zadanieTekstEstymacjiGodzin(row);
                       return (
                         <div
                           key={row.id}
@@ -11602,15 +12700,24 @@ export default function App() {
                               <strong style={{ color: "#fcd34d" }}>Zlec.:</strong>{" "}
                               {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
                             </div>
-                            {row.data_planowana ? (
-                              <div>Plan: {dataDoInputa(row.data_planowana)}</div>
+                            {etGodz ? (
+                              <div>
+                                <strong style={{ color: "#a5b4fc" }}>Estym.:</strong> {etGodz}
+                              </div>
                             ) : null}
-                            {row.data_realna ? (
+                            {row.deadline || row.data_planowana ? (
+                              <div>
+                                Deadline: {dataDoInputa(row.deadline ?? row.data_planowana)}
+                              </div>
+                            ) : null}
+                            {tekstTrim(row.data_odbioru) ? (
                               <div style={{ color: "#86efac" }}>
-                                Realizacja: {dataDoInputa(row.data_realna)}
+                                Odbiór: {dataDoInputa(row.data_odbioru)}
                               </div>
                             ) : null}
                           </div>
+                          <div style={{ marginBottom: "0.35rem" }}>{komorkaPrzeplywuZadania(row)}</div>
+                          {renderZadanieWolnyOdpowiedzialny(row)}
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.35rem" }}>
                             {ZADANIE_STATUS_W_BAZIE.map((st) => (
                               <button
@@ -11661,13 +12768,15 @@ export default function App() {
                     {[
                       { ch: "Zadanie", extra: null },
                       { ch: "KR", extra: { color: "#93c5fd" } },
-                      { ch: "Kategoria", extra: null },
+                      { ch: "Typ zadania", extra: null },
                       { ch: "Dział", extra: { color: "#7dd3fc" } },
                       { ch: "Odpow.", extra: null },
                       { ch: "Zlecający", extra: null },
                       { ch: "Status", extra: { color: "#a7f3d0" } },
-                      { ch: "Plan", extra: null },
-                      { ch: "Real", extra: null },
+                      { ch: "Estym.", extra: { color: "#a5b4fc" } },
+                      { ch: "Deadline", extra: null },
+                      { ch: "Data odbioru", extra: null },
+                      { ch: "Przepływ", extra: null },
                       { ch: "Zagr.", extra: null },
                       { ch: "Opis", extra: null },
                       { ch: "", extra: null },
@@ -11690,17 +12799,12 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                {zadaniaMojePrzefiltrowane.map((row) => {
+                {zadaniaListaWidokuZadan.map((row) => {
                     const zt = kmTekstDoKomorki(row.zadanie);
                     const opisKom = kmTekstDoKomorki(row.opis);
                     const kat = zadaniaEtykietaKategorii(row);
-                    const plan = dataDoSortuYYYYMMDD(row.data_planowana);
                     const stRow = String(row.status ?? "").trim();
-                    const przeterm =
-                      plan &&
-                      plan < dzisiajDataYYYYMMDD() &&
-                      !tekstTrim(row.data_realna) &&
-                      !zadanieCzyUkonczoneStatus(row.status);
+                    const przeterm = zadaniePoTerminieDeadline(row, dzisiajDataYYYYMMDD());
                     return (
                       <tr
                         key={row.id}
@@ -11740,8 +12844,9 @@ export default function App() {
                         <td style={{ ...s.td, ...s.dzialWartosc, padding: "0.65rem 0.85rem", fontSize: "0.95rem" }}>
                           {row.dzial?.trim() ? row.dzial : "—"}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
-                          {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", verticalAlign: "top" }}>
+                          <div>{podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}</div>
+                          {renderZadanieWolnyOdpowiedzialny(row)}
                         </td>
                         <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
                           {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
@@ -11770,11 +12875,27 @@ export default function App() {
                             ))}
                           </select>
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
-                          {row.data_planowana ? dataDoInputa(row.data_planowana) : "—"}
+                        <td
+                          style={{
+                            ...s.td,
+                            padding: "0.65rem 0.85rem",
+                            fontFamily: "ui-monospace, monospace",
+                            fontSize: "0.88rem",
+                            color: "#a5b4fc",
+                          }}
+                        >
+                          {zadanieTekstEstymacjiGodzin(row) ?? "—"}
                         </td>
                         <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
-                          {row.data_realna ? dataDoInputa(row.data_realna) : "—"}
+                          {row.deadline || row.data_planowana
+                            ? dataDoInputa(row.deadline ?? row.data_planowana)
+                            : "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
+                          {tekstTrim(row.data_odbioru) ? dataDoInputa(row.data_odbioru) : "—"}
+                        </td>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", verticalAlign: "top" }}>
+                          {komorkaPrzeplywuZadania(row)}
                         </td>
                         <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
                           {row.zagrozenie === true ? "tak" : row.zagrozenie === false ? "nie" : "—"}
@@ -11813,20 +12934,24 @@ export default function App() {
             </div>
           )}
 
-          <h3
-            style={{
-              fontSize: "1rem",
-              fontWeight: 600,
-              color: "#fff",
-              margin: "1.5rem 0 0.65rem",
-            }}
-          >
-            {zadanieEdycjaId != null ? "Edycja zadania" : "Nowe zadanie"}
-          </h3>
-          <form
-            style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "2rem" }}
-            onSubmit={zapiszZadanie}
-          >
+          {zadanieEdycjaId != null ||
+          taskSekcja === "nowe" ||
+          !["z_kr", "teren", "ogolne"].includes(taskSekcja) ? (
+            <>
+              <h3
+                style={{
+                  fontSize: "1rem",
+                  fontWeight: 600,
+                  color: "#fff",
+                  margin: "1.5rem 0 0.65rem",
+                }}
+              >
+                {zadanieEdycjaId != null ? "Edycja zadania" : "Nowe zadanie"}
+              </h3>
+              <form
+                style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "2rem" }}
+                onSubmit={zapiszZadanie}
+              >
             <label style={s.label}>
               Projekt (KR) — opcjonalnie
               <select
@@ -11853,6 +12978,32 @@ export default function App() {
             <p style={{ ...s.muted, margin: "-0.35rem 0 0", fontSize: "0.78rem" }}>
               Przy wybranym KR zadanie widać w filtrze i na kartach Kanban z etykietą projektu.
             </p>
+            <label style={s.label}>
+              Typ zadania
+              <select
+                style={s.input}
+                value={String(zadanieForm.typ_zadania ?? "")}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, typ_zadania: ev.target.value }))}
+              >
+                <option value="">— nie ustawiono (wtedy heurystyka w kolumnie Typ zadania) —</option>
+                {ZADANIE_TYPY_WYBORU.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+                {(() => {
+                  const cur = String(zadanieForm.typ_zadania ?? "").trim();
+                  if (cur && !ZADANIE_TYPY_WYBORU.includes(cur)) {
+                    return (
+                      <option key={`orphan-${cur}`} value={cur}>
+                        {cur} (z bazy)
+                      </option>
+                    );
+                  }
+                  return null;
+                })()}
+              </select>
+            </label>
             <label style={s.label}>
               Zadanie (wymagane)
               <input
@@ -11901,6 +13052,24 @@ export default function App() {
                 })()}
               </select>
             </label>
+            <div style={{ ...s.btnRow, marginTop: "-0.3rem" }}>
+              <button
+                type="button"
+                style={{ ...s.btnGhost, fontSize: "0.8rem", padding: "0.3rem 0.55rem" }}
+                onClick={() =>
+                  setZadanieForm((f) => ({
+                    ...f,
+                    osoba_odpowiedzialna: "",
+                    status: String(f.status ?? "").trim() || "nowe",
+                  }))
+                }
+              >
+                Kolejka wolnych mocy (bez osoby odpowiedzialnej)
+              </button>
+            </div>
+            <p style={{ ...s.muted, margin: "-0.1rem 0 0", fontSize: "0.76rem" }}>
+              Takie zadanie może czekać nieprzypisane, aż pojawi się wolne okno w produkcji.
+            </p>
             <label style={s.label}>
               Osoba zlecająca — <code style={s.code}>pracownik.nr</code>
               <select
@@ -11958,26 +13127,47 @@ export default function App() {
               </select>
             </label>
             <label style={s.label}>
-              Data planowana
+              Termin realizacji (deadline)
               <input
                 style={s.input}
                 type="date"
-                value={zadanieForm.data_planowana}
-                onChange={(ev) =>
-                  setZadanieForm((f) => ({ ...f, data_planowana: ev.target.value }))
-                }
+                value={zadanieForm.deadline}
+                onChange={(ev) => setZadanieForm((f) => ({ ...f, deadline: ev.target.value }))}
               />
+              <span style={{ ...s.muted, fontSize: "0.76rem", display: "block", marginTop: "0.25rem", lineHeight: 1.4 }}>
+                Jedna data graniczna. Odbiór — osoba zlecająca po zgłoszeniu wykonania (przyciski w tabeli / Kanban).
+              </span>
             </label>
             <label style={s.label}>
-              Data realna
-              <input
-                style={s.input}
-                type="date"
-                value={zadanieForm.data_realna}
-                onChange={(ev) =>
-                  setZadanieForm((f) => ({ ...f, data_realna: ev.target.value }))
-                }
-              />
+              Estymacja czasu
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.25rem" }}>
+                <input
+                  style={{ ...s.input, flex: "1 1 8rem", minWidth: "7rem" }}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={zadanieForm.estymacja_jednostka === "d" ? "np. 2 lub 0,5 dnia" : "np. 8 lub 2,5 h"}
+                  value={zadanieForm.estymacja_godzin}
+                  onChange={(ev) =>
+                    setZadanieForm((f) => ({ ...f, estymacja_godzin: ev.target.value }))
+                  }
+                />
+                <select
+                  style={{ ...s.input, flex: "1 1 14rem", minWidth: "12rem" }}
+                  value={zadanieForm.estymacja_jednostka === "d" ? "d" : "h"}
+                  onChange={(ev) =>
+                    setZadanieForm((f) => ({ ...f, estymacja_jednostka: ev.target.value }))
+                  }
+                >
+                  <option value="h">Godziny robocze (rob. h)</option>
+                  <option value="d">
+                    Dni robocze (1 dzień = {ROB_H_NA_DZIEN_ROBOCZY_ZADANIE} rob. h)
+                  </option>
+                </select>
+              </div>
+              <span style={{ fontSize: "0.76rem", color: "#94a3b8", marginTop: "0.3rem", display: "block", lineHeight: 1.45 }}>
+                W bazie zapisujemy zawsze <strong>roboczogodziny</strong>; przy wyborze dni roboczych wartość jest mnożona
+                przez {ROB_H_NA_DZIEN_ROBOCZY_ZADANIE}. W listach przy dniach pokazywany jest też przelicznik na rob. h.
+              </span>
             </label>
             <label style={s.label}>
               Zagrożenie
@@ -12018,6 +13208,8 @@ export default function App() {
               ) : null}
             </div>
           </form>
+            </>
+          ) : null}
         </>
       ) : null}
 
@@ -12134,8 +13326,8 @@ export default function App() {
                       "—";
                     const statusRaw = String(appTicketWartoscEdycji(row, "status") ?? row.status ?? "").trim();
                     const status = APP_TICKET_STATUS_W_BAZIE.includes(statusRaw) ? statusRaw : "oczekuje";
-                    const odpVal = String(appTicketWartoscEdycji(row, "odpowiedz") ?? "").trim();
-                    const podpisVal = String(appTicketWartoscEdycji(row, "podpis_wdrozenia") ?? "").trim();
+                    const odpVal = String(appTicketWartoscEdycji(row, "odpowiedz") ?? "");
+                    const podpisVal = String(appTicketWartoscEdycji(row, "podpis_wdrozenia") ?? "");
                     const mojNr = String(pracownikPowiazanyZSesja?.nr ?? "").trim();
                     const czyZglaszajacy = mojNr && mojNr === String(row.zglaszajacy_nr ?? "").trim();
                     const zamkniety = czyAppTicketZamkniety(status);
@@ -13449,7 +14641,7 @@ export default function App() {
                 <thead>
                   <tr>
                     <th style={s.th}>Nazwa firmy</th>
-                    <th style={s.th}>Lokalizacja</th>
+                    <th style={s.th}>Kod pocztowy</th>
                     <th style={s.th}>Osoba kontaktowa</th>
                     <th style={s.th}>Telefon</th>
                     <th style={s.th}>Uwagi</th>
@@ -13479,9 +14671,14 @@ export default function App() {
                             <input
                               style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
                               type="text"
-                              list="pw-lokalizacja-sugestie"
                               value={pwForm.lokalizacja}
                               onChange={(ev) => setPwForm((f) => ({ ...f, lokalizacja: ev.target.value }))}
+                              onBlur={() =>
+                                setPwForm((f) => ({ ...f, lokalizacja: kodPocztowyZnormalizowany(f.lokalizacja) }))
+                              }
+                              placeholder="np. 30-001"
+                              pattern="[0-9]{2}-[0-9]{3}"
+                              inputMode="numeric"
                             />
                           ) : row.lokalizacja?.trim() ? (
                             row.lokalizacja
@@ -13595,9 +14792,9 @@ export default function App() {
                                 type="button"
                                 style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
                                 disabled={pwEdycjaId != null || pwGeoBusyId === row.id}
-                                onClick={() => void poprawLokalizacjePodwykonawcy(row)}
+                                onClick={() => przejdzDoMapyPodwykonawcowZFirma(row.id)}
                               >
-                                {pwGeoBusyId === row.id ? "Szukanie..." : "Popraw lokalizację"}
+                                LOK
                               </button>{" "}
                               <button
                                 type="button"
@@ -13652,14 +14849,18 @@ export default function App() {
               />
             </label>
             <label style={s.label}>
-              Lokalizacja
+              Kod pocztowy
               <input
                 style={s.input}
                 type="text"
-                list="pw-lokalizacja-sugestie"
-                placeholder="np. Kraków albo Kraków, małopolskie"
+                placeholder="np. 30-001"
                 value={pwForm.lokalizacja}
                 onChange={(ev) => setPwForm((f) => ({ ...f, lokalizacja: ev.target.value }))}
+                onBlur={() =>
+                  setPwForm((f) => ({ ...f, lokalizacja: kodPocztowyZnormalizowany(f.lokalizacja) }))
+                }
+                pattern="[0-9]{2}-[0-9]{3}"
+                inputMode="numeric"
               />
             </label>
             <label style={s.label}>
@@ -13717,11 +14918,6 @@ export default function App() {
             ) : null}
             </>
           ) : null}
-          <datalist id="pw-lokalizacja-sugestie">
-            {podwykonawcyLokalizacjaSugestie.map((x) => (
-              <option key={x} value={x} />
-            ))}
-          </datalist>
           </div>
         </>
       ) : null}
@@ -13731,7 +14927,7 @@ export default function App() {
           <h2 style={{ ...s.h2, marginTop: 0 }}>Mapa podwykonawców (Polska)</h2>
           <div>
           <p style={{ ...s.muted, marginBottom: "0.8rem", maxWidth: "52rem" }}>
-            Pinezki są ustawiane automatycznie na podstawie pola <strong>lokalizacja</strong>. Kliknij pinezkę, aby zobaczyć
+            Pinezki są ustawiane automatycznie na podstawie pola <strong>kod pocztowy</strong>. Kliknij pinezkę, aby zobaczyć
             kontakt do firmy.
           </p>
           {podwykonawcyMapaPunkty.length === 0 ? (
@@ -13770,7 +14966,7 @@ export default function App() {
                           <strong>{p.nazwa_firmy}</strong>
                           <div style={{ marginTop: "0.35rem" }}>
                             <div>
-                              <strong>Lokalizacja:</strong> {p.lokalizacja || "—"}
+                              <strong>Kod pocztowy:</strong> {p.lokalizacja || "—"}
                             </div>
                             <div>
                               <strong>Kontakt:</strong> {p.osoba_kontaktowa || "—"}
@@ -13832,8 +15028,8 @@ export default function App() {
           )}
           {podwykonawcyMapaBraki.length > 0 ? (
             <div style={{ ...s.errBox, marginBottom: "1rem" }}>
-              <strong>Nie udało się nanieść części wpisów.</strong> Uzupełnij lokalizację i kliknij przy firmie
-              <strong> Popraw lokalizację</strong>. Braki:{" "}
+              <strong>Nie udało się nanieść części wpisów.</strong> Uzupełnij kod pocztowy i kliknij przy firmie
+              <strong> LOK</strong>. Braki:{" "}
               {podwykonawcyMapaBraki
                 .slice(0, 8)
                 .map((p) => String(p.nazwa_firmy ?? "").trim() || `id ${p.id}`)
@@ -16102,12 +17298,11 @@ export default function App() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)",
-                gap: "1.35rem",
+                gridTemplateColumns: "minmax(0, 1fr)",
+                gap: "0.85rem",
                 alignItems: "start",
               }}
             >
-              {renderPulpitDrzewoNav(rekordKrPulpit)}
               <div style={{ minWidth: 0 }}>
                 {pulpitPodstrona === "przeglad" ? (
                   renderPulpitPrzegladKr(rekordKrPulpit)
@@ -16115,7 +17310,12 @@ export default function App() {
                   <>
                     {renderPulpitDaneProjektuCard(rekordKrPulpit)}
                     <div style={{ marginTop: "0.85rem" }}>
-                      <button type="button" style={s.btn} onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}>
+                      <button
+                        type="button"
+                        style={s.btn}
+                        onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}
+                        disabled={!czyAdminAktywny && !czyKierownikAktywny}
+                      >
                         Edytuj kartę projektu (KR)
                       </button>
                       <HelpLinijka wlaczony={trybHelp}>
@@ -16182,6 +17382,7 @@ export default function App() {
                     type="button"
                     style={{ ...s.btnGhost, padding: "0.32rem 0.65rem", fontSize: "0.78rem" }}
                     onClick={() => otworzEdycjeKrZTabeli(rekordKrPulpit)}
+                    disabled={!czyAdminAktywny && !czyKierownikAktywny}
                   >
                     Edytuj KR
                   </button>
@@ -17396,7 +18597,12 @@ export default function App() {
                         ) : null}
                       </div>
                       {!isEditing ? (
-                        <button type="button" style={s.btnGhost} onClick={() => openEditKr(item)}>
+                        <button
+                          type="button"
+                          style={s.btnGhost}
+                          onClick={() => openEditKr(item)}
+                          disabled={!czyAdminAktywny && !czyKierownikAktywny}
+                        >
                           Edytuj KR
                         </button>
                       ) : null}
@@ -17433,54 +18639,223 @@ export default function App() {
                           Edycja rekordu tabeli <code style={s.code}>kr</code> — pierwotnie{" "}
                           <strong style={{ color: "#fff" }}>{item.kr}</strong>
                         </p>
-                        <label style={s.label}>
-                          KR (kod projektu)
-                          <input
-                            style={s.input}
-                            type="text"
-                            value={editForm.kr}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, kr: ev.target.value }))
-                            }
-                            required
-                          />
-                        </label>
-                        <label style={s.label}>
-                          Nazwa obiektu
-                          <input
-                            style={s.input}
-                            type="text"
-                            value={editForm.nazwa_obiektu}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, nazwa_obiektu: ev.target.value }))
-                            }
-                          />
-                        </label>
-                        <label style={s.label}>
-                          Rodzaj pracy (opcjonalnie)
-                          <input
-                            style={s.input}
-                            type="text"
-                            value={editForm.rodzaj_pracy}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, rodzaj_pracy: ev.target.value }))
-                            }
-                            placeholder="np. nadzór, ekspertyza, organizacja"
-                          />
-                        </label>
-                        <div style={s.label}>
-                          <span style={{ color: "#7dd3fc", fontWeight: 600 }}>Dział</span>
-                          <input
-                            style={s.input}
-                            type="text"
-                            value={editForm.dzial}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, dzial: ev.target.value }))
-                            }
-                          />
-                          <span style={{ ...s.dzialInfo, fontSize: "0.78rem" }}>
-                            Szybki wybór — ustawia pole na standardową wartość działu w bazie:
-                          </span>
+                        <div
+                          style={{
+                            marginTop: "0.55rem",
+                            padding: "0.45rem 0.6rem",
+                            borderRadius: "8px",
+                            border: "1px solid rgba(251,191,36,0.25)",
+                            background: "rgba(251,191,36,0.08)",
+                            color: "#fde68a",
+                            fontSize: "0.78rem",
+                          }}
+                        >
+                          Pola wymagane: <strong>KR</strong>, <strong>Nazwa obiektu</strong>, <strong>Dział</strong>,{" "}
+                          <strong>Status</strong>. Puste wymagane pola są podświetlone.
+                        </div>
+                        <div
+                          style={{
+                            marginTop: "0.6rem",
+                            border: "1px solid rgba(251,146,60,0.3)",
+                            borderRadius: "12px",
+                            padding: "0.6rem",
+                            background: "rgba(30,41,59,0.35)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              marginTop: "0.1rem",
+                              marginBottom: "0.15rem",
+                              fontSize: "0.8rem",
+                              fontWeight: 800,
+                              color: "#fdba74",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.05em",
+                            }}
+                          >
+                            Dane podstawowe projektu
+                          </div>
+                          <label style={s.label}>
+                            KR (kod projektu) <span style={{ color: "#fbbf24" }}>*</span>
+                            <input
+                              style={{ ...s.input, ...stylPolaBrakWymagane(czyWartoscPusta(editForm.kr)) }}
+                              type="text"
+                              value={editForm.kr}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, kr: ev.target.value }))
+                              }
+                              required
+                            />
+                          </label>
+                          <label style={s.label}>
+                            Nazwa obiektu <span style={{ color: "#fbbf24" }}>*</span>
+                            <input
+                              style={{
+                                ...s.input,
+                                ...stylPolaBrakWymagane(czyWartoscPusta(editForm.nazwa_obiektu)),
+                              }}
+                              type="text"
+                              value={editForm.nazwa_obiektu}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, nazwa_obiektu: ev.target.value }))
+                              }
+                            />
+                          </label>
+                          <label style={s.label}>
+                            Rodzaj pracy (opcjonalnie)
+                            <input
+                              style={s.input}
+                              type="text"
+                              value={editForm.rodzaj_pracy}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, rodzaj_pracy: ev.target.value }))
+                              }
+                              placeholder="np. nadzór, ekspertyza, organizacja"
+                            />
+                          </label>
+                          <div style={s.label}>
+                            <span style={{ color: "#7dd3fc", fontWeight: 600 }}>
+                              Dział <span style={{ color: "#fbbf24" }}>*</span>
+                            </span>
+                            <input
+                              style={{ ...s.input, ...stylPolaBrakWymagane(czyWartoscPusta(editForm.dzial)) }}
+                              type="text"
+                              value={editForm.dzial}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, dzial: ev.target.value }))
+                              }
+                              placeholder="np. Dział prawny"
+                            />
+                            <span style={{ ...s.dzialInfo, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                              Szybki wybór działu:
+                            </span>
+                            <div style={s.btnRow}>
+                              <button
+                                type="button"
+                                style={{
+                                  ...s.btnGhost,
+                                  borderColor: "rgba(56,189,248,0.45)",
+                                  color: "#bae6fd",
+                                }}
+                                onClick={() =>
+                                  setEditForm((f) => ({
+                                    ...f,
+                                    dzial: DZIAL_W_BAZIE.prawny,
+                                  }))
+                                }
+                              >
+                                Szybki wybór: Dział prawny
+                              </button>
+                              <button
+                                type="button"
+                                style={{
+                                  ...s.btnGhost,
+                                  borderColor: "rgba(56,189,248,0.45)",
+                                  color: "#bae6fd",
+                                }}
+                                onClick={() =>
+                                  setEditForm((f) => ({
+                                    ...f,
+                                    dzial: DZIAL_W_BAZIE.inzynieryjny,
+                                  }))
+                                }
+                              >
+                                Szybki wybór: Dział inżynieryjny
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            marginTop: "0.55rem",
+                            border: "1px solid rgba(251,146,60,0.3)",
+                            borderRadius: "12px",
+                            padding: "0.6rem",
+                            background: "rgba(15,23,42,0.32)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              marginTop: "0.1rem",
+                              marginBottom: "0.15rem",
+                              fontSize: "0.8rem",
+                              fontWeight: 800,
+                              color: "#fdba74",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.05em",
+                            }}
+                          >
+                            Zleceniodawca i umowa
+                          </div>
+                          <p
+                            style={{
+                              ...s.muted,
+                              margin: "0.45rem 0 0",
+                              fontSize: "0.8rem",
+                              color: "#94a3b8",
+                            }}
+                          >
+                            Sekcja opcjonalna — możesz zostawić puste.
+                          </p>
+                          <label style={s.label}>
+                            Zleceniodawca
+                            <input
+                              style={s.input}
+                              type="text"
+                              value={editForm.zleceniodawca}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, zleceniodawca: ev.target.value }))
+                              }
+                            />
+                          </label>
+                          <label style={s.label}>
+                            Osoba odpowiedzialna po stronie zleceniodawcy
+                            <input
+                              style={s.input}
+                              type="text"
+                              value={editForm.osoba_odpowiedzialna_zleceniodawcy}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({
+                                  ...f,
+                                  osoba_odpowiedzialna_zleceniodawcy: ev.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label style={s.label}>
+                            Link do umowy
+                            <input
+                              style={s.input}
+                              type="text"
+                              placeholder="https://…"
+                              value={editForm.link_umowy}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, link_umowy: ev.target.value }))
+                              }
+                            />
+                          </label>
+                          <label style={s.label}>
+                            Okres trwania projektu — od
+                            <input
+                              style={s.input}
+                              type="date"
+                              value={editForm.okres_projektu_od}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, okres_projektu_od: ev.target.value }))
+                              }
+                            />
+                          </label>
+                          <label style={s.label}>
+                            Okres trwania projektu — do
+                            <input
+                              style={s.input}
+                              type="date"
+                              value={editForm.okres_projektu_do}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, okres_projektu_do: ev.target.value }))
+                              }
+                            />
+                          </label>
                           <div style={s.btnRow}>
                             <button
                               type="button"
@@ -17488,163 +18863,95 @@ export default function App() {
                               onClick={() =>
                                 setEditForm((f) => ({
                                   ...f,
-                                  dzial: DZIAL_W_BAZIE.prawny,
+                                  okres_projektu_od: "",
+                                  okres_projektu_do: "",
                                 }))
                               }
                             >
-                              Dział prawny
-                            </button>
-                            <button
-                              type="button"
-                              style={s.btnGhost}
-                              onClick={() =>
-                                setEditForm((f) => ({
-                                  ...f,
-                                  dzial: DZIAL_W_BAZIE.inzynieryjny,
-                                }))
-                              }
-                            >
-                              Dział inżynieryjny
+                              Wyczyść okres (obie daty)
                             </button>
                           </div>
+                          <label style={s.label}>
+                            Status projektu <span style={{ color: "#fbbf24" }}>*</span>
+                            <select
+                              style={{
+                                ...s.input,
+                                ...stylPolaUwagiPulpitu(krEdycjaStatusWymagaUwagi),
+                                ...stylPolaBrakWymagane(czyWartoscPusta(editForm.status)),
+                                color: czyWartoscPusta(editForm.status) ? "#111827" : "#e5e7eb",
+                              }}
+                              value={editForm.status}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, status: ev.target.value }))
+                              }
+                            >
+                              <option value="" style={{ color: "#111827" }}>
+                                — brak —
+                              </option>
+                              {KR_STATUS_W_BAZIE.map((st) => (
+                                <option key={st} value={st} style={{ color: "#111827" }}>
+                                  {st}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                         </div>
-                        <p
+                        <div
                           style={{
-                            ...s.muted,
-                            margin: "0.5rem 0 0",
-                            fontSize: "0.8rem",
-                            color: "#94a3b8",
+                            marginTop: "0.55rem",
+                            border: "1px solid rgba(251,146,60,0.3)",
+                            borderRadius: "12px",
+                            padding: "0.6rem",
+                            background: "rgba(15,23,42,0.32)",
                           }}
                         >
-                          Zleceniodawca i umowa (opcjonalnie)
-                        </p>
-                        <label style={s.label}>
-                          Zleceniodawca
-                          <input
-                            style={s.input}
-                            type="text"
-                            value={editForm.zleceniodawca}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, zleceniodawca: ev.target.value }))
-                            }
-                          />
-                        </label>
-                        <label style={s.label}>
-                          Osoba odpowiedzialna po stronie zleceniodawcy
-                          <input
-                            style={s.input}
-                            type="text"
-                            value={editForm.osoba_odpowiedzialna_zleceniodawcy}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({
-                                ...f,
-                                osoba_odpowiedzialna_zleceniodawcy: ev.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label style={s.label}>
-                          Link do umowy
-                          <input
-                            style={s.input}
-                            type="text"
-                            placeholder="https://…"
-                            value={editForm.link_umowy}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, link_umowy: ev.target.value }))
-                            }
-                          />
-                        </label>
-                        <label style={s.label}>
-                          Okres trwania projektu — od
-                          <input
-                            style={s.input}
-                            type="date"
-                            value={editForm.okres_projektu_od}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, okres_projektu_od: ev.target.value }))
-                            }
-                          />
-                        </label>
-                        <label style={s.label}>
-                          Okres trwania projektu — do
-                          <input
-                            style={s.input}
-                            type="date"
-                            value={editForm.okres_projektu_do}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, okres_projektu_do: ev.target.value }))
-                            }
-                          />
-                        </label>
-                        <div style={s.btnRow}>
-                          <button
-                            type="button"
-                            style={s.btnGhost}
-                            onClick={() =>
-                              setEditForm((f) => ({
-                                ...f,
-                                okres_projektu_od: "",
-                                okres_projektu_do: "",
-                              }))
-                            }
-                          >
-                            Wyczyść okres (obie daty)
-                          </button>
-                        </div>
-                        <label style={s.label}>
-                          Status projektu
-                          <select
+                          <div
                             style={{
-                              ...s.input,
-                              ...stylPolaUwagiPulpitu(krEdycjaStatusWymagaUwagi),
+                              marginTop: "0.1rem",
+                              marginBottom: "0.15rem",
+                              fontSize: "0.8rem",
+                              fontWeight: 800,
+                              color: "#fdba74",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.05em",
                             }}
-                            value={editForm.status}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, status: ev.target.value }))
-                            }
                           >
-                            <option value="">— brak —</option>
-                            {KR_STATUS_W_BAZIE.map((st) => (
-                              <option key={st} value={st}>
-                                {st}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label style={s.label}>
-                          Osoba prowadząca — wybór z bazy{" "}
-                          <code style={s.code}>pracownik</code> (zakładka ID)
-                          <select
-                            style={s.input}
-                            value={String(editForm.osoba_prowadzaca ?? "")}
-                            onChange={(ev) =>
-                              setEditForm((f) => ({ ...f, osoba_prowadzaca: ev.target.value }))
-                            }
-                          >
-                            <option value="">— brak —</option>
-                            {(() => {
-                              const cur = String(editForm.osoba_prowadzaca ?? "").trim();
-                              const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
-                              const orphan = cur !== "" && !nrs.has(cur);
-                              return (
-                                <>
-                                  {orphan ? (
-                                    <option value={cur}>
-                                      {cur} (nie ma w aktualnej liście ID — zapisz lub wybierz inną
-                                      osobę)
-                                    </option>
-                                  ) : null}
-                                  {pracownicyPosortowani.map((p) => (
-                                    <option key={String(p.nr)} value={String(p.nr)}>
-                                      {String(p.nr)} — {p.imie_nazwisko ?? ""}
-                                    </option>
-                                  ))}
-                                </>
-                              );
-                            })()}
-                          </select>
-                        </label>
+                            Odpowiedzialność i start
+                          </div>
+                          <label style={s.label}>
+                            Osoba prowadząca — wybór z bazy{" "}
+                            <code style={s.code}>pracownik</code> (zakładka ID)
+                            <select
+                              style={s.input}
+                              value={String(editForm.osoba_prowadzaca ?? "")}
+                              onChange={(ev) =>
+                                setEditForm((f) => ({ ...f, osoba_prowadzaca: ev.target.value }))
+                              }
+                            >
+                              <option value="">— brak —</option>
+                              {(() => {
+                                const cur = String(editForm.osoba_prowadzaca ?? "").trim();
+                                const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                                const orphan = cur !== "" && !nrs.has(cur);
+                                return (
+                                  <>
+                                    {orphan ? (
+                                      <option value={cur}>
+                                        {cur} (nie ma w aktualnej liście ID — zapisz lub wybierz inną
+                                        osobę)
+                                      </option>
+                                    ) : null}
+                                    {pracownicyPosortowani.map((p) => (
+                                      <option key={String(p.nr)} value={String(p.nr)}>
+                                        {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                                      </option>
+                                    ))}
+                                  </>
+                                );
+                              })()}
+                            </select>
+                          </label>
+                        </div>
                         {pracFetchError ? (
                           <p
                             style={{
@@ -17752,55 +19059,6 @@ export default function App() {
       !widokLogDlaKr &&
       !widokInfoDlaKr &&
       !widokPwDlaKr &&
-      !widokPulpitDlaKr ? (
-        <section style={{ marginBottom: "1.25rem" }} aria-label="Skróty KPI — KR i zadania">
-          <div style={op.kpiGrid}>
-            <OpKpiCard
-              label="KR"
-              value={krList.length}
-              hint="Aktywne karty w systemie"
-              accent="success"
-              border="rgba(34,197,94,0.28)"
-              onClick={przejdzDoKr}
-              title="Kliknij: lista KR"
-            />
-            <OpKpiCard
-              label="Zagrożenia i alerty"
-              value={listaAlertowOperacyjnych.length}
-              hint="Automatyczna lista operacyjna"
-              accent="danger"
-              border="rgba(239,68,68,0.32)"
-              onClick={przejdzDoOstrzezeniaPanel}
-              title="Kliknij: raporty / ostrzeżenia"
-            />
-            <OpKpiCard
-              label="Zadania z KR"
-              value={liczbaZadanTylkoPowiazanychZKr}
-              hint="Przypisane do kodów z listy kart KR (nie zadania ogólne)"
-              accent="action"
-              border="rgba(249,115,22,0.32)"
-              onClick={przejdzDoZadanTylkoZKartamiKr}
-              title="Kliknij: moduł Zadania z filtrem „tylko z KR”"
-            />
-            <OpKpiCard
-              label="Otwarte zadania z KR"
-              value={liczbaOtwartychZadanTylkoPowiazanychZKr}
-              hint="Bez statusu domknięcia — tylko przy kodzie z listy powyżej"
-              accent="action"
-              border="rgba(249,115,22,0.22)"
-              onClick={przejdzDoZadanTylkoZKartamiKr}
-              title="Kliknij: moduł Zadania z filtrem „tylko z KR”"
-            />
-          </div>
-        </section>
-      ) : null}
-
-      {widok === "kr" &&
-      !wybranyKrKlucz &&
-      !widokKmDlaKr &&
-      !widokLogDlaKr &&
-      !widokInfoDlaKr &&
-      !widokPwDlaKr &&
       !widokPulpitDlaKr &&
       krList.length > 0 ? (
         <section style={s.krTopWrap} aria-labelledby="kr-introduced-heading">
@@ -17841,6 +19099,19 @@ export default function App() {
             {krListPosortowana.map((item) => {
               const wierszUwaga = kodyKrZWyroznieniemUwagi.has(String(item.kr).trim());
               const st = item.status?.trim();
+              const otworzWybraneKr = () => {
+                const k = String(item.kr ?? "").trim();
+                setWidok("kr");
+                setKrMenu2Rozwiniete(true);
+                setKrSekcjaMenu2("informacje");
+                setWybranyKrKlucz(k);
+                setWidokInfoDlaKr(null);
+                setWidokKmDlaKr(null);
+                setWidokLogDlaKr(null);
+                setWidokPwDlaKr(null);
+                setWidokPulpitDlaKr(null);
+                przejdzDoSekcjiKr(item, "przeglad");
+              };
               return (
                 <div
                   key={item.kr}
@@ -17851,14 +19122,29 @@ export default function App() {
                     border: `1px solid ${wierszUwaga ? "rgba(239,68,68,0.4)" : theme.border}`,
                     boxShadow: "0 2px 12px -10px rgba(0,0,0,0.4)",
                     transition: "border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease",
+                    cursor: "pointer",
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Otwórz KR ${item.kr}`}
+                  onClick={otworzWybraneKr}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      otworzWybraneKr();
+                    }
                   }}
                   onMouseEnter={(ev) => {
                     const el = ev.currentTarget;
-                    el.style.boxShadow = "0 10px 32px -10px rgba(0,0,0,0.5)";
+                    el.style.borderColor = "rgba(251,146,60,0.78)";
+                    el.style.background = "rgba(30,41,59,0.92)";
+                    el.style.boxShadow = "0 14px 34px -12px rgba(251,146,60,0.45)";
                     el.style.transform = "translateY(-2px)";
                   }}
                   onMouseLeave={(ev) => {
                     const el = ev.currentTarget;
+                    el.style.borderColor = wierszUwaga ? "rgba(239,68,68,0.4)" : theme.border;
+                    el.style.background = theme.surface;
                     el.style.boxShadow = "0 4px 22px -10px rgba(0,0,0,0.4)";
                     el.style.transform = "none";
                   }}
@@ -17903,9 +19189,29 @@ export default function App() {
                         </>
                       ) : null}
                     </div>
-                    <button type="button" style={{ ...s.btn, flexShrink: 0, alignSelf: "center" }} onClick={() => otworzPulpitDlaKr(item)}>
-                      Pulpit projektu
-                    </button>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "center", justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        style={{
+                          ...s.btnGhost,
+                          flexShrink: 0,
+                          alignSelf: "center",
+                          color: "#f87171",
+                          borderColor: "rgba(248,113,113,0.45)",
+                          fontWeight: 900,
+                          fontSize: "1.08rem",
+                          lineHeight: 1,
+                          padding: "0.27rem 0.62rem",
+                        }}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          otworzWybraneKr();
+                        }}
+                        title="Otwórz KR i pokaż menu 2 rzędu"
+                      >
+                        ▸
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -18140,13 +19446,15 @@ export default function App() {
               },
             ].map((b) => (
               <div key={b.id}>
-                <button
-                  type="button"
-                  style={{ ...op.navBtn, ...(widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
-                  onClick={() => b.fn()}
-                >
-                  {b.label}
-                </button>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "0.25rem", alignItems: "stretch" }}>
+                  <button
+                    type="button"
+                    style={{ ...op.navBtn, ...(widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
+                    onClick={() => void nawigujMenuZAutoZapisem(() => b.fn())}
+                  >
+                    {etykietaMenuZIkona(b.id, b.label)}
+                  </button>
+                </div>
                 <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
               </div>
             ))}
@@ -18160,8 +19468,262 @@ export default function App() {
                 </HelpLinijka>
               </div>
             ) : null}
+            {widok === "kr" && rekordKrMenuBoczne && krMenu2Rozwiniete ? (
+              <div
+                style={{
+                  marginTop: "0.3rem",
+                  marginBottom: "0.55rem",
+                  marginLeft: "0.1rem",
+                  padding: "0.62rem 0.62rem 0.58rem 0.95rem",
+                  borderLeft: "1px solid rgba(148,163,184,0.25)",
+                  borderRadius: "10px",
+                  background: "rgba(15,23,42,0.42)",
+                  display: "grid",
+                  gap: "0.3rem",
+                }}
+              >
+                <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.2rem" }}>
+                  KR:{" "}
+                  <strong style={{ color: "#fdba74", fontSize: "0.92rem", letterSpacing: "0.01em" }}>
+                    {rekordKrMenuBoczne.kr}
+                  </strong>
+                </div>
+                {[
+                  { id: "informacje", label: "INFORMACJE" },
+                  { id: "realizacja", label: "REALIZACJA" },
+                  { id: "zasoby", label: "ZASOBY" },
+                  { id: "budzet", label: "BUDŻET" },
+                  { id: "nieprzydzielone", label: "NIEPRZYDZIELONE" },
+                ].map((m) => (
+                  <div key={m.id} style={{ display: "grid", gap: "0.2rem" }}>
+                    <button
+                      type="button"
+                      style={{
+                        ...op.navBtn,
+                        ...(krSekcjaMenu2 === m.id ? op.navBtnActive : {}),
+                        fontSize: "0.77rem",
+                        padding: "0.36rem 0.5rem",
+                        marginBottom: 0,
+                      }}
+                      onClick={() => void nawigujMenuZAutoZapisem(() => setKrSekcjaMenu2(m.id))}
+                    >
+                      {etykietaMenuZIkona(m.id, m.label)}
+                    </button>
+                    {krSekcjaMenu2 === m.id && krMenu3PozycjeAktywnejSekcji.length > 0 ? (
+                      <div
+                        style={{
+                          marginTop: "0.08rem",
+                          marginBottom: "0.04rem",
+                          paddingLeft: "0.7rem",
+                          borderLeft: "1px solid rgba(148,163,184,0.22)",
+                          display: "grid",
+                          gap: "0.22rem",
+                        }}
+                      >
+                        {krMenu3PozycjeAktywnejSekcji.map((m3) => (
+                          <button
+                            key={`kr-old-${m3.id}`}
+                            type="button"
+                            style={{
+                              ...op.navBtn,
+                              ...((() => {
+                                const czyEdycjaAktywna =
+                                  editingKrKey != null &&
+                                  String(editingKrKey).trim() === String(rekordKrMenuBoczne.kr).trim();
+                                if (m3.id === "edycja") {
+                                  return czyEdycjaAktywna ? op.navBtnActive : {};
+                                }
+                                if (czyEdycjaAktywna) return {};
+                                return krProjektSekcja === m3.id ? op.navBtnActive : {};
+                              })()),
+                              fontSize: "0.74rem",
+                              padding: "0.3rem 0.45rem",
+                              marginBottom: 0,
+                            }}
+                            onClick={() =>
+                              m3.id === "edycja"
+                                ? otworzEdycjeKrZTabeli(rekordKrMenuBoczne)
+                                : void nawigujMenuZAutoZapisem(() => przejdzDoSekcjiKr(rekordKrMenuBoczne, m3.id))
+                            }
+                          >
+                            {etykietaMenuZIkona(m3.id, m3.label)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
-          <div style={{ ...op.navSectionLabel }}>Osobiste</div>
+          <div style={{ ...op.navSectionLabel, color: "#fb923c" }}>TASK</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
+            <div>
+              <button
+                type="button"
+                style={{
+                  ...op.navBtn,
+                  ...(widok === "zadania" && taskSekcja === "wszystkie" ? op.navBtnActive : {}),
+                  marginBottom: 0,
+                }}
+                onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoTask("wszystkie"))}
+              >
+                {etykietaMenuZIkona("task_wszystkie", "Zadania")}
+              </button>
+              <HelpLinijka wlaczony={trybHelp}>
+                Pełna lista zadań — bez wstępnego filtra; możesz zawęzić KR i pracownika.
+              </HelpLinijka>
+            </div>
+            <div style={{ marginTop: "0.05rem" }}>
+              <button
+                type="button"
+                id="task-zakres-toggle"
+                aria-expanded={navTaskZakresOtwarte}
+                onClick={() => setNavTaskZakresOtwarte((o) => !o)}
+                style={{
+                  ...op.navBtn,
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "0.35rem",
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  color: "#e2e8f0",
+                  marginBottom: 0,
+                  borderStyle: "dashed",
+                  borderColor: "rgba(251, 146, 60, 0.35)",
+                  ...(widok === "zadania" && ["z_kr", "teren", "ogolne"].includes(taskSekcja)
+                    ? op.navBtnActive
+                    : {}),
+                }}
+              >
+                <span>Zakres listy (Z KR · Teren · Ogólne)</span>
+                <span style={{ fontSize: "0.7rem", opacity: 0.9, flexShrink: 0 }}>
+                  {navTaskZakresOtwarte ? "▲" : "▼"}
+                </span>
+              </button>
+              <HelpLinijka wlaczony={trybHelp}>Zwijane podmenu — szybki filtr listy po typie zadania.</HelpLinijka>
+              {navTaskZakresOtwarte ? (
+                <div
+                  style={{
+                    marginTop: "0.2rem",
+                    paddingLeft: "0.75rem",
+                    borderLeft: "2px solid rgba(251, 146, 60, 0.35)",
+                    marginLeft: "0.25rem",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.2rem",
+                  }}
+                >
+                  {[
+                    {
+                      id: "task_z_kr",
+                      label: "Z KR",
+                      fn: () => przejdzDoTask("z_kr"),
+                      w: "zadania",
+                      active: widok === "zadania" && taskSekcja === "z_kr",
+                      help: "Zadania powiązane z kodami KR.",
+                    },
+                    {
+                      id: "task_teren",
+                      label: "Teren",
+                      fn: () => przejdzDoTask("teren"),
+                      w: "zadania",
+                      active: widok === "zadania" && taskSekcja === "teren",
+                      help: "Prace terenowe i operacyjne do podjęcia.",
+                    },
+                    {
+                      id: "task_ogolne",
+                      label: "Ogólne",
+                      fn: () => przejdzDoTask("ogolne"),
+                      w: "zadania",
+                      active: widok === "zadania" && taskSekcja === "ogolne",
+                      help: "Backlog zadań na wolne moce.",
+                    },
+                  ].map((b) => (
+                    <div key={b.id}>
+                      <button
+                        type="button"
+                        style={{
+                          ...op.navBtn,
+                          ...(b.active != null ? (b.active ? op.navBtnActive : {}) : widok === b.w ? op.navBtnActive : {}),
+                          marginBottom: 0,
+                          fontSize: "0.88rem",
+                          paddingLeft: "0.55rem",
+                        }}
+                        onClick={() => void nawigujMenuZAutoZapisem(() => b.fn())}
+                      >
+                        {etykietaMenuZIkona(b.id, b.label)}
+                      </button>
+                      <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            {[
+              {
+                id: "task_moje",
+                label: "Moje",
+                fn: () => przejdzDoTask("moje"),
+                w: "zadania",
+                active: widok === "zadania" && taskSekcja === "moje",
+                help: "Zadania przypisane do Ciebie (widok osobisty).",
+              },
+              {
+                id: "task_nowe",
+                label: "Nowe zadanie",
+                fn: () => przejdzDoTask("nowe"),
+                w: "zadania",
+                active: widok === "zadania" && taskSekcja === "nowe",
+                help: "Formularz nowego zadania: KR (opcjonalnie), typ zadania (lista), treść i pozostałe pola.",
+              },
+            ].map((b) => (
+              <div key={b.id}>
+                <button
+                  type="button"
+                  style={{
+                    ...op.navBtn,
+                    ...(b.active != null ? (b.active ? op.navBtnActive : {}) : widok === b.w ? op.navBtnActive : {}),
+                    marginBottom: 0,
+                  }}
+                  onClick={() => void nawigujMenuZAutoZapisem(() => b.fn())}
+                >
+                  {etykietaMenuZIkona(b.id, b.label)}
+                </button>
+                <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+              </div>
+            ))}
+            <div style={{ marginTop: "0.15rem" }}>
+              {[
+                {
+                  id: "task_app",
+                  label: "App / Rozwój",
+                  fn: () => przejdzDoTask("app"),
+                  w: "app_tickety",
+                  active: widok === "app_tickety" && taskSekcja === "app",
+                  help: "Rozwój aplikacji i zgłoszenia produktowe.",
+                },
+              ].map((b) => (
+                <div key={b.id}>
+                  <button
+                    type="button"
+                    style={{
+                      ...op.navBtn,
+                      ...(b.active != null ? (b.active ? op.navBtnActive : {}) : widok === b.w ? op.navBtnActive : {}),
+                      marginBottom: 0,
+                    }}
+                    onClick={() => void nawigujMenuZAutoZapisem(() => b.fn())}
+                  >
+                    {etykietaMenuZIkona(b.id, b.label)}
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ ...op.navSectionLabel }}>👤 OSOBISTE</div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
             {[
               {
@@ -18190,21 +19752,6 @@ export default function App() {
                   ]
                 : []),
               {
-                id: "zadania",
-                label: "Moje zadania",
-                fn: przejdzDoZadania,
-                w: "zadania",
-                help: "Zadania, które zleciła zalogowana osoba lub które są jej przypisane.",
-              },
-              {
-                id: "app_tickety",
-                label: "Tickety / uwagi",
-                fn: przejdzDoAppTicketow,
-                w: "app_tickety",
-                help:
-                  "Dziennik zgłoszeń do aplikacji: zgłoszenie, dialog, status (oczekuje / w trakcie / zamknięte) oraz archiwum po zamknięciu przez zgłaszającego.",
-              },
-              {
                 id: "czas_pracy",
                 label: "Czas pracy",
                 fn: przejdzDoCzasPracy,
@@ -18230,10 +19777,10 @@ export default function App() {
               <div key={b.id}>
                 <button
                   type="button"
-                  style={{ ...op.navBtn, ...(widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
-                  onClick={() => b.fn()}
+                  style={{ ...op.navBtn, ...((b.active ?? false) || widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
+                  onClick={() => void nawigujMenuZAutoZapisem(() => b.fn())}
                 >
-                  {b.label}
+                  {etykietaMenuZIkona(b.id, b.label)}
                 </button>
                 <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
               </div>
@@ -18251,9 +19798,9 @@ export default function App() {
                     : {}),
                   marginBottom: 0,
                 }}
-                onClick={przejdzDoPodwykonawcow}
+                onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoPodwykonawcow())}
               >
-                Podwykonawcy
+                {etykietaMenuZIkona("podwykonawca", "Podwykonawcy")}
               </button>
               <HelpLinijka wlaczony={trybHelp}>Katalog firm zewnętrznych.</HelpLinijka>
               {widok === "podwykonawca" ||
@@ -18271,7 +19818,7 @@ export default function App() {
                     }}
                     onClick={() => przejdzDoPodwykonawcow("katalog")}
                   >
-                    Katalog firm
+                    🧾 Katalog firm
                   </button>
                   <button
                     type="button"
@@ -18287,7 +19834,7 @@ export default function App() {
                       przejdzDoMapyPodwykonawcow();
                     }}
                   >
-                    Mapa podwykonawców
+                    🗺️ Mapa podwykonawców
                   </button>
                   <button
                     type="button"
@@ -18300,7 +19847,7 @@ export default function App() {
                     }}
                     onClick={() => przejdzDoPodwykonawcow("zlecenia")}
                   >
-                    Aktualne zlecenia
+                    📌 Aktualne zlecenia
                   </button>
                   <button
                     type="button"
@@ -18313,7 +19860,7 @@ export default function App() {
                     }}
                     onClick={() => przejdzDoPodwykonawcow("nowy")}
                   >
-                    Nowy podwykonawca
+                    ➕ Nowy podwykonawca
                   </button>
                   <button
                     type="button"
@@ -18326,7 +19873,7 @@ export default function App() {
                     }}
                     onClick={() => przejdzDoFaktur("podwykonawcy")}
                   >
-                    Faktury podwykonawcy
+                    🧾 Faktury podwykonawcy
                   </button>
                 </div>
               ) : null}
@@ -18367,38 +19914,12 @@ export default function App() {
                   style={{ ...op.navBtn, ...(widok === b.w ? op.navBtnActive : {}), marginBottom: 0 }}
                   onClick={() => b.fn()}
                 >
-                  {b.label}
+                  {etykietaMenuZIkona(b.id, b.label)}
                 </button>
                 <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
               </div>
             ))}
           </div>
-          {widok === "kr" && wybranyRekordKr ? (
-            <div style={{ borderTop: "1px solid rgba(148,163,184,0.12)", paddingTop: "0.75rem" }}>
-              <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.35rem" }}>
-                Sekcje: {wybranyRekordKr.kr}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-                {KR_PROJEKT_MENU.map((m) => (
-                  <div key={m.id}>
-                    <button
-                      type="button"
-                      style={{
-                        ...op.navBtn,
-                        fontSize: "0.78rem",
-                        padding: "0.4rem 0.55rem",
-                        marginBottom: 0,
-                      }}
-                      onClick={() => przejdzDoSekcjiKr(wybranyRekordKr, m.id)}
-                    >
-                      {m.label}
-                    </button>
-                    <HelpLinijka wlaczony={trybHelp}>{m.help}</HelpLinijka>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </aside>
       </div>
     </div>

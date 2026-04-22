@@ -39,6 +39,12 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
   const [teams, setTeams] = useState([]);
   const [plannerDropDays, setPlannerDropDays] = useState("auto");
 
+  /** Listy rozwijane i wiersze planera: tylko aktywni (`is_active !== false`), jak w Zespół. */
+  const pracownicyOpcjeSelect = useMemo(
+    () => pracownicy.filter((p) => p.is_active !== false),
+    [pracownicy],
+  );
+
   const [demandForm, setDemandForm] = useState({
     tytul: "",
     opis: "",
@@ -565,8 +571,12 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
     if (plannerLane === "podwykonawcy") {
       return podwykonawcy.map((p) => ({ kind: "podwykonawca", id: String(p.id), label: p.nazwa_firmy || `PW ${p.id}` }));
     }
-    return pracownicy.map((p) => ({ kind: "pracownik", id: String(p.nr), label: p.imie_nazwisko || String(p.nr) }));
-  }, [plannerLane, teams, podwykonawcy, pracownicy]);
+    return pracownicyOpcjeSelect.map((p) => ({
+      kind: "pracownik",
+      id: String(p.nr),
+      label: p.imie_nazwisko || String(p.nr),
+    }));
+  }, [plannerLane, teams, podwykonawcy, pracownicyOpcjeSelect]);
 
   return (
     <>
@@ -860,7 +870,25 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
           {assignmentForm.typ_wykonawcy === "pracownik" ? (
             <select style={s.input} value={assignmentForm.pracownik_nr} onChange={(e) => setAssignmentForm((f) => ({ ...f, pracownik_nr: e.target.value }))} required>
               <option value="">Wybierz pracownika</option>
-              {pracownicy.map((p) => <option key={p.nr} value={String(p.nr)}>{p.imie_nazwisko || p.nr}</option>)}
+              {(() => {
+                const cur = String(assignmentForm.pracownik_nr ?? "").trim();
+                const nrs = new Set(pracownicyOpcjeSelect.map((p) => String(p.nr)));
+                const orphan = cur !== "" && !nrs.has(cur);
+                return (
+                  <>
+                    {orphan ? (
+                      <option key={`orphan-asg-${cur}`} value={cur}>
+                        {cur} (nie w liście)
+                      </option>
+                    ) : null}
+                    {pracownicyOpcjeSelect.map((p) => (
+                      <option key={p.nr} value={String(p.nr)}>
+                        {p.imie_nazwisko || p.nr}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
             </select>
           ) : (
             <select style={s.input} value={assignmentForm.podwykonawca_id} onChange={(e) => setAssignmentForm((f) => ({ ...f, podwykonawca_id: e.target.value }))} required>
@@ -902,7 +930,25 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
           <input style={s.input} type="date" value={dailyForm.data_dnia} onChange={(e) => setDailyForm((f) => ({ ...f, data_dnia: e.target.value }))} required />
           <select style={s.input} value={dailyForm.pracownik_nr} onChange={(e) => setDailyForm((f) => ({ ...f, pracownik_nr: e.target.value }))} required>
             <option value="">Pracownik</option>
-            {pracownicy.map((p) => <option key={p.nr} value={String(p.nr)}>{p.imie_nazwisko || p.nr}</option>)}
+            {(() => {
+              const cur = String(dailyForm.pracownik_nr ?? "").trim();
+              const nrs = new Set(pracownicyOpcjeSelect.map((p) => String(p.nr)));
+              const orphan = cur !== "" && !nrs.has(cur);
+              return (
+                <>
+                  {orphan ? (
+                    <option key={`orphan-dly-${cur}`} value={cur}>
+                      {cur} (nie w liście)
+                    </option>
+                  ) : null}
+                  {pracownicyOpcjeSelect.map((p) => (
+                    <option key={p.nr} value={String(p.nr)}>
+                      {p.imie_nazwisko || p.nr}
+                    </option>
+                  ))}
+                </>
+              );
+            })()}
           </select>
           <input style={s.input} value={dailyForm.opis} onChange={(e) => setDailyForm((f) => ({ ...f, opis: e.target.value }))} placeholder="Krótki opis wykonania" required />
           <div style={{ display: "grid", gap: "0.45rem", gridTemplateColumns: "1fr 1fr" }}>

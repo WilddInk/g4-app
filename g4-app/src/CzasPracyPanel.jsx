@@ -394,6 +394,28 @@ function dataIsoZDate(d) {
   return `${y}-${m}-${day}`;
 }
 
+function listaBrakowGodzinWPoprzednichDniachMiesiaca(rok, miesiac, wpisyPoDniu) {
+  const dzis = new Date();
+  const biezRok = dzis.getFullYear();
+  const biezMiesiac = dzis.getMonth();
+  if (rok > biezRok || (rok === biezRok && miesiac > biezMiesiac)) return [];
+
+  const ostatniDzienMiesiaca = new Date(rok, miesiac + 1, 0).getDate();
+  const limitDzien = rok === biezRok && miesiac === biezMiesiac ? dzis.getDate() - 1 : ostatniDzienMiesiaca;
+  if (limitDzien < 1) return [];
+
+  const braki = [];
+  for (let d = 1; d <= limitDzien; d++) {
+    const data = new Date(rok, miesiac, d);
+    if (!czyDzienRoboczyPl(data)) continue;
+    const iso = dataIsoZDate(data);
+    const lista = wpisyPoDniu.get(iso) ?? [];
+    const suma = lista.reduce((acc, w) => acc + godzinyWpisuZZapisu(w), 0);
+    if (suma <= 0) braki.push(iso);
+  }
+  return braki;
+}
+
 function parseDataIso(s) {
   const [y, m, d] = String(s).split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1);
@@ -520,16 +542,22 @@ export function CzasPracyPanel({
     setWybranyNr(domyslnyNr);
   }, [domyslnyNr]);
 
+  /** Opcje listy rozwijanej — zgodnie z Zespół: tylko aktywni (`is_active !== false`). */
+  const pracownicyAktywniLista = useMemo(
+    () => pracownicy.filter((p) => p.is_active !== false),
+    [pracownicy],
+  );
+
   /** Gdy lista pracowników jest zawężona (np. tylko aktywni), przełącz na widok efektywny lub pierwszą osobę z listy. */
   useEffect(() => {
-    if (!mozeWybieracPracownika || pracownicy.length === 0) return;
-    const allowed = new Set(pracownicy.map((p) => String(p.nr ?? "").trim()).filter(Boolean));
+    if (!mozeWybieracPracownika || pracownicyAktywniLista.length === 0) return;
+    const allowed = new Set(pracownicyAktywniLista.map((p) => String(p.nr ?? "").trim()).filter(Boolean));
     const cur = String(wybranyNr ?? "").trim();
     if (cur && allowed.has(cur)) return;
     const dom = String(pracownikWidokEfektywny?.nr ?? "").trim();
-    const pick = dom && allowed.has(dom) ? dom : String(pracownicy[0]?.nr ?? "").trim();
+    const pick = dom && allowed.has(dom) ? dom : String(pracownicyAktywniLista[0]?.nr ?? "").trim();
     if (pick && pick !== cur) setWybranyNr(pick);
-  }, [mozeWybieracPracownika, pracownicy, wybranyNr, pracownikWidokEfektywny]);
+  }, [mozeWybieracPracownika, pracownicyAktywniLista, wybranyNr, pracownikWidokEfektywny]);
 
   const [rok, setRok] = useState(() => new Date().getFullYear());
   const [miesiac, setMiesiac] = useState(() => new Date().getMonth());
@@ -559,6 +587,7 @@ export function CzasPracyPanel({
   const [szablonyZadan, setSzablonyZadan] = useState([]);
   /** Wiersze z tabeli zadania — do podpowiedzi (ogólne + dopasowane do KR w formularzu). */
   const [zadaniaDlaCzasu, setZadaniaDlaCzasu] = useState([]);
+  const [alarmBrakiBlink, setAlarmBrakiBlink] = useState(true);
 
   const pierwszyOstatniDzien = useMemo(() => {
     const pierwszy = new Date(rok, miesiac, 1);
@@ -687,6 +716,23 @@ export function CzasPracyPanel({
     }
     return out;
   }, [wpisyDlaWybranego, stawki, mozeZarzadzacStawkami]);
+  const brakiGodzinPoprzednichDni = useMemo(
+    () => listaBrakowGodzinWPoprzednichDniachMiesiaca(rok, miesiac, wpisyPoDniu),
+    [rok, miesiac, wpisyPoDniu],
+  );
+  const brakiGodzinSet = useMemo(() => new Set(brakiGodzinPoprzednichDni), [brakiGodzinPoprzednichDni]);
+  const blokadaDodawaniaPrzezBraki = brakiGodzinPoprzednichDni.length > 0;
+
+  useEffect(() => {
+    if (!blokadaDodawaniaPrzezBraki) {
+      setAlarmBrakiBlink(true);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setAlarmBrakiBlink((v) => !v);
+    }, 520);
+    return () => window.clearInterval(id);
+  }, [blokadaDodawaniaPrzezBraki]);
 
   const load = useCallback(async () => {
     const nr = String(wybranyNr ?? "").trim();
@@ -1045,6 +1091,11 @@ export function CzasPracyPanel({
   }
 
   function startDodaj(iso) {
+    if (blokadaDodawaniaPrzezBraki && !brakiGodzinSet.has(iso)) {
+      const pierwszyBrak = brakiGodzinPoprzednichDni[0];
+      alert(`Najpierw uzupełnij zaległe dni robocze w tym miesiącu. Pierwszy brak: ${pierwszyBrak}.`);
+      return;
+    }
     setForm({
       id: undefined,
       data: iso,
@@ -1266,6 +1317,7 @@ export function CzasPracyPanel({
     "Listopad",
     "Grudzień",
   ];
+  const czyModalDzienJestBrakiem = modal?.dzien ? brakiGodzinSet.has(modal.dzien) : false;
 
   return (
     <section style={{ maxWidth: "min(1200px, 100%)" }}>
@@ -1334,6 +1386,26 @@ export function CzasPracyPanel({
           tylko ta osoba lub <strong>administrator</strong>.
         </div>
       ) : null}
+      {blokadaDodawaniaPrzezBraki ? (
+        <div
+          role="alert"
+          style={{
+            marginBottom: "1rem",
+            padding: "0.65rem 0.85rem",
+            borderRadius: "10px",
+            border: alarmBrakiBlink ? "1px solid rgba(248,113,113,0.95)" : "1px solid rgba(248,113,113,0.35)",
+            background: alarmBrakiBlink ? "rgba(220,38,38,0.28)" : "rgba(127,29,29,0.16)",
+            color: "#fecaca",
+            fontSize: "0.86rem",
+            lineHeight: 1.45,
+            boxShadow: alarmBrakiBlink ? "0 0 0 2px rgba(248,113,113,0.18)" : "none",
+            transition: "all 120ms linear",
+          }}
+        >
+          <strong>! Brakujące godziny w poprzednich dniach roboczych.</strong> Najpierw uzupełnij zaległe dni (
+          {brakiGodzinPoprzednichDni.length}), a potem dodawaj kolejne wpisy.
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -1359,7 +1431,7 @@ export function CzasPracyPanel({
                 minWidth: "14rem",
               }}
             >
-              {pracownicy.map((p) => (
+              {pracownicyAktywniLista.map((p) => (
                 <option key={String(p.nr)} value={String(p.nr).trim()}>
                   {String(p.nr)} — {p.imie_nazwisko ?? ""}
                 </option>
@@ -1996,7 +2068,17 @@ export function CzasPracyPanel({
                   ))}
                 </ul>
                 {mozeEdytowacWybraneWpisy ? (
-                  <button type="button" style={{ ...btnPrimary, width: "100%", marginBottom: "0.5rem" }} onClick={() => startDodaj(modal.dzien)}>
+                  <button
+                    type="button"
+                    style={{ ...btnPrimary, width: "100%", marginBottom: "0.5rem" }}
+                    onClick={() => startDodaj(modal.dzien)}
+                    disabled={blokadaDodawaniaPrzezBraki && !czyModalDzienJestBrakiem}
+                    title={
+                      blokadaDodawaniaPrzezBraki && !czyModalDzienJestBrakiem
+                        ? "Najpierw uzupełnij zaległe dni robocze miesiąca"
+                        : undefined
+                    }
+                  >
                     Dodaj kolejny blok (np. inna KR)
                   </button>
                 ) : null}
