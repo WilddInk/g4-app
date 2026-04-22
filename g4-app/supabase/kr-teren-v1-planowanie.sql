@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS public.kr_teren_przydzial_zasob (
   przydzial_id bigint NOT NULL REFERENCES public.kr_teren_przydzial(id) ON DELETE CASCADE,
   typ_zasobu text NOT NULL CHECK (typ_zasobu IN ('samochod','sprzet')),
   samochod_id bigint REFERENCES public.samochod(id),
-  sprzet_id bigint REFERENCES public.sprzet(id),
+  sprzet_id bigint REFERENCES public.sprzet(id) ON DELETE CASCADE,
   data_od date NOT NULL,
   data_do date NOT NULL,
   status text NOT NULL DEFAULT 'zarezerwowany'

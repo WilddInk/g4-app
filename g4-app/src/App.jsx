@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { FakturaKosztowaEdycjaModal } from "./FakturaKosztowaEdycjaModal.jsx";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
@@ -666,6 +666,9 @@ function zadanieKluczKolumnyKanban(statusRaw) {
 /** Typ sprzętu w tabeli `sprzet` (lista + pole własne przy „z bazy”). */
 const SPRZET_TYP_W_BAZIE = ["komputer", "drukarka", "ksero", "inne"];
 
+/** Minimalna szerokość tabeli sprzętu — ta sama wartość co spacer górnego paska przewijania poziomego. */
+const SPRZET_TABELA_MIN_WIDTH = "112rem";
+
 /** Status zgłoszenia faktury kosztowej do opłacenia (księgowość). */
 const FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE = ["do_zaplaty", "oplacone", "anulowane"];
 
@@ -830,11 +833,13 @@ function samochodWierszDoFormu(row) {
 function sprzetPustyForm() {
   return {
     typ: "komputer",
+    zewnetrzny_id: "",
     nazwa: "",
     numer_inwentarzowy: "",
     data_przegladu: "",
     pracownik_nr: "",
     notatki: "",
+    poprzedni_uzytkownicy_opis: "",
   };
 }
 
@@ -842,12 +847,32 @@ function sprzetWierszDoFormu(row) {
   const typRaw = String(row.typ ?? "").trim();
   return {
     typ: typRaw || "komputer",
+    zewnetrzny_id: row.zewnetrzny_id != null ? String(row.zewnetrzny_id).trim() : "",
     nazwa: row.nazwa != null ? String(row.nazwa) : "",
     numer_inwentarzowy: row.numer_inwentarzowy != null ? String(row.numer_inwentarzowy) : "",
     data_przegladu: dataDoInputa(row.data_przegladu),
     pracownik_nr: row.pracownik_nr != null && row.pracownik_nr !== "" ? String(row.pracownik_nr) : "",
     notatki: row.notatki != null ? String(row.notatki) : "",
+    poprzedni_uzytkownicy_opis:
+      row.poprzedni_uzytkownicy_opis != null ? String(row.poprzedni_uzytkownicy_opis) : "",
   };
+}
+
+/** Etykieta „poprzedni użytkownicy” z kolumn JSON importu / tekstu źródłowego. */
+function sprzetPoprzedniUzytkownicyEtykieta(row) {
+  const arr = row?.poprzedni_uzytkownicy_teksty;
+  if (Array.isArray(arr) && arr.length > 0) {
+    return arr.map((x) => String(x ?? "").trim()).filter(Boolean).join(", ");
+  }
+  const z = row?.poprzedni_uzytkownicy_zrodlo != null ? String(row.poprzedni_uzytkownicy_zrodlo).trim() : "";
+  return z || "—";
+}
+
+/** Tekst w tabeli: ręczny opis ma pierwszeństwo przed importem. */
+function sprzetPoprzedniUzytkownicyWyswietl(row) {
+  const opis = row?.poprzedni_uzytkownicy_opis != null ? String(row.poprzedni_uzytkownicy_opis).trim() : "";
+  if (opis) return opis;
+  return sprzetPoprzedniUzytkownicyEtykieta(row);
 }
 
 function rezerwacjaPustyForm() {
@@ -1006,6 +1031,35 @@ function czyPokazWszystkieFakturyKosztoweSesji(czyAdminAktywny, podgladJakoInny)
 
 function rolaAplikacjiPracownika(p) {
   return String(p?.app_role ?? "uzytkownik").trim();
+}
+
+/** Pierwszy kod KR (wg sortu alfanumerycznego), przy którym osoba jest `osoba_prowadzaca` — sortowanie „Podgląd jako użytkownik”. */
+function pierwszyKrJakoProwadzacy(nr, krList) {
+  const n = String(nr ?? "").trim();
+  if (!n || !krList?.length) return "";
+  const kody = krList
+    .filter((row) => String(row.osoba_prowadzaca ?? "").trim() === n)
+    .map((row) => String(row.kr ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "pl", { numeric: true, sensitivity: "base" }));
+  return kody[0] ?? "";
+}
+
+/** Lista pracowników: najpierw wg pierwszego KR jako osoba_prowadzaca (jak lista KR), potem nazwisko; bez KR na końcu. */
+function sortujPracownikowPoPierwszymKrProwadzacy(lista, krList) {
+  return [...lista].sort((a, b) => {
+    const ka = pierwszyKrJakoProwadzacy(a.nr, krList);
+    const kb = pierwszyKrJakoProwadzacy(b.nr, krList);
+    const za = ka === "";
+    const zb = kb === "";
+    if (za !== zb) return za ? 1 : -1;
+    const c = ka.localeCompare(kb, "pl", { numeric: true, sensitivity: "base" });
+    if (c !== 0) return c;
+    return String(a.imie_nazwisko ?? "").localeCompare(String(b.imie_nazwisko ?? ""), "pl", {
+      sensitivity: "base",
+      numeric: true,
+    });
+  });
 }
 
 function platnikRolaZListyPracownikow(platnikId, listaPracownikow) {
@@ -1209,6 +1263,40 @@ function obliczPracownikWidokuDlaSesji(pracownicy, session, adminPodgladPracowni
     }
   }
   return { pracownikSesja, pracownikWidokEfektywny, czyAdminAktywny };
+}
+
+/** Pełna ewidencja sprzętu (admin / kierownik) — jedna funkcja dla handlerów zdefiniowanych przed `useMemo` w App. */
+function czyPelnaEwidencjaSprzetuZKontekstu(pracownicy, session, adminPodgladPracownikNr) {
+  const { pracownikSesja, czyAdminAktywny } = obliczPracownikWidokuDlaSesji(
+    pracownicy,
+    session,
+    adminPodgladPracownikNr,
+  );
+  const kier = String(pracownikSesja?.app_role ?? "").trim().toLowerCase() === "kierownik";
+  return czyAdminAktywny || kier;
+}
+
+function sprzetPorownajId(a, b) {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
+/** Komórka „Notatki” — szersza kolumna przy edycji inline w tabeli sprzętu. */
+function sprzetTdNotatkiStyle() {
+  return { ...s.td, minWidth: "30rem", verticalAlign: "top" };
+}
+
+function sprzetNotatkiTextareaEdycja() {
+  return {
+    ...s.input,
+    fontSize: "0.82rem",
+    lineHeight: 1.45,
+    minHeight: "6.5rem",
+    padding: "0.45rem 0.55rem",
+    width: "100%",
+    boxSizing: "border-box",
+    resize: "vertical",
+  };
 }
 
 /** Kto widzi/edytuje pole „wymagane naprawy” przy flocie (zgodnie z pracownik.odpowiedzialny_flota + role). */
@@ -1637,12 +1725,17 @@ export default function App() {
   const [samochodForm, setSamochodForm] = useState(() => samochodPustyForm());
   const [sprzetEdycjaId, setSprzetEdycjaId] = useState(null);
   const [sprzetForm, setSprzetForm] = useState(() => sprzetPustyForm());
+  const [sprzetWierszNowy, setSprzetWierszNowy] = useState(false);
+  const [sprzetSort, setSprzetSort] = useState(() => ({ key: "nazwa", dir: "asc" }));
   const [rezerwacjaForm, setRezerwacjaForm] = useState(() => rezerwacjaPustyForm());
   const [terenZakladka, setTerenZakladka] = useState("planowanie");
   const [pracSort, setPracSort] = useState({ key: "imie_nazwisko", dir: "asc" });
   const [pracPokazTylkoAktywnych, setPracPokazTylkoAktywnych] = useState(false);
   const pracTabelaTopScrollRef = useRef(null);
   const pracTabelaBottomScrollRef = useRef(null);
+  const sprzetTabelaRef = useRef(null);
+  const sprzetTabelaScrollGoraRef = useRef(null);
+  const sprzetTabelaScrollDolRef = useRef(null);
   const [kalFlotaRok, setKalFlotaRok] = useState(() => new Date().getFullYear());
   const [kalFlotaMiesiac, setKalFlotaMiesiac] = useState(() => new Date().getMonth() + 1);
   const [pwEdycjaId, setPwEdycjaId] = useState(null);
@@ -2939,6 +3032,7 @@ export default function App() {
     setKrProjektSekcja("przeglad");
     setWidok("przydzial_sprzetu");
     void fetchPracownicy();
+    void fetchSprzet();
   }
 
   function przejdzDoZadanDlaNr(nr) {
@@ -3119,6 +3213,7 @@ export default function App() {
     setPwForm(podwykonawcaPustyForm());
     setSprzetEdycjaId(null);
     setSprzetForm(sprzetPustyForm());
+    setSprzetWierszNowy(false);
     setWidok("sprzet");
     void fetchPracownicy();
     void fetchSprzet();
@@ -3728,6 +3823,7 @@ export default function App() {
   }
 
   function wczytajSprzetDoEdycji(row) {
+    setSprzetWierszNowy(false);
     setSprzetEdycjaId(row.id);
     setSprzetForm(sprzetWierszDoFormu(row));
   }
@@ -3735,16 +3831,23 @@ export default function App() {
   function anulujSprzetEdycje() {
     setSprzetEdycjaId(null);
     setSprzetForm(sprzetPustyForm());
+    setSprzetWierszNowy(false);
   }
 
   async function zapiszSprzetEwidencja(e) {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
+    if (!czyPelnaEwidencjaSprzetuZKontekstu(pracownicy, session, adminPodgladPracownikNr)) {
+      alert("Pełną ewidencję sprzętu zapisują administrator lub kierownik.");
+      return;
+    }
     const nazwa = String(sprzetForm.nazwa ?? "").trim();
     if (!nazwa) {
       alert("Podaj nazwę sprzętu.");
       return;
     }
     const typ = String(sprzetForm.typ ?? "").trim() || "inne";
+    const zExt = String(sprzetForm.zewnetrzny_id ?? "").trim();
+    const opisPoprz = String(sprzetForm.poprzedni_uzytkownicy_opis ?? "").trim();
     const payload = {
       typ,
       nazwa,
@@ -3752,6 +3855,8 @@ export default function App() {
       data_przegladu: String(sprzetForm.data_przegladu ?? "").trim() || null,
       pracownik_nr: String(sprzetForm.pracownik_nr ?? "").trim() || null,
       notatki: String(sprzetForm.notatki ?? "").trim() || null,
+      zewnetrzny_id: zExt || null,
+      poprzedni_uzytkownicy_opis: opisPoprz || null,
     };
 
     if (sprzetEdycjaId != null) {
@@ -3777,10 +3882,15 @@ export default function App() {
     }
     setSprzetEdycjaId(null);
     setSprzetForm(sprzetPustyForm());
+    setSprzetWierszNowy(false);
     await fetchSprzet();
   }
 
   async function usunSprzet(id) {
+    if (!czyPelnaEwidencjaSprzetuZKontekstu(pracownicy, session, adminPodgladPracownikNr)) {
+      alert("Usuwanie wpisów — tylko administrator lub kierownik.");
+      return;
+    }
     if (!window.confirm("Usunąć ten wpis sprzętu z ewidencji?")) return;
     const { error } = await supabase.from("sprzet").delete().eq("id", id);
     if (error) {
@@ -3788,7 +3898,7 @@ export default function App() {
       alert("Usuwanie: " + error.message);
       return;
     }
-    if (sprzetEdycjaId === id) {
+    if (sprzetPorownajId(sprzetEdycjaId, id)) {
       anulujSprzetEdycje();
     }
     await fetchSprzet();
@@ -3972,10 +4082,16 @@ export default function App() {
   }, [widok, kalFlotaRok, kalFlotaMiesiac]);
 
   useEffect(() => {
-    if (widok !== "sprzet") return;
+    if (widok !== "sprzet" && widok !== "przydzial_sprzetu") return;
     void fetchPracownicy();
     void fetchSprzet();
   }, [widok]);
+
+  useEffect(() => {
+    if (widok !== "sprzet") return;
+    if (sprzetEdycjaId == null && !sprzetWierszNowy) return;
+    sprzetTabelaRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [widok, sprzetEdycjaId, sprzetWierszNowy]);
 
   useEffect(() => {
     if (widok !== "teren") return;
@@ -4200,6 +4316,22 @@ export default function App() {
     [pracownicy]
   );
 
+  /** Czas pracy — lista wyboru: tylko aktywni (`is_active` jak w Zespół), kolejność wg KR (osoba_prowadzaca), potem nazwisko. */
+  const pracownicyPosortowaniWgKr = useMemo(
+    () =>
+      sortujPracownikowPoPierwszymKrProwadzacy(
+        pracownicy.filter((p) => p.is_active !== false),
+        krList,
+      ),
+    [pracownicy, krList],
+  );
+
+  /** Lista w „Podgląd jako użytkownik” — wyłącznie aktywni; ta sama kolejność co pracownicy wg KR. */
+  const pracownicyAktywniPodgladAdmin = useMemo(() => {
+    const aktywni = pracownicy.filter((p) => p.is_active !== false);
+    return sortujPracownikowPoPierwszymKrProwadzacy(aktywni, krList);
+  }, [pracownicy, krList]);
+
   /** Moduł Teren — tylko osoby z tickiem „odpowiedzialny za teren” w Zespół. */
   const pracownicyOdpowiedzialniTeren = useMemo(
     () => pracownicyPosortowani.filter((p) => p.odpowiedzialny_teren === true),
@@ -4247,6 +4379,69 @@ export default function App() {
   }, [pracownicy, pracSort, czyAdminDlaListyPracownikow, pracPokazTylkoAktywnych]);
 
   const mapaProwadzacychId = useMemo(() => mapaNrPracownika(pracownicy), [pracownicy]);
+
+  const sprzetListaWidoku = useMemo(() => {
+    const list = [...sprzetList];
+    const { key, dir } = sprzetSort;
+    const mul = dir === "asc" ? 1 : -1;
+    const str = (v) => String(v ?? "").trim();
+    const lc = (a, b) => str(a).localeCompare(str(b), "pl", { sensitivity: "base", numeric: true });
+
+    list.sort((a, b) => {
+      let c = 0;
+      switch (key) {
+        case "typ":
+          c = lc(a.typ, b.typ);
+          break;
+        case "nazwa":
+          c = lc(a.nazwa, b.nazwa);
+          break;
+        case "zewnetrzny_id":
+          c = lc(a.zewnetrzny_id, b.zewnetrzny_id);
+          break;
+        case "numer_inwentarzowy":
+          c = lc(a.numer_inwentarzowy, b.numer_inwentarzowy);
+          break;
+        case "poprz":
+          c = lc(sprzetPoprzedniUzytkownicyWyswietl(a), sprzetPoprzedniUzytkownicyWyswietl(b));
+          break;
+        case "data_przegladu": {
+          const da = dataDoSortuYYYYMMDD(a.data_przegladu) ?? "";
+          const db = dataDoSortuYYYYMMDD(b.data_przegladu) ?? "";
+          c = da.localeCompare(db);
+          break;
+        }
+        case "przypisany": {
+          const pa =
+            podpisOsobyProwadzacej(a.pracownik_nr, mapaProwadzacychId) ?? str(a.pracownik_nr);
+          const pb =
+            podpisOsobyProwadzacej(b.pracownik_nr, mapaProwadzacychId) ?? str(b.pracownik_nr);
+          c = lc(pa, pb);
+          break;
+        }
+        case "notatki":
+          c = lc(a.notatki, b.notatki);
+          break;
+        default:
+          c = lc(a.nazwa, b.nazwa);
+      }
+      c *= mul;
+      if (c !== 0) return c;
+      return str(a.id).localeCompare(str(b.id), "pl", { sensitivity: "base", numeric: true });
+    });
+    return list;
+  }, [sprzetList, sprzetSort, mapaProwadzacychId]);
+
+  const toggleSprzetSort = (col) => {
+    setSprzetSort((prev) =>
+      prev.key === col ? { key: col, dir: prev.dir === "asc" ? "desc" : "asc" } : { key: col, dir: "asc" },
+    );
+  };
+  const strzalkaSprzetSort = (col) => {
+    if (sprzetSort.key !== col) return "↕";
+    return sprzetSort.dir === "asc" ? "↑" : "↓";
+  };
+
   const mapaSprzedawcaPoNip = useMemo(() => {
     const m = new Map();
     for (const s of fakturySprzedawcySlownikList) {
@@ -4390,7 +4585,14 @@ export default function App() {
       [pracownicy, session, adminPodgladPracownikNr],
     );
   const czyKierownikAktywny = String(pracownikPowiazanyZSesja?.app_role ?? "").trim().toLowerCase() === "kierownik";
+  const czyPelnaEwidencjaSprzetu = czyAdminAktywny || czyKierownikAktywny;
   const czyMozeEdytowacTickTeren = czyAdminAktywny || czyKierownikAktywny;
+
+  const sprzetPrzydzialMojList = useMemo(() => {
+    const nr = pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
+    if (!nr) return [];
+    return sprzetList.filter((r) => String(r.pracownik_nr ?? "").trim() === nr);
+  }, [sprzetList, pracownikWidokEfektywny?.nr]);
 
   const fakturyKosztoweSzerokoscTabeliPx = useMemo(() => {
     let sum = czyAdminAktywny ? Number(fakturyKolumnyPx.akcje ?? 108) : 0;
@@ -4409,6 +4611,17 @@ export default function App() {
   function syncPracTabelaScroll(source) {
     const top = pracTabelaTopScrollRef.current;
     const bottom = pracTabelaBottomScrollRef.current;
+    if (!top || !bottom) return;
+    if (source === "top") {
+      if (bottom.scrollLeft !== top.scrollLeft) bottom.scrollLeft = top.scrollLeft;
+    } else if (source === "bottom") {
+      if (top.scrollLeft !== bottom.scrollLeft) top.scrollLeft = bottom.scrollLeft;
+    }
+  }
+
+  function syncSprzetTabelaScroll(source) {
+    const top = sprzetTabelaScrollGoraRef.current;
+    const bottom = sprzetTabelaScrollDolRef.current;
     if (!top || !bottom) return;
     if (source === "top") {
       if (bottom.scrollLeft !== top.scrollLeft) bottom.scrollLeft = top.scrollLeft;
@@ -4488,6 +4701,20 @@ export default function App() {
       /* ignore */
     }
   }, [czyAdminAktywny, adminPodgladPracownikNr]);
+
+  useEffect(() => {
+    if (!czyAdminAktywny) return;
+    const want = String(adminPodgladPracownikNr ?? "").trim();
+    if (!want) return;
+    const naLiscie = pracownicyAktywniPodgladAdmin.some((p) => String(p.nr ?? "").trim() === want);
+    if (naLiscie) return;
+    setAdminPodgladPracownikNr("");
+    try {
+      localStorage.removeItem(STORAGE_ADMIN_PODGLAD_NR);
+    } catch {
+      /* ignore */
+    }
+  }, [czyAdminAktywny, adminPodgladPracownikNr, pracownicyAktywniPodgladAdmin]);
 
   const dashboardMojeZadania = useMemo(() => {
     const nr = pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
@@ -8544,11 +8771,15 @@ export default function App() {
                       }}
                     >
                       <option value="">— Ja (normalny widok) —</option>
-                      {pracownicyPosortowani.map((p) => (
-                        <option key={String(p.nr)} value={String(p.nr ?? "").trim()}>
-                          {String(p.imie_nazwisko ?? "").trim() || "—"} (nr {String(p.nr ?? "").trim()})
-                        </option>
-                      ))}
+                      {pracownicyAktywniPodgladAdmin.map((p) => {
+                        const nr = String(p.nr ?? "").trim();
+                        const naz = String(p.imie_nazwisko ?? "").trim();
+                        return (
+                          <option key={nr || String(p.nr)} value={nr}>
+                            {nr ? `${nr} - ${naz || "—"}` : naz || "—"}
+                          </option>
+                        );
+                      })}
                     </select>
                   </label>
                 ) : null}
@@ -9415,7 +9646,7 @@ export default function App() {
         <CzasPracyPanel
           supabase={supabase}
           krList={krList}
-          pracownicy={pracownicyPosortowani}
+          pracownicy={pracownicyPosortowaniWgKr}
           pracownikSesja={pracownikPowiazanyZSesja}
           pracownikWidokEfektywny={pracownikWidokEfektywny}
           wymagaKonta={requireAuth}
@@ -10047,18 +10278,79 @@ export default function App() {
 
       {widok === "przydzial_sprzetu" ? (
         <>
-          <h2 style={{ ...s.h2, marginTop: 0 }}>Przydział sprzętu</h2>
-          <p style={{ ...s.muted, maxWidth: "44rem" }}>
-            Ta sekcja jest w przygotowaniu. Docelowo będzie tu widok sprzętu firmowego przypisanego do zalogowanej osoby.
-          </p>
+          <div style={op.heroCard}>
+            <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Przydział sprzętu</h2>
+            <p style={{ ...op.muted, marginBottom: 0, maxWidth: "44rem", lineHeight: 1.5 }}>
+              Sprzęt IT przypisany do <strong>Twojego konta</strong> (<code style={s.code}>pracownik.nr</code>). Zmiana
+              przypisania — w menu <strong>Zasoby → Sprzęt</strong> (admin / kierownik).
+            </p>
+            {podgladJakoInny ? (
+              <p style={{ ...op.muted, fontSize: "0.86rem", marginTop: "0.65rem", color: "#fcd34d", maxWidth: "44rem" }}>
+                Podgląd administratora — lista dla{" "}
+                <strong>{pracownikWidokEfektywny?.imie_nazwisko?.trim() || "—"}</strong> (nr{" "}
+                {pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "—"}).
+              </p>
+            ) : null}
+          </div>
           {!requireAuth ? (
             <div style={s.hintBox}>
               Włącz logowanie (<code style={s.code}>VITE_REQUIRE_AUTH=true</code>), aby korzystać z przydziału sprzętu.
             </div>
           ) : !session?.user ? (
             <p style={s.muted}>Zaloguj się.</p>
+          ) : !pracownikPowiazanyZSesja ? (
+            <div style={s.hintBox}>
+              Brak powiązania konta z rekordem <code style={s.code}>pracownik</code> — lista sprzętu nie zostanie
+              dopasowana.
+            </div>
+          ) : sprzetFetchError ? (
+            <div style={s.errBox} role="alert">
+              Nie udało się wczytać sprzętu: {sprzetFetchError}
+            </div>
+          ) : sprzetPrzydzialMojList.length === 0 ? (
+            <p style={s.muted}>Brak sprzętu przypisanego do Twojego numeru — jeśli powinien być wpis, poproś kierownika.</p>
           ) : (
-            <div style={s.hintBox}>Wkrótce: lista sprzętu przypisanego do Twojego konta.</div>
+            <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ ...s.table, fontSize: "0.84rem" }}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Typ</th>
+                    <th style={s.th}>Nazwa</th>
+                    <th style={s.th}>Kod</th>
+                    <th style={s.th}>Inwentarz</th>
+                    <th style={s.th}>Poprzedni użytkownicy</th>
+                    <th style={s.th}>Przegląd</th>
+                    <th style={s.th}>Specyfikacja / uwagi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sprzetPrzydzialMojList.map((row) => {
+                    const nt = kmTekstDoKomorki(row.notatki);
+                    return (
+                      <tr key={row.id}>
+                        <td style={s.td}>
+                          <span style={op.badge("rgba(99,102,241,0.22)", "#c7d2fe")}>
+                            {row.typ?.trim() ? row.typ : "—"}
+                          </span>
+                        </td>
+                        <td style={s.td}>
+                          <strong style={{ color: "#fafafa" }}>{row.nazwa?.trim() || "—"}</strong>
+                        </td>
+                        <td style={{ ...s.td, fontSize: "0.78rem" }}>{row.zewnetrzny_id?.trim() || "—"}</td>
+                        <td style={s.td}>{row.numer_inwentarzowy?.trim() ? row.numer_inwentarzowy : "—"}</td>
+                        <td style={{ ...s.td, fontSize: "0.78rem", maxWidth: "14rem" }}>
+                          {sprzetPoprzedniUzytkownicyWyswietl(row)}
+                        </td>
+                        <td style={s.td}>{row.data_przegladu ? dataDoInputa(row.data_przegladu) : "—"}</td>
+                        <td style={{ ...s.td, fontSize: "0.78rem" }} title={nt.title}>
+                          {nt.text}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       ) : null}
@@ -13098,192 +13390,605 @@ export default function App() {
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Sprzęt</h2>
             {trybHelp ? (
               <p style={{ ...op.muted, marginBottom: 0, maxWidth: "44rem", lineHeight: 1.5 }}>
-                Komputery, drukarki i urządzenia wielofunkcyjne — z datą przeglądu/serwisu i opcjonalnym przypisaniem do
-                pracownika.
+                Ewidencja komputerów, drukarek i urządzeń MF — numer z importu (kod zewnętrzny), inwentaryzacja,
+                przegląd/serwis, przypisanie do pracownika oraz poprzedni użytkownicy (import lub własny tekst). Kolumny
+                sortujesz klikając nagłówek; edycja i nowy wpis odbywają się w tabeli.
+                <strong style={{ color: "#e5e5e5", fontWeight: 600 }}>
+                  {" "}
+                  Administrator i kierownik widzą całą bazę i mogą dodawać, edytować oraz usuwać wpisy.
+                </strong>{" "}
+                Pozostałe osoby widzą wyłącznie pozycje przypisane do swojego konta (to samo co w „Przydziale sprzętu” w
+                Osobiste) — lista jest filtrowana po stronie serwera (RLS).
               </p>
             ) : null}
           </div>
 
-          {sprzetList.length === 0 && !sprzetFetchError ? (
-            <p style={s.muted}>Brak wpisów — dodaj pierwszy sprzęt formularzem poniżej.</p>
-          ) : sprzetList.length > 0 ? (
-            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
-              <table style={{ ...s.table, fontSize: "0.84rem" }}>
+          {!czyPelnaEwidencjaSprzetu ? (
+            <div
+              style={{
+                marginBottom: "1rem",
+                padding: "0.75rem 1rem",
+                borderRadius: "12px",
+                background: "rgba(251,191,36,0.12)",
+                border: "1px solid rgba(251,191,36,0.35)",
+                color: "#fcd34d",
+                fontSize: "0.85rem",
+                lineHeight: 1.45,
+                maxWidth: "44rem",
+              }}
+            >
+              Widzisz tylko sprzęt przypisany do Twojego numeru pracownika. Pełna ewidencja i zmiany przydziałów —
+              u administratora lub kierownika. Szczegóły przypisania znajdziesz też w{" "}
+              <strong style={{ color: "#fef3c7" }}>Osobiste → Przydział sprzętu</strong>.
+            </div>
+          ) : null}
+
+          {czyPelnaEwidencjaSprzetu ? (
+            <div
+              style={{
+                marginBottom: "0.75rem",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "0.5rem",
+                alignItems: "center",
+              }}
+            >
+              <button
+                type="button"
+                style={s.btn}
+                disabled={sprzetWierszNowy || sprzetEdycjaId != null}
+                onClick={() => {
+                  setSprzetWierszNowy(true);
+                  setSprzetEdycjaId(null);
+                  setSprzetForm(sprzetPustyForm());
+                }}
+              >
+                Dodaj wpis
+              </button>
+              {sprzetEdycjaId != null || sprzetWierszNowy ? (
+                <span style={{ ...s.muted, fontSize: "0.82rem", maxWidth: "min(100%, 28rem)", lineHeight: 1.45 }}>
+                  Zapisz lub anuluj bieżący wiersz przed kolejną edycją lub dodaniem następnego.
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {pracFetchError && czyPelnaEwidencjaSprzetu ? (
+            <p style={{ ...s.muted, marginBottom: "0.65rem", fontSize: "0.82rem", color: "#fca5a5" }}>
+              Lista pracowników (przypisanie): {pracFetchError}
+            </p>
+          ) : null}
+
+          {sprzetListaWidoku.length === 0 && !sprzetWierszNowy && !sprzetFetchError ? (
+            <p style={s.muted}>
+              {czyPelnaEwidencjaSprzetu
+                ? "Brak wpisów — użyj „Dodaj wpis”, aby uzupełnić pierwszy wiersz w tabeli."
+                : "Brak przypisanego sprzętu do Twojego konta."}
+            </p>
+          ) : null}
+
+          {(sprzetListaWidoku.length > 0 || sprzetWierszNowy) ? (
+            <div
+              ref={sprzetTabelaRef}
+              style={{
+                width: "100%",
+                maxWidth: "100%",
+                marginBottom: "1.25rem",
+                boxSizing: "border-box",
+              }}
+            >
+              <div
+                ref={sprzetTabelaScrollGoraRef}
+                onScroll={() => syncSprzetTabelaScroll("top")}
+                style={{
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                  maxHeight: "18px",
+                  minHeight: "12px",
+                  border: `1px solid ${theme.border}`,
+                  borderBottom: "none",
+                  borderRadius: "12px 12px 0 0",
+                  background: theme.surface,
+                  boxSizing: "border-box",
+                  width: "100%",
+                  maxWidth: "100%",
+                  WebkitOverflowScrolling: "touch",
+                }}
+                title="Przewijanie poziome (nad tabelą)"
+                aria-label="Górny pasek przewijania tabeli sprzętu"
+              >
+                <div
+                  aria-hidden
+                  style={{
+                    width: SPRZET_TABELA_MIN_WIDTH,
+                    minWidth: SPRZET_TABELA_MIN_WIDTH,
+                    height: "1px",
+                    pointerEvents: "none",
+                  }}
+                />
+              </div>
+              <div
+                ref={sprzetTabelaScrollDolRef}
+                onScroll={() => syncSprzetTabelaScroll("bottom")}
+                style={{
+                  ...s.tableWrap,
+                  marginBottom: 0,
+                  borderTop: "none",
+                  borderRadius: "0 0 12px 12px",
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                }}
+              >
+              <table style={{ ...s.table, fontSize: "0.84rem", minWidth: SPRZET_TABELA_MIN_WIDTH, tableLayout: "auto" }}>
+                <colgroup>
+                  <col style={{ minWidth: "5.5rem" }} />
+                  <col style={{ minWidth: "14rem" }} />
+                  <col style={{ minWidth: "7.5rem" }} />
+                  <col style={{ minWidth: "7.5rem" }} />
+                  <col style={{ minWidth: "9rem" }} />
+                  <col style={{ minWidth: "10.5rem" }} />
+                  <col style={{ minWidth: "12.5rem" }} />
+                  <col style={{ minWidth: "32rem" }} />
+                  {czyPelnaEwidencjaSprzetu ? <col style={{ minWidth: "9.5rem" }} /> : null}
+                </colgroup>
                 <thead>
                   <tr>
-                    <th style={s.th}>Typ</th>
-                    <th style={s.th}>Nazwa</th>
-                    <th style={s.th}>Inwentarz</th>
-                    <th style={s.th}>Przegląd / serwis</th>
-                    <th style={s.th}>Przypisany</th>
-                    <th style={s.th}>Notatki</th>
-                    <th style={s.th} />
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none" }}
+                      onClick={() => toggleSprzetSort("typ")}
+                      title="Sortuj"
+                    >
+                      Typ <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("typ")}</span>
+                    </th>
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none" }}
+                      onClick={() => toggleSprzetSort("nazwa")}
+                      title="Sortuj"
+                    >
+                      Nazwa <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("nazwa")}</span>
+                    </th>
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none" }}
+                      onClick={() => toggleSprzetSort("zewnetrzny_id")}
+                      title="Sortuj"
+                    >
+                      Kod zewn. <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("zewnetrzny_id")}</span>
+                    </th>
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none" }}
+                      onClick={() => toggleSprzetSort("numer_inwentarzowy")}
+                      title="Sortuj"
+                    >
+                      Inwentarz <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("numer_inwentarzowy")}</span>
+                    </th>
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none" }}
+                      onClick={() => toggleSprzetSort("poprz")}
+                      title="Sortuj"
+                    >
+                      Poprz. użytk. <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("poprz")}</span>
+                    </th>
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none" }}
+                      onClick={() => toggleSprzetSort("data_przegladu")}
+                      title="Sortuj"
+                    >
+                      Przegląd / serwis <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("data_przegladu")}</span>
+                    </th>
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none" }}
+                      onClick={() => toggleSprzetSort("przypisany")}
+                      title="Sortuj"
+                    >
+                      Przypisany <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("przypisany")}</span>
+                    </th>
+                    <th
+                      style={{ ...s.th, cursor: "pointer", userSelect: "none", minWidth: "30rem" }}
+                      onClick={() => toggleSprzetSort("notatki")}
+                      title="Sortuj"
+                    >
+                      Notatki <span style={{ opacity: 0.75 }}>{strzalkaSprzetSort("notatki")}</span>
+                    </th>
+                    {czyPelnaEwidencjaSprzetu ? <th style={s.th}>Akcje</th> : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {sprzetList.map((row) => {
+                  {sprzetWierszNowy && czyPelnaEwidencjaSprzetu ? (
+                    <tr style={{ background: "rgba(99,102,241,0.1)" }}>
+                      <td style={s.td}>
+                        <select
+                          style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                          value={sprzetForm.typ}
+                          onChange={(ev) => setSprzetForm((f) => ({ ...f, typ: ev.target.value }))}
+                        >
+                          {(() => {
+                            const cur = String(sprzetForm.typ ?? "").trim();
+                            const znane = new Set(SPRZET_TYP_W_BAZIE);
+                            const orphan = cur !== "" && !znane.has(cur);
+                            return (
+                              <>
+                                {orphan ? (
+                                  <option value={cur}>{cur} (z bazy)</option>
+                                ) : null}
+                                {SPRZET_TYP_W_BAZIE.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
+                              </>
+                            );
+                          })()}
+                        </select>
+                      </td>
+                      <td style={s.td}>
+                        <input
+                          style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                          type="text"
+                          value={sprzetForm.nazwa}
+                          onChange={(ev) => setSprzetForm((f) => ({ ...f, nazwa: ev.target.value }))}
+                          placeholder="Wymagane"
+                        />
+                      </td>
+                      <td style={s.td}>
+                        <input
+                          style={{
+                            ...s.input,
+                            fontFamily: "ui-monospace, monospace",
+                            fontSize: "0.76rem",
+                            padding: "0.25rem 0.35rem",
+                            width: "100%",
+                            boxSizing: "border-box",
+                          }}
+                          type="text"
+                          value={sprzetForm.zewnetrzny_id}
+                          onChange={(ev) => setSprzetForm((f) => ({ ...f, zewnetrzny_id: ev.target.value }))}
+                        />
+                      </td>
+                      <td style={s.td}>
+                        <input
+                          style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                          type="text"
+                          value={sprzetForm.numer_inwentarzowy}
+                          onChange={(ev) => setSprzetForm((f) => ({ ...f, numer_inwentarzowy: ev.target.value }))}
+                        />
+                      </td>
+                      <td style={{ ...s.td, verticalAlign: "top", fontSize: "0.78rem" }}>
+                        <textarea
+                          style={{
+                            ...s.input,
+                            fontSize: "0.78rem",
+                            padding: "0.25rem 0.35rem",
+                            width: "100%",
+                            boxSizing: "border-box",
+                            minHeight: "2.5rem",
+                            resize: "vertical",
+                          }}
+                          value={sprzetForm.poprzedni_uzytkownicy_opis}
+                          onChange={(ev) =>
+                            setSprzetForm((f) => ({ ...f, poprzedni_uzytkownicy_opis: ev.target.value }))
+                          }
+                          placeholder="Opcjonalnie — dowolny tekst"
+                          rows={2}
+                        />
+                      </td>
+                      <td style={s.td}>
+                        <input
+                          style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                          type="date"
+                          value={sprzetForm.data_przegladu}
+                          onChange={(ev) => setSprzetForm((f) => ({ ...f, data_przegladu: ev.target.value }))}
+                        />
+                      </td>
+                      <td style={s.td}>
+                        <select
+                          style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                          value={String(sprzetForm.pracownik_nr ?? "")}
+                          onChange={(ev) => setSprzetForm((f) => ({ ...f, pracownik_nr: ev.target.value }))}
+                        >
+                          <option value="">— biuro / magazyn —</option>
+                          {(() => {
+                            const cur = String(sprzetForm.pracownik_nr ?? "").trim();
+                            const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                            const orphan = cur !== "" && !nrs.has(cur);
+                            return (
+                              <>
+                                {orphan ? (
+                                  <option value={cur}>{cur} (nie w liście)</option>
+                                ) : null}
+                                {pracownicyPosortowani.map((p) => (
+                                  <option key={String(p.nr)} value={String(p.nr)}>
+                                    {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                                  </option>
+                                ))}
+                              </>
+                            );
+                          })()}
+                        </select>
+                      </td>
+                      <td style={sprzetTdNotatkiStyle()}>
+                        <textarea
+                          style={sprzetNotatkiTextareaEdycja()}
+                          value={sprzetForm.notatki}
+                          onChange={(ev) => setSprzetForm((f) => ({ ...f, notatki: ev.target.value }))}
+                          rows={5}
+                        />
+                      </td>
+                      <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
+                        <button type="button" style={{ ...s.btn, padding: "0.3rem 0.55rem", fontSize: "0.75rem" }} onClick={() => void zapiszSprzetEwidencja()}>
+                          Zapisz
+                        </button>{" "}
+                        <button type="button" style={{ ...s.btnGhost, padding: "0.3rem 0.55rem", fontSize: "0.75rem" }} onClick={anulujSprzetEdycje}>
+                          Anuluj
+                        </button>
+                      </td>
+                    </tr>
+                  ) : null}
+                  {sprzetListaWidoku.map((row) => {
                     const nt = kmTekstDoKomorki(row.notatki);
+                    const pop = sprzetPoprzedniUzytkownicyWyswietl(row);
+                    const popImport = sprzetPoprzedniUzytkownicyEtykieta(row);
+                    const kodZewn = row.zewnetrzny_id != null ? String(row.zewnetrzny_id).trim() : "";
+                    const edytuje = Boolean(czyPelnaEwidencjaSprzetu && sprzetPorownajId(row.id, sprzetEdycjaId));
+
                     return (
-                      <tr key={row.id}>
-                        <td style={s.td}>
-                          <span style={op.badge("rgba(99,102,241,0.22)", "#c7d2fe")}>
-                            {row.typ?.trim() ? row.typ : "—"}
-                          </span>
-                        </td>
-                        <td style={s.td}>
-                          <strong style={{ color: "#fafafa" }}>{row.nazwa?.trim() || "—"}</strong>
-                        </td>
-                        <td style={s.td}>{row.numer_inwentarzowy?.trim() ? row.numer_inwentarzowy : "—"}</td>
-                        <td style={s.td}>
-                          {row.data_przegladu ? dataDoInputa(row.data_przegladu) : "—"}
-                        </td>
-                        <td style={s.td}>
-                          {podpisOsobyProwadzacej(row.pracownik_nr, mapaProwadzacychId) ?? "—"}
-                        </td>
-                        <td style={s.td} title={nt.title}>
-                          {nt.text}
-                        </td>
-                        <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
-                          <button
-                            type="button"
-                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
-                            onClick={() => wczytajSprzetDoEdycji(row)}
+                      <Fragment key={row.id}>
+                        <tr style={edytuje ? { background: "rgba(99,102,241,0.1)" } : undefined}>
+                          <td style={s.td}>
+                            {edytuje ? (
+                              <select
+                                style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                                value={sprzetForm.typ}
+                                onChange={(ev) => setSprzetForm((f) => ({ ...f, typ: ev.target.value }))}
+                              >
+                                {(() => {
+                                  const cur = String(sprzetForm.typ ?? "").trim();
+                                  const znane = new Set(SPRZET_TYP_W_BAZIE);
+                                  const orphan = cur !== "" && !znane.has(cur);
+                                  return (
+                                    <>
+                                      {orphan ? (
+                                        <option value={cur}>{cur} (z bazy)</option>
+                                      ) : null}
+                                      {SPRZET_TYP_W_BAZIE.map((t) => (
+                                        <option key={t} value={t}>
+                                          {t}
+                                        </option>
+                                      ))}
+                                    </>
+                                  );
+                                })()}
+                              </select>
+                            ) : (
+                              <span style={op.badge("rgba(99,102,241,0.22)", "#c7d2fe")}>
+                                {row.typ?.trim() ? row.typ : "—"}
+                              </span>
+                            )}
+                          </td>
+                          <td style={s.td}>
+                            {edytuje ? (
+                              <input
+                                style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                                type="text"
+                                value={sprzetForm.nazwa}
+                                onChange={(ev) => setSprzetForm((f) => ({ ...f, nazwa: ev.target.value }))}
+                              />
+                            ) : (
+                              <strong style={{ color: "#fafafa" }}>{row.nazwa?.trim() || "—"}</strong>
+                            )}
+                          </td>
+                          <td style={s.td}>
+                            {edytuje ? (
+                              <input
+                                style={{
+                                  ...s.input,
+                                  fontFamily: "ui-monospace, monospace",
+                                  fontSize: "0.76rem",
+                                  padding: "0.25rem 0.35rem",
+                                  width: "100%",
+                                  boxSizing: "border-box",
+                                }}
+                                type="text"
+                                value={sprzetForm.zewnetrzny_id}
+                                onChange={(ev) => setSprzetForm((f) => ({ ...f, zewnetrzny_id: ev.target.value }))}
+                              />
+                            ) : (
+                              <span
+                                style={{
+                                  display: "block",
+                                  fontFamily: "ui-monospace, monospace",
+                                  fontSize: "0.78rem",
+                                }}
+                                title={kodZewn || undefined}
+                              >
+                                {kodZewn ? (kodZewn.length > 18 ? `${kodZewn.slice(0, 18)}…` : kodZewn) : "—"}
+                              </span>
+                            )}
+                          </td>
+                          <td style={s.td}>
+                            {edytuje ? (
+                              <input
+                                style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                                type="text"
+                                value={sprzetForm.numer_inwentarzowy}
+                                onChange={(ev) => setSprzetForm((f) => ({ ...f, numer_inwentarzowy: ev.target.value }))}
+                              />
+                            ) : (
+                              row.numer_inwentarzowy?.trim() || "—"
+                            )}
+                          </td>
+                          <td
+                            style={{
+                              ...s.td,
+                              maxWidth: "10rem",
+                              overflow: edytuje ? undefined : "hidden",
+                              textOverflow: edytuje ? undefined : "ellipsis",
+                              fontSize: "0.78rem",
+                              verticalAlign: "top",
+                            }}
+                            title={!edytuje && pop !== "—" ? pop : undefined}
                           >
-                            Edytuj
-                          </button>{" "}
-                          <button
-                            type="button"
-                            style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
-                            onClick={() => usunSprzet(row.id)}
-                          >
-                            Usuń
-                          </button>
-                        </td>
-                      </tr>
+                            {edytuje ? (
+                              <>
+                                <textarea
+                                  style={{
+                                    ...s.input,
+                                    fontSize: "0.78rem",
+                                    padding: "0.25rem 0.35rem",
+                                    width: "100%",
+                                    boxSizing: "border-box",
+                                    minHeight: "2.5rem",
+                                    resize: "vertical",
+                                  }}
+                                  value={sprzetForm.poprzedni_uzytkownicy_opis}
+                                  onChange={(ev) =>
+                                    setSprzetForm((f) => ({ ...f, poprzedni_uzytkownicy_opis: ev.target.value }))
+                                  }
+                                  placeholder="Własny opis — puste = jak z importu"
+                                  rows={3}
+                                />
+                                {popImport !== "—" ? (
+                                  <span
+                                    style={{
+                                      display: "block",
+                                      marginTop: "0.3rem",
+                                      color: "#94a3b8",
+                                      fontSize: "0.72rem",
+                                      lineHeight: 1.35,
+                                      wordBreak: "break-word",
+                                    }}
+                                  >
+                                    Import: {popImport}
+                                  </span>
+                                ) : null}
+                                {Array.isArray(row.poprzedni_pracownicy_nr) &&
+                                row.poprzedni_pracownicy_nr.length > 0 ? (
+                                  <span
+                                    style={{
+                                      display: "block",
+                                      marginTop: "0.2rem",
+                                      color: "#94a3b8",
+                                      fontSize: "0.72rem",
+                                      lineHeight: 1.35,
+                                      wordBreak: "break-word",
+                                    }}
+                                  >
+                                    Nr z importu:{" "}
+                                    {row.poprzedni_pracownicy_nr.map((x) => String(x ?? "").trim()).filter(Boolean).join(", ")}
+                                  </span>
+                                ) : null}
+                              </>
+                            ) : (
+                              pop
+                            )}
+                          </td>
+                          <td style={s.td}>
+                            {edytuje ? (
+                              <input
+                                style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                                type="date"
+                                value={sprzetForm.data_przegladu}
+                                onChange={(ev) => setSprzetForm((f) => ({ ...f, data_przegladu: ev.target.value }))}
+                              />
+                            ) : row.data_przegladu ? (
+                              dataDoInputa(row.data_przegladu)
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td style={s.td}>
+                            {edytuje ? (
+                              <select
+                                style={{ ...s.input, fontSize: "0.78rem", padding: "0.25rem 0.35rem", width: "100%", boxSizing: "border-box" }}
+                                value={String(sprzetForm.pracownik_nr ?? "")}
+                                onChange={(ev) => setSprzetForm((f) => ({ ...f, pracownik_nr: ev.target.value }))}
+                              >
+                                <option value="">— biuro / magazyn —</option>
+                                {(() => {
+                                  const cur = String(sprzetForm.pracownik_nr ?? "").trim();
+                                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
+                                  const orphan = cur !== "" && !nrs.has(cur);
+                                  return (
+                                    <>
+                                      {orphan ? (
+                                        <option value={cur}>{cur} (nie w liście)</option>
+                                      ) : null}
+                                      {pracownicyPosortowani.map((p) => (
+                                        <option key={String(p.nr)} value={String(p.nr)}>
+                                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
+                                        </option>
+                                      ))}
+                                    </>
+                                  );
+                                })()}
+                              </select>
+                            ) : (
+                              podpisOsobyProwadzacej(row.pracownik_nr, mapaProwadzacychId) ?? "—"
+                            )}
+                          </td>
+                          <td style={sprzetTdNotatkiStyle()}>
+                            {edytuje ? (
+                              <textarea
+                                style={sprzetNotatkiTextareaEdycja()}
+                                value={sprzetForm.notatki}
+                                onChange={(ev) => setSprzetForm((f) => ({ ...f, notatki: ev.target.value }))}
+                                rows={5}
+                              />
+                            ) : (
+                              <span title={nt.title}>{nt.text}</span>
+                            )}
+                          </td>
+                          {czyPelnaEwidencjaSprzetu ? (
+                            <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
+                              {edytuje ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    style={{ ...s.btn, padding: "0.3rem 0.55rem", fontSize: "0.75rem" }}
+                                    onClick={() => void zapiszSprzetEwidencja()}
+                                  >
+                                    Zapisz
+                                  </button>{" "}
+                                  <button type="button" style={{ ...s.btnGhost, padding: "0.3rem 0.55rem", fontSize: "0.75rem" }} onClick={anulujSprzetEdycje}>
+                                    Anuluj
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                    disabled={sprzetWierszNowy || (sprzetEdycjaId != null && !sprzetPorownajId(row.id, sprzetEdycjaId))}
+                                    onClick={() => wczytajSprzetDoEdycji(row)}
+                                  >
+                                    Edytuj
+                                  </button>{" "}
+                                  <button
+                                    type="button"
+                                    style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                    disabled={sprzetWierszNowy || sprzetEdycjaId != null}
+                                    onClick={() => usunSprzet(row.id)}
+                                  >
+                                    Usuń
+                                  </button>
+                                </>
+                              )}
+                            </td>
+                          ) : null}
+                        </tr>
+                      </Fragment>
                     );
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           ) : null}
 
-          <h3
-            style={{
-              fontSize: "1rem",
-              fontWeight: 600,
-              color: "#fff",
-              margin: "0 0 0.65rem",
-            }}
-          >
-            {sprzetEdycjaId != null ? "Edycja sprzętu" : "Nowy wpis"}
-          </h3>
-          <form style={{ ...s.form, maxWidth: "min(38rem, 100%)", marginBottom: "2rem" }} onSubmit={zapiszSprzetEwidencja}>
-            <label style={s.label}>
-              Typ
-              <select
-                style={s.input}
-                value={sprzetForm.typ}
-                onChange={(ev) => setSprzetForm((f) => ({ ...f, typ: ev.target.value }))}
-              >
-                {(() => {
-                  const cur = String(sprzetForm.typ ?? "").trim();
-                  const znane = new Set(SPRZET_TYP_W_BAZIE);
-                  const orphan = cur !== "" && !znane.has(cur);
-                  return (
-                    <>
-                      {orphan ? (
-                        <option value={cur}>{cur} (z bazy)</option>
-                      ) : null}
-                      {SPRZET_TYP_W_BAZIE.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </>
-                  );
-                })()}
-              </select>
-            </label>
-            <label style={s.label}>
-              Nazwa <span style={{ color: "#fca5a5" }}>*</span>
-              <input
-                style={s.input}
-                type="text"
-                value={sprzetForm.nazwa}
-                onChange={(ev) => setSprzetForm((f) => ({ ...f, nazwa: ev.target.value }))}
-                required
-              />
-            </label>
-            <label style={s.label}>
-              Numer inwentarzowy
-              <input
-                style={s.input}
-                type="text"
-                value={sprzetForm.numer_inwentarzowy}
-                onChange={(ev) => setSprzetForm((f) => ({ ...f, numer_inwentarzowy: ev.target.value }))}
-              />
-            </label>
-            <label style={s.label}>
-              Data przeglądu / serwisu (np. ksero, drukarka)
-              <input
-                style={s.input}
-                type="date"
-                value={sprzetForm.data_przegladu}
-                onChange={(ev) => setSprzetForm((f) => ({ ...f, data_przegladu: ev.target.value }))}
-              />
-            </label>
-            <label style={s.label}>
-              Przypisany pracownik — <code style={s.code}>pracownik.nr</code>
-              <select
-                style={s.input}
-                value={String(sprzetForm.pracownik_nr ?? "")}
-                onChange={(ev) => setSprzetForm((f) => ({ ...f, pracownik_nr: ev.target.value }))}
-              >
-                <option value="">— biuro / magazyn —</option>
-                {(() => {
-                  const cur = String(sprzetForm.pracownik_nr ?? "").trim();
-                  const nrs = new Set(pracownicyPosortowani.map((p) => String(p.nr)));
-                  const orphan = cur !== "" && !nrs.has(cur);
-                  return (
-                    <>
-                      {orphan ? (
-                        <option value={cur}>{cur} (nie w liście)</option>
-                      ) : null}
-                      {pracownicyPosortowani.map((p) => (
-                        <option key={String(p.nr)} value={String(p.nr)}>
-                          {String(p.nr)} — {p.imie_nazwisko ?? ""}
-                        </option>
-                      ))}
-                    </>
-                  );
-                })()}
-              </select>
-            </label>
-            <label style={s.label}>
-              Notatki
-              <textarea
-                style={{ ...s.input, minHeight: "3rem" }}
-                value={sprzetForm.notatki}
-                onChange={(ev) => setSprzetForm((f) => ({ ...f, notatki: ev.target.value }))}
-                rows={2}
-              />
-            </label>
-            {pracFetchError ? (
-              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
-                Lista pracowników: {pracFetchError}
-              </p>
-            ) : null}
-            <div style={s.btnRow}>
-              <button type="submit" style={s.btn}>
-                {sprzetEdycjaId != null ? "Zapisz zmiany" : "Dodaj sprzęt"}
-              </button>
-              {sprzetEdycjaId != null ? (
-                <button type="button" style={s.btnGhost} onClick={anulujSprzetEdycje}>
-                  Anuluj edycję
-                </button>
-              ) : null}
-            </div>
-          </form>
+          {!czyPelnaEwidencjaSprzetu ? (
+            <p style={{ ...s.muted, marginBottom: "2rem", maxWidth: "38rem", lineHeight: 1.5 }}>
+              Pełna edycja i przydziały w tabeli są dostępne dla administratora i kierownika.
+            </p>
+          ) : null}
         </>
       ) : null}
 
@@ -16449,7 +17154,8 @@ export default function App() {
                 label: "Czas pracy",
                 fn: przejdzDoCzasPracy,
                 w: "czas_pracy",
-                help: "Kalendarz godzin, KR, urlopy — sumy miesięczne i szacunek kosztu (stawki).",
+                help:
+                  "Kalendarz godzin, KR, urlopy — sumy miesięczne i szacunek kosztu (stawki). Jeśli w arkuszu jest tylko kod na cały dzień bez zakresu godzin, przy imporcie przyjmujemy 8 h na potrzeby rozliczenia — w kalendarzu możesz dopisać konkretny zakres przy edycji wpisu.",
               },
               {
                 id: "faktury",
