@@ -2,6 +2,7 @@ import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, us
 import { FakturaKosztowaEdycjaModal } from "./FakturaKosztowaEdycjaModal.jsx";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
+import { PlanFakturPanel } from "./PlanFakturPanel.jsx";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 import { TerenPlanningBoard } from "./TerenPlanningBoard.jsx";
 import { TerenZespolyPanel } from "./TerenZespolyPanel.jsx";
@@ -2018,8 +2019,8 @@ export default function App() {
   /** Pełna baza faktur kosztowych (nie tylko „do zapłaty”) — osobny moduł. */
   const [fakturyKosztoweList, setFakturyKosztoweList] = useState([]);
   const [fakturySekcja, setFakturySekcja] = useState("wszystkie");
-  /** Sekcja menu FAKTUROWANIE: etapy | protokoly | faktury. */
-  const [fakturowanieSekcja, setFakturowanieSekcja] = useState("etapy");
+  /** Sekcja menu FAKTUROWANIE: plan_faktur | etapy | protokoly | faktury. */
+  const [fakturowanieSekcja, setFakturowanieSekcja] = useState("plan_faktur");
   const [fakturyPodwykonawcaFiltrNazwa, setFakturyPodwykonawcaFiltrNazwa] = useState("");
   const [fakturyKosztoweFetchError, setFakturyKosztoweFetchError] = useState(null);
   const [fakturyKosztoweLadowanieListy, setFakturyKosztoweLadowanieListy] = useState(false);
@@ -3515,10 +3516,10 @@ export default function App() {
     }
   }
 
-  /** Moduł FAKTUROWANIE (etapy / protokoły / faktury) — tylko admin i kierownik. */
-  function przejdzDoFakturowania(sekcja = "etapy") {
-    const dozwolone = ["etapy", "protokoly", "faktury"];
-    const s = dozwolone.includes(sekcja) ? sekcja : "etapy";
+  /** Moduł FAKTUROWANIE (plan faktur / etapy / protokoły / faktury) — tylko admin i kierownik. */
+  function przejdzDoFakturowania(sekcja = "plan_faktur") {
+    const dozwolone = ["plan_faktur", "etapy", "protokoly", "faktury"];
+    const s = dozwolone.includes(sekcja) ? sekcja : "plan_faktur";
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
@@ -7668,6 +7669,7 @@ export default function App() {
       sprzet: "🛠️",
       samochody: "🚗",
       pracownik: "👥",
+      fakturowanie_plan: "📋",
       fakturowanie_etapy: "📑",
       fakturowanie_protokoly: "📝",
       fakturowanie_faktury: "💶",
@@ -13560,26 +13562,39 @@ export default function App() {
             <>
               <div style={op.heroCard}>
                 <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>
-                  {fakturowanieSekcja === "etapy"
-                    ? "Etapy fakturowania"
-                    : fakturowanieSekcja === "protokoly"
-                      ? "Protokoły odbioru"
-                      : "Faktury"}
+                  {fakturowanieSekcja === "plan_faktur"
+                    ? "Plan faktur (kolejka FS)"
+                    : fakturowanieSekcja === "etapy"
+                      ? "Etapy fakturowania"
+                      : fakturowanieSekcja === "protokoly"
+                        ? "Protokoły odbioru"
+                        : "Faktury"}
                 </h2>
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
-                  {fakturowanieSekcja === "etapy"
-                    ? "Tu pojawią się etapy procesu fakturowania projektów (statusy, kolejność, powiązanie z KR)."
-                    : fakturowanieSekcja === "protokoly"
-                      ? "Tu pojawią się protokoły odbioru prac — podstawa do wystawienia faktur sprzedażowych."
-                      : "Tu pojawią się faktury sprzedażowe / rozliczeniowe (osobno od faktur kosztowych w OSOBISTE)."}
+                  {fakturowanieSekcja === "plan_faktur"
+                    ? "Planowane faktury sprzedażowe z listy prezesa. Kierownik zaznacza „można fakturować” — wtedy księgowość wie, że wolno wystawić FS."
+                    : fakturowanieSekcja === "etapy"
+                      ? "Tu pojawią się etapy procesu fakturowania projektów (statusy, kolejność, powiązanie z KR)."
+                      : fakturowanieSekcja === "protokoly"
+                        ? "Tu pojawią się protokoły odbioru prac — podstawa do wystawienia faktur sprzedażowych."
+                        : "Tu pojawią się faktury sprzedażowe / rozliczeniowe (osobno od faktur kosztowych w OSOBISTE)."}
                 </p>
               </div>
-              <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
-                <p style={{ ...op.muted, margin: 0, fontSize: "0.9rem" }}>
-                  Sekcja w przygotowaniu — struktura menu jest już gotowa. Możemy tu dopisać tabele, formularze i
-                  powiązania z bazą w kolejnym kroku.
-                </p>
-              </div>
+              {fakturowanieSekcja === "plan_faktur" ? (
+                <PlanFakturPanel
+                  supabase={supabase}
+                  styles={s}
+                  op={op}
+                  czyMozeEdytowac={czyMozeWidziecFakturowanie}
+                />
+              ) : (
+                <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
+                  <p style={{ ...op.muted, margin: 0, fontSize: "0.9rem" }}>
+                    Sekcja w przygotowaniu — struktura menu jest już gotowa. Możemy tu dopisać tabele, formularze i
+                    powiązania z bazą w kolejnym kroku.
+                  </p>
+                </div>
+              )}
             </>
           )}
         </>
@@ -19521,6 +19536,12 @@ export default function App() {
               <div style={{ ...op.navSectionLabel }}>💶 FAKTUROWANIE</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
                 {[
+                  {
+                    id: "fakturowanie_plan",
+                    label: "Plan faktur FS",
+                    sekcja: "plan_faktur",
+                    help: "Kolejka planowanych faktur — kierownik zaznacza „można fakturować”.",
+                  },
                   {
                     id: "fakturowanie_etapy",
                     label: "Etapy fakturowania",
