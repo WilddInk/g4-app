@@ -28,6 +28,31 @@ function formatPln(n) {
   return v.toLocaleString("pl-PL", { style: "currency", currency: "PLN" });
 }
 
+function formatDataUwag(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString("pl-PL", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function podpisAutoraUwag(row) {
+  const kto = String(row?.uwagi_autor ?? "").trim() || String(row?.uwagi_autor_email ?? "").trim();
+  const kiedy = formatDataUwag(row?.uwagi_zmieniono_at);
+  if (!kto && !kiedy) return "";
+  if (kto && kiedy) return `${kto} · ${kiedy}`;
+  return kto || kiedy;
+}
+
 function porownajTekst(a, b) {
   return String(a ?? "").localeCompare(String(b ?? ""), "pl", {
     sensitivity: "base",
@@ -76,7 +101,15 @@ const KOLUMNY_SORT_PLAN = [
  * Kolejka planowanych faktur sprzedażowych.
  * Kierownik zaznacza „Można fakturować” — księgowość widzi to w APP / sync.
  */
-export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac, czyMozeEdytowacUwagi }) {
+export function PlanFakturPanel({
+  supabase,
+  styles: s,
+  op,
+  czyMozeEdytowac,
+  czyMozeEdytowacUwagi,
+  autorUwagiNazwa,
+  autorUwagiEmail,
+}) {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -219,24 +252,63 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac, czyM
       anulujEdycjeUwag(id);
       return;
     }
+    const pusty = tekst.trim() === "";
+    const teraz = new Date().toISOString();
+    const autorNazwa =
+      String(autorUwagiNazwa ?? "").trim() ||
+      String(autorUwagiEmail ?? "").trim() ||
+      "Zalogowany użytkownik";
+    const autorEmail = String(autorUwagiEmail ?? "").trim() || null;
+    const payloadZAutorem = pusty
+      ? {
+          uwagi: null,
+          uwagi_autor: null,
+          uwagi_autor_email: null,
+          uwagi_zmieniono_at: null,
+        }
+      : {
+          uwagi: tekst,
+          uwagi_autor: autorNazwa,
+          uwagi_autor_email: autorEmail,
+          uwagi_zmieniono_at: teraz,
+        };
+    const payloadBezAutora = { uwagi: pusty ? null : tekst };
+
     setMsg(null);
     setUwagiZapisId(id);
-    const { error } = await supabase
-      .from("kr_plan_faktury")
-      .update({ uwagi: tekst.trim() === "" ? null : tekst })
-      .eq("id", id);
+    let zapisane = payloadZAutorem;
+    let ostrzezenieSql = null;
+    let { error } = await supabase.from("kr_plan_faktury").update(payloadZAutorem).eq("id", id);
+    if (error) {
+      const m = String(error.message ?? "");
+      const brakKolumny =
+        /uwagi_autor|uwagi_zmieniono|column|schema cache|PGRST204|42703/i.test(m);
+      if (brakKolumny) {
+        const retry = await supabase.from("kr_plan_faktury").update(payloadBezAutora).eq("id", id);
+        error = retry.error;
+        zapisane = {
+          ...payloadBezAutora,
+          uwagi_autor: pusty ? null : autorNazwa,
+          uwagi_autor_email: pusty ? null : autorEmail,
+          uwagi_zmieniono_at: pusty ? null : teraz,
+        };
+        if (!error) {
+          ostrzezenieSql =
+            "Zapisano uwagi (bez kolumn autora w bazie). Uruchom SQL: g4-app/supabase/kr-plan-faktury-uwagi-autor.sql";
+        }
+      }
+    }
     setUwagiZapisId(null);
     if (error) {
       setMsg(`Nie udało się zapisać uwag: ${error.message}`);
       return;
     }
-    setRows((prev) =>
-      prev.map((r) =>
-        r.id === id ? { ...r, uwagi: tekst.trim() === "" ? null : tekst } : r,
-      ),
-    );
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...zapisane } : r)));
     anulujEdycjeUwag(id);
-    setMsg("Zapisano uwagi.");
+    setMsg(
+      ostrzezenieSql ||
+        (pusty ? "Wyczyszczono uwagi." : `Zapisano uwagi — ${autorNazwa}.`),
+    );
   }
 
   const st = s || {};
@@ -254,7 +326,8 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac, czyM
         {moznaUwagi ? (
           <>
             {" "}
-            Kolumnę <strong>Uwagi</strong> może edytować każda zalogowana osoba (kliknij komórkę → Zapisz).
+            Kolumnę <strong>Uwagi</strong> może edytować każda zalogowana osoba — przy zapisie widać{" "}
+            <strong>kto</strong> i <strong>kiedy</strong> wpisał.
           </>
         ) : null}
       </p>
@@ -436,9 +509,29 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac, czyM
                           }}
                         >
                           {r.uwagi?.trim() ? r.uwagi : "＋ Dodaj uwagi…"}
+                          {podpisAutoraUwag(r) ? (
+                            <span
+                              style={{
+                                display: "block",
+                                marginTop: "0.28rem",
+                                fontSize: "0.7rem",
+                                color: "#94a3b8",
+                                fontWeight: 600,
+                              }}
+                            >
+                              — {podpisAutoraUwag(r)}
+                            </span>
+                          ) : null}
                         </button>
                       ) : (
-                        r.uwagi || "—"
+                        <div>
+                          <div>{r.uwagi || "—"}</div>
+                          {podpisAutoraUwag(r) ? (
+                            <div style={{ marginTop: "0.25rem", fontSize: "0.7rem", color: "#94a3b8" }}>
+                              — {podpisAutoraUwag(r)}
+                            </div>
+                          ) : null}
+                        </div>
                       )}
                     </td>
                     <td style={{ ...(st.td || {}), whiteSpace: "nowrap" }}>{formatPln(r.kwota_netto)}</td>

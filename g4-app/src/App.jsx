@@ -13677,6 +13677,12 @@ export default function App() {
                   op={op}
                   czyMozeEdytowac={czyMozeWidziecFakturowanie}
                   czyMozeEdytowacUwagi={Boolean(session?.user)}
+                  autorUwagiNazwa={
+                    pracownikPowiazanyZSesja?.imie_nazwisko?.trim() ||
+                    session?.user?.email ||
+                    ""
+                  }
+                  autorUwagiEmail={session?.user?.email || ""}
                 />
               ) : null}
 
