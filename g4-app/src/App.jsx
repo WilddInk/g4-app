@@ -13676,6 +13676,7 @@ export default function App() {
                   styles={s}
                   op={op}
                   czyMozeEdytowac={czyMozeWidziecFakturowanie}
+                  czyMozeEdytowacUwagi={Boolean(session?.user)}
                 />
               ) : null}
 

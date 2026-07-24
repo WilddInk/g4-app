@@ -28,11 +28,55 @@ function formatPln(n) {
   return v.toLocaleString("pl-PL", { style: "currency", currency: "PLN" });
 }
 
+function porownajTekst(a, b) {
+  return String(a ?? "").localeCompare(String(b ?? ""), "pl", {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
+function wartoscSortPlanFaktur(row, key) {
+  switch (key) {
+    case "horyzont":
+      return HORYZONT_LABEL[row.horyzont] || row.horyzont || "";
+    case "kr":
+      return row.kr ?? "";
+    case "klient":
+      return row.klient ?? "";
+    case "opis":
+      return row.opis ?? "";
+    case "kwota":
+      return Number(row.kwota_netto) || 0;
+    case "bloker":
+      return BLOKER_LABEL[row.bloker] || row.bloker || "";
+    case "odpowiedzialny":
+      return row.odpowiedzialny ?? "";
+    case "uwagi":
+      return row.uwagi ?? "";
+    case "mozna_fakturowac":
+      return row.mozna_fakturowac ? 1 : 0;
+    default:
+      return "";
+  }
+}
+
+const KOLUMNY_SORT_PLAN = [
+  { key: "horyzont", label: "Horyzont" },
+  { key: "kr", label: "KR" },
+  { key: "klient", label: "Klient" },
+  { key: "opis", label: "Opis" },
+  { key: "uwagi", label: "Uwagi" },
+  { key: "kwota", label: "Kwota" },
+  { key: "bloker", label: "Bloker" },
+  { key: "odpowiedzialny", label: "Odpowiedzialny" },
+  { key: "mozna_fakturowac", label: "Można fakturować" },
+];
+
 /**
  * Kolejka planowanych faktur sprzedażowych.
  * Kierownik zaznacza „Można fakturować” — księgowość widzi to w APP / sync.
  */
-export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
+export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac, czyMozeEdytowacUwagi }) {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -40,6 +84,11 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
   const [filtrHoryzont, setFiltrHoryzont] = useState("wszystkie");
   const [tylkoGotowe, setTylkoGotowe] = useState(false);
   const [tylkoBlokady, setTylkoBlokady] = useState(false);
+  const [sort, setSort] = useState({ key: "horyzont", dir: "asc" });
+  /** Drafty uwag podczas edycji: id → tekst. */
+  const [uwagiDraft, setUwagiDraft] = useState({});
+  const [uwagiEdycjaId, setUwagiEdycjaId] = useState(null);
+  const [uwagiZapisId, setUwagiZapisId] = useState(null);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -76,6 +125,25 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
     });
   }, [rows, filtrHoryzont, tylkoGotowe, tylkoBlokady]);
 
+  const filteredSorted = useMemo(() => {
+    const list = [...filtered];
+    const { key, dir } = sort;
+    const mnoznik = dir === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      const va = wartoscSortPlanFaktur(a, key);
+      const vb = wartoscSortPlanFaktur(b, key);
+      let cmp;
+      if (typeof va === "number" && typeof vb === "number") {
+        cmp = va - vb;
+      } else {
+        cmp = porownajTekst(va, vb);
+      }
+      if (cmp !== 0) return cmp * mnoznik;
+      return porownajTekst(a.kr, b.kr) || Number(a.id) - Number(b.id);
+    });
+    return list;
+  }, [filtered, sort]);
+
   const sumy = useMemo(() => {
     const by = {};
     let total = 0;
@@ -89,6 +157,15 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
     }
     return { by, total, gotowe };
   }, [filtered]);
+
+  function przestawSort(kolumna) {
+    setSort((prev) => {
+      if (prev.key === kolumna) {
+        return { key: kolumna, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      return { key: kolumna, dir: "asc" };
+    });
+  }
 
   async function toggleMozna(id, next) {
     if (!czyMozeEdytowac) {
@@ -111,8 +188,60 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
     setMsg(next ? "Oznaczono: można fakturować." : "Cofnięto zgodę na fakturowanie.");
   }
 
+  function rozpocznijEdycjeUwag(row) {
+    if (!czyMozeEdytowacUwagi) return;
+    const id = row.id;
+    setUwagiEdycjaId(id);
+    setUwagiDraft((prev) => ({
+      ...prev,
+      [id]: row.uwagi != null ? String(row.uwagi) : "",
+    }));
+  }
+
+  function anulujEdycjeUwag(id) {
+    setUwagiEdycjaId((cur) => (cur === id ? null : cur));
+    setUwagiDraft((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  async function zapiszUwagi(id) {
+    if (!czyMozeEdytowacUwagi) {
+      alert("Uwagi mogą zapisywać zalogowane osoby.");
+      return;
+    }
+    const tekst = uwagiDraft[id] != null ? String(uwagiDraft[id]) : "";
+    const row = (rows ?? []).find((r) => r.id === id);
+    const stare = row?.uwagi != null ? String(row.uwagi) : "";
+    if (tekst === stare) {
+      anulujEdycjeUwag(id);
+      return;
+    }
+    setMsg(null);
+    setUwagiZapisId(id);
+    const { error } = await supabase
+      .from("kr_plan_faktury")
+      .update({ uwagi: tekst.trim() === "" ? null : tekst })
+      .eq("id", id);
+    setUwagiZapisId(null);
+    if (error) {
+      setMsg(`Nie udało się zapisać uwag: ${error.message}`);
+      return;
+    }
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === id ? { ...r, uwagi: tekst.trim() === "" ? null : tekst } : r,
+      ),
+    );
+    anulujEdycjeUwag(id);
+    setMsg("Zapisano uwagi.");
+  }
+
   const st = s || {};
   const shell = op || {};
+  const moznaUwagi = Boolean(czyMozeEdytowacUwagi);
 
   return (
     <div style={{ ...(shell.sectionCard || {}), marginTop: "0.85rem" }}>
@@ -122,6 +251,12 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
       <p style={{ ...(st.muted || {}), marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem" }}>
         To jest lista od prezesa (lipiec → 2027). <strong>Kierownik</strong> zaznacza „Można fakturować”, gdy
         protokół / klauzula / zakres są OK — wtedy księgowość wie, że może wystawić FS, bez pytania na spotkaniu.
+        {moznaUwagi ? (
+          <>
+            {" "}
+            Kolumnę <strong>Uwagi</strong> może edytować każda zalogowana osoba (kliknij komórkę → Zapisz).
+          </>
+        ) : null}
       </p>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "0.75rem", alignItems: "center" }}>
@@ -184,26 +319,45 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
 
       {loading ? (
         <p style={st.muted}>Ładowanie…</p>
-      ) : filtered.length === 0 ? (
+      ) : filteredSorted.length === 0 ? (
         <p style={st.muted}>Brak pozycji dla wybranego filtra.</p>
       ) : (
         <div style={{ ...(st.tableWrap || {}), borderRadius: "12px", overflow: "auto" }}>
           <table style={{ ...(st.table || {}), fontSize: "0.82rem" }}>
             <thead>
               <tr>
-                <th style={st.th}>Horyzont</th>
-                <th style={st.th}>KR</th>
-                <th style={st.th}>Klient</th>
-                <th style={st.th}>Opis</th>
-                <th style={st.th}>Kwota</th>
-                <th style={st.th}>Bloker</th>
-                <th style={st.th}>Odpowiedzialny</th>
-                <th style={st.th}>Uwagi</th>
-                <th style={st.th}>Można fakturować</th>
+                {KOLUMNY_SORT_PLAN.map((kol) => {
+                  const aktywna = sort.key === kol.key;
+                  const strzalka = aktywna ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
+                  return (
+                    <th key={kol.key} style={st.th}>
+                      <button
+                        type="button"
+                        onClick={() => przestawSort(kol.key)}
+                        title={`Sortuj według: ${kol.label}`}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          margin: 0,
+                          color: "inherit",
+                          font: "inherit",
+                          fontWeight: aktywna ? 800 : 700,
+                          cursor: "pointer",
+                          textAlign: "left",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {kol.label}
+                        {strzalka}
+                      </button>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
+              {filteredSorted.map((r) => {
                 const gotowe = Boolean(r.mozna_fakturowac);
                 return (
                   <tr
@@ -216,12 +370,80 @@ export function PlanFakturPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
                     </td>
                     <td style={st.td}>{r.klient || "—"}</td>
                     <td style={{ ...(st.td || {}), maxWidth: "18rem" }}>{r.opis || "—"}</td>
+                    <td style={{ ...(st.td || {}), maxWidth: "16rem", fontSize: "0.78rem", minWidth: "11rem" }}>
+                      {moznaUwagi && uwagiEdycjaId === r.id ? (
+                        <div style={{ display: "grid", gap: "0.35rem" }}>
+                          <textarea
+                            value={uwagiDraft[r.id] ?? ""}
+                            onChange={(e) =>
+                              setUwagiDraft((prev) => ({ ...prev, [r.id]: e.target.value }))
+                            }
+                            rows={3}
+                            disabled={uwagiZapisId === r.id}
+                            style={{
+                              width: "100%",
+                              resize: "vertical",
+                              minHeight: "3.2rem",
+                              padding: "0.35rem 0.45rem",
+                              borderRadius: "8px",
+                              border: "1px solid rgba(148,163,184,0.45)",
+                              background: "#0f172a",
+                              color: "#e2e8f0",
+                              font: "inherit",
+                              fontSize: "0.78rem",
+                            }}
+                            autoFocus
+                            placeholder="Wpisz uwagi…"
+                          />
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                            <button
+                              type="button"
+                              style={{ ...(st.btn || {}), fontSize: "0.74rem", padding: "0.2rem 0.5rem" }}
+                              disabled={uwagiZapisId === r.id}
+                              onClick={() => void zapiszUwagi(r.id)}
+                            >
+                              {uwagiZapisId === r.id ? "Zapis…" : "Zapisz"}
+                            </button>
+                            <button
+                              type="button"
+                              style={{ ...(st.btnGhost || {}), fontSize: "0.74rem", padding: "0.2rem 0.5rem" }}
+                              disabled={uwagiZapisId === r.id}
+                              onClick={() => anulujEdycjeUwag(r.id)}
+                            >
+                              Anuluj
+                            </button>
+                          </div>
+                        </div>
+                      ) : moznaUwagi ? (
+                        <button
+                          type="button"
+                          onClick={() => rozpocznijEdycjeUwag(r)}
+                          title="Edytuj uwagi"
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            background: "rgba(15,23,42,0.55)",
+                            border: "1px dashed rgba(251,146,60,0.55)",
+                            borderRadius: "8px",
+                            padding: "0.35rem 0.45rem",
+                            color: r.uwagi ? "#e2e8f0" : "#fdba74",
+                            cursor: "pointer",
+                            font: "inherit",
+                            fontSize: "0.78rem",
+                            lineHeight: 1.35,
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {r.uwagi?.trim() ? r.uwagi : "＋ Dodaj uwagi…"}
+                        </button>
+                      ) : (
+                        r.uwagi || "—"
+                      )}
+                    </td>
                     <td style={{ ...(st.td || {}), whiteSpace: "nowrap" }}>{formatPln(r.kwota_netto)}</td>
                     <td style={st.td}>{BLOKER_LABEL[r.bloker] || r.bloker || "—"}</td>
                     <td style={st.td}>{r.odpowiedzialny || "—"}</td>
-                    <td style={{ ...(st.td || {}), maxWidth: "14rem", fontSize: "0.78rem" }}>
-                      {r.uwagi || "—"}
-                    </td>
                     <td style={st.td}>
                       <label
                         style={{
