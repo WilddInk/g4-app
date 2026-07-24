@@ -45,14 +45,6 @@ function formatDataUwag(iso) {
   }
 }
 
-function podpisAutoraUwag(row) {
-  const kto = String(row?.uwagi_autor ?? "").trim() || String(row?.uwagi_autor_email ?? "").trim();
-  const kiedy = formatDataUwag(row?.uwagi_zmieniono_at);
-  if (!kto && !kiedy) return "";
-  if (kto && kiedy) return `${kto} · ${kiedy}`;
-  return kto || kiedy;
-}
-
 function porownajTekst(a, b) {
   return String(a ?? "").localeCompare(String(b ?? ""), "pl", {
     sensitivity: "base",
@@ -60,7 +52,7 @@ function porownajTekst(a, b) {
   });
 }
 
-function wartoscSortPlanFaktur(row, key) {
+function wartoscSortPlanFaktur(row, key, komentarzeByPlan) {
   switch (key) {
     case "horyzont":
       return HORYZONT_LABEL[row.horyzont] || row.horyzont || "";
@@ -76,8 +68,14 @@ function wartoscSortPlanFaktur(row, key) {
       return BLOKER_LABEL[row.bloker] || row.bloker || "";
     case "odpowiedzialny":
       return row.odpowiedzialny ?? "";
-    case "uwagi":
+    case "uwagi": {
+      const lista = komentarzeByPlan?.[row.id] ?? [];
+      if (lista.length) {
+        const last = lista[lista.length - 1];
+        return `${last.autor || ""} ${last.tresc || ""}`;
+      }
       return row.uwagi ?? "";
+    }
     case "mozna_fakturowac":
       return row.mozna_fakturowac ? 1 : 0;
     default:
@@ -90,7 +88,7 @@ const KOLUMNY_SORT_PLAN = [
   { key: "kr", label: "KR" },
   { key: "klient", label: "Klient" },
   { key: "opis", label: "Opis" },
-  { key: "uwagi", label: "Uwagi" },
+  { key: "uwagi", label: "Uwagi / rozmowa" },
   { key: "kwota", label: "Kwota" },
   { key: "bloker", label: "Bloker" },
   { key: "odpowiedzialny", label: "Odpowiedzialny" },
@@ -99,7 +97,7 @@ const KOLUMNY_SORT_PLAN = [
 
 /**
  * Kolejka planowanych faktur sprzedażowych.
- * Kierownik zaznacza „Można fakturować” — księgowość widzi to w APP / sync.
+ * Uwagi = wątek rozmowy (każdy wpis osobno: kto / kiedy / treść).
  */
 export function PlanFakturPanel({
   supabase,
@@ -111,6 +109,7 @@ export function PlanFakturPanel({
   autorUwagiEmail,
 }) {
   const [rows, setRows] = useState([]);
+  const [komentarzeByPlan, setKomentarzeByPlan] = useState({});
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -118,10 +117,44 @@ export function PlanFakturPanel({
   const [tylkoGotowe, setTylkoGotowe] = useState(false);
   const [tylkoBlokady, setTylkoBlokady] = useState(false);
   const [sort, setSort] = useState({ key: "horyzont", dir: "asc" });
-  /** Drafty uwag podczas edycji: id → tekst. */
-  const [uwagiDraft, setUwagiDraft] = useState({});
-  const [uwagiEdycjaId, setUwagiEdycjaId] = useState(null);
-  const [uwagiZapisId, setUwagiZapisId] = useState(null);
+  const [draftByPlan, setDraftByPlan] = useState({});
+  const [otwartyCzatId, setOtwartyCzatId] = useState(null);
+  const [wysylanieId, setWysylanieId] = useState(null);
+  const [brakTabeliCzat, setBrakTabeliCzat] = useState(false);
+
+  const fetchKomentarze = useCallback(
+    async (planIds) => {
+      const ids = [...new Set((planIds ?? []).map((x) => Number(x)).filter((n) => Number.isFinite(n)))];
+      if (ids.length === 0) {
+        setKomentarzeByPlan({});
+        return;
+      }
+      const { data, error } = await supabase
+        .from("kr_plan_faktury_komentarz")
+        .select("id, plan_id, tresc, autor, autor_email, created_at")
+        .in("plan_id", ids)
+        .order("created_at", { ascending: true });
+      if (error) {
+        const m = String(error.message ?? "");
+        if (/kr_plan_faktury_komentarz|schema cache|PGRST205|does not exist/i.test(m)) {
+          setBrakTabeliCzat(true);
+          setKomentarzeByPlan({});
+          return;
+        }
+        setMsg(`Nie udało się wczytać rozmowy: ${m}`);
+        return;
+      }
+      setBrakTabeliCzat(false);
+      const map = {};
+      for (const k of data ?? []) {
+        const pid = k.plan_id;
+        if (!map[pid]) map[pid] = [];
+        map[pid].push(k);
+      }
+      setKomentarzeByPlan(map);
+    },
+    [supabase],
+  );
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -140,10 +173,13 @@ export function PlanFakturPanel({
           : m,
       );
       setRows([]);
+      setKomentarzeByPlan({});
       return;
     }
-    setRows(data ?? []);
-  }, [supabase]);
+    const list = data ?? [];
+    setRows(list);
+    await fetchKomentarze(list.map((r) => r.id));
+  }, [supabase, fetchKomentarze]);
 
   useEffect(() => {
     void fetchRows();
@@ -163,8 +199,8 @@ export function PlanFakturPanel({
     const { key, dir } = sort;
     const mnoznik = dir === "asc" ? 1 : -1;
     list.sort((a, b) => {
-      const va = wartoscSortPlanFaktur(a, key);
-      const vb = wartoscSortPlanFaktur(b, key);
+      const va = wartoscSortPlanFaktur(a, key, komentarzeByPlan);
+      const vb = wartoscSortPlanFaktur(b, key, komentarzeByPlan);
       let cmp;
       if (typeof va === "number" && typeof vb === "number") {
         cmp = va - vb;
@@ -175,20 +211,17 @@ export function PlanFakturPanel({
       return porownajTekst(a.kr, b.kr) || Number(a.id) - Number(b.id);
     });
     return list;
-  }, [filtered, sort]);
+  }, [filtered, sort, komentarzeByPlan]);
 
   const sumy = useMemo(() => {
-    const by = {};
     let total = 0;
     let gotowe = 0;
     for (const r of filtered) {
-      const k = r.horyzont || "inne";
       const kw = Number(r.kwota_netto) || 0;
-      by[k] = (by[k] || 0) + kw;
       total += kw;
       if (r.mozna_fakturowac) gotowe += kw;
     }
-    return { by, total, gotowe };
+    return { total, gotowe };
   }, [filtered]);
 
   function przestawSort(kolumna) {
@@ -215,105 +248,224 @@ export function PlanFakturPanel({
       setMsg(`Nie udało się zapisać: ${error.message}`);
       return;
     }
-    setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...payload } : r)),
-    );
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...payload } : r)));
     setMsg(next ? "Oznaczono: można fakturować." : "Cofnięto zgodę na fakturowanie.");
   }
 
-  function rozpocznijEdycjeUwag(row) {
-    if (!czyMozeEdytowacUwagi) return;
-    const id = row.id;
-    setUwagiEdycjaId(id);
-    setUwagiDraft((prev) => ({
-      ...prev,
-      [id]: row.uwagi != null ? String(row.uwagi) : "",
-    }));
+  function wiadomosciDlaWiersza(row) {
+    const zBazy = komentarzeByPlan[row.id] ?? [];
+    if (zBazy.length > 0) return zBazy;
+    const legacy = String(row.uwagi ?? "").trim();
+    if (!legacy) return [];
+    return [
+      {
+        id: `legacy-${row.id}`,
+        plan_id: row.id,
+        tresc: legacy,
+        autor: row.uwagi_autor || null,
+        autor_email: row.uwagi_autor_email || null,
+        created_at: row.uwagi_zmieniono_at || row.updated_at || null,
+        _legacy: true,
+      },
+    ];
   }
 
-  function anulujEdycjeUwag(id) {
-    setUwagiEdycjaId((cur) => (cur === id ? null : cur));
-    setUwagiDraft((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }
-
-  async function zapiszUwagi(id) {
+  async function wyslijWiadomosc(planId) {
     if (!czyMozeEdytowacUwagi) {
-      alert("Uwagi mogą zapisywać zalogowane osoby.");
+      alert("Wiadomości mogą dodawać zalogowane osoby.");
       return;
     }
-    const tekst = uwagiDraft[id] != null ? String(uwagiDraft[id]) : "";
-    const row = (rows ?? []).find((r) => r.id === id);
-    const stare = row?.uwagi != null ? String(row.uwagi) : "";
-    if (tekst === stare) {
-      anulujEdycjeUwag(id);
+    if (brakTabeliCzat) {
+      setMsg(
+        "Brak tabeli czatu. Uruchom w Supabase SQL: g4-app/supabase/kr-plan-faktury-komentarz-czat.sql",
+      );
       return;
     }
-    const pusty = tekst.trim() === "";
-    const teraz = new Date().toISOString();
+    const tekst = String(draftByPlan[planId] ?? "").trim();
+    if (!tekst) return;
     const autorNazwa =
       String(autorUwagiNazwa ?? "").trim() ||
       String(autorUwagiEmail ?? "").trim() ||
       "Zalogowany użytkownik";
     const autorEmail = String(autorUwagiEmail ?? "").trim() || null;
-    const payloadZAutorem = pusty
-      ? {
-          uwagi: null,
-          uwagi_autor: null,
-          uwagi_autor_email: null,
-          uwagi_zmieniono_at: null,
-        }
-      : {
-          uwagi: tekst,
-          uwagi_autor: autorNazwa,
-          uwagi_autor_email: autorEmail,
-          uwagi_zmieniono_at: teraz,
-        };
-    const payloadBezAutora = { uwagi: pusty ? null : tekst };
-
+    const payload = {
+      plan_id: planId,
+      tresc: tekst,
+      autor: autorNazwa,
+      autor_email: autorEmail,
+    };
     setMsg(null);
-    setUwagiZapisId(id);
-    let zapisane = payloadZAutorem;
-    let ostrzezenieSql = null;
-    let { error } = await supabase.from("kr_plan_faktury").update(payloadZAutorem).eq("id", id);
+    setWysylanieId(planId);
+    const { data, error } = await supabase
+      .from("kr_plan_faktury_komentarz")
+      .insert([payload])
+      .select("id, plan_id, tresc, autor, autor_email, created_at")
+      .single();
+    setWysylanieId(null);
     if (error) {
       const m = String(error.message ?? "");
-      const brakKolumny =
-        /uwagi_autor|uwagi_zmieniono|column|schema cache|PGRST204|42703/i.test(m);
-      if (brakKolumny) {
-        const retry = await supabase.from("kr_plan_faktury").update(payloadBezAutora).eq("id", id);
-        error = retry.error;
-        zapisane = {
-          ...payloadBezAutora,
-          uwagi_autor: pusty ? null : autorNazwa,
-          uwagi_autor_email: pusty ? null : autorEmail,
-          uwagi_zmieniono_at: pusty ? null : teraz,
-        };
-        if (!error) {
-          ostrzezenieSql =
-            "Zapisano uwagi (bez kolumn autora w bazie). Uruchom SQL: g4-app/supabase/kr-plan-faktury-uwagi-autor.sql";
-        }
+      if (/kr_plan_faktury_komentarz|schema cache|PGRST205|does not exist/i.test(m)) {
+        setBrakTabeliCzat(true);
+        setMsg(
+          "Brak tabeli czatu. Uruchom w Supabase SQL: g4-app/supabase/kr-plan-faktury-komentarz-czat.sql",
+        );
+        return;
       }
-    }
-    setUwagiZapisId(null);
-    if (error) {
-      setMsg(`Nie udało się zapisać uwag: ${error.message}`);
+      setMsg(`Nie udało się wysłać: ${m}`);
       return;
     }
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...zapisane } : r)));
-    anulujEdycjeUwag(id);
-    setMsg(
-      ostrzezenieSql ||
-        (pusty ? "Wyczyszczono uwagi." : `Zapisano uwagi — ${autorNazwa}.`),
-    );
+    setKomentarzeByPlan((prev) => ({
+      ...prev,
+      [planId]: [...(prev[planId] ?? []), data],
+    }));
+    setDraftByPlan((prev) => ({ ...prev, [planId]: "" }));
+    setMsg(`Dodano wpis — ${autorNazwa}.`);
   }
 
   const st = s || {};
   const shell = op || {};
   const moznaUwagi = Boolean(czyMozeEdytowacUwagi);
+
+  function renderCzatKomorka(row) {
+    const wiadomosci = wiadomosciDlaWiersza(row);
+    const otwarty = otwartyCzatId === row.id;
+    const ostatnia = wiadomosci.length ? wiadomosci[wiadomosci.length - 1] : null;
+
+    return (
+      <div style={{ display: "grid", gap: "0.35rem", minWidth: "14rem", maxWidth: "22rem" }}>
+        {!otwarty ? (
+          <button
+            type="button"
+            onClick={() => setOtwartyCzatId(row.id)}
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "left",
+              background: "rgba(15,23,42,0.55)",
+              border: "1px dashed rgba(251,146,60,0.55)",
+              borderRadius: "8px",
+              padding: "0.4rem 0.5rem",
+              color: "#e2e8f0",
+              cursor: "pointer",
+              font: "inherit",
+              fontSize: "0.78rem",
+              lineHeight: 1.35,
+            }}
+          >
+            {ostatnia ? (
+              <>
+                <span style={{ display: "block", whiteSpace: "pre-wrap" }}>
+                  {String(ostatnia.tresc).slice(0, 120)}
+                  {String(ostatnia.tresc).length > 120 ? "…" : ""}
+                </span>
+                <span style={{ display: "block", marginTop: "0.25rem", fontSize: "0.7rem", color: "#94a3b8" }}>
+                  {ostatnia.autor || "—"} · {formatDataUwag(ostatnia.created_at) || "—"}
+                  {wiadomosci.length > 1 ? ` · ${wiadomosci.length} wpisów` : ""}
+                  {" · otwórz rozmowę"}
+                </span>
+              </>
+            ) : (
+              <span style={{ color: "#fdba74" }}>＋ Otwórz rozmowę / dodaj wpis…</span>
+            )}
+          </button>
+        ) : (
+          <div
+            style={{
+              border: "1px solid rgba(148,163,184,0.35)",
+              borderRadius: "10px",
+              background: "rgba(15,23,42,0.85)",
+              padding: "0.45rem",
+              display: "grid",
+              gap: "0.4rem",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", alignItems: "center" }}>
+              <strong style={{ fontSize: "0.75rem", color: "#fdba74" }}>Rozmowa</strong>
+              <button
+                type="button"
+                style={{ ...(st.btnGhost || {}), fontSize: "0.7rem", padding: "0.1rem 0.4rem" }}
+                onClick={() => setOtwartyCzatId(null)}
+              >
+                Zwiń
+              </button>
+            </div>
+            <div
+              style={{
+                maxHeight: "11rem",
+                overflowY: "auto",
+                display: "grid",
+                gap: "0.4rem",
+                paddingRight: "0.15rem",
+              }}
+            >
+              {wiadomosci.length === 0 ? (
+                <span style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Brak wpisów — napisz pierwszą wiadomość.</span>
+              ) : (
+                wiadomosci.map((w) => (
+                  <div
+                    key={w.id}
+                    style={{
+                      padding: "0.35rem 0.45rem",
+                      borderRadius: "8px",
+                      background: "rgba(30,41,59,0.9)",
+                      border: "1px solid rgba(148,163,184,0.2)",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.68rem", color: "#94a3b8", marginBottom: "0.15rem" }}>
+                      <strong style={{ color: "#fdba74" }}>{w.autor || w.autor_email || "—"}</strong>
+                      {" · "}
+                      {formatDataUwag(w.created_at) || "—"}
+                      {w._legacy ? " · (stary wpis)" : ""}
+                    </div>
+                    <div style={{ whiteSpace: "pre-wrap", color: "#e2e8f0", fontSize: "0.78rem" }}>{w.tresc}</div>
+                  </div>
+                ))
+              )}
+            </div>
+            {moznaUwagi ? (
+              <div style={{ display: "grid", gap: "0.3rem" }}>
+                <textarea
+                  value={draftByPlan[row.id] ?? ""}
+                  onChange={(e) => setDraftByPlan((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                  rows={2}
+                  disabled={wysylanieId === row.id}
+                  placeholder="Napisz wiadomość…"
+                  style={{
+                    width: "100%",
+                    resize: "vertical",
+                    minHeight: "2.6rem",
+                    padding: "0.35rem 0.45rem",
+                    borderRadius: "8px",
+                    border: "1px solid rgba(148,163,184,0.45)",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    font: "inherit",
+                    fontSize: "0.78rem",
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      void wyslijWiadomosc(row.id);
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  style={{ ...(st.btn || {}), fontSize: "0.74rem", padding: "0.25rem 0.55rem" }}
+                  disabled={wysylanieId === row.id || !(draftByPlan[row.id] ?? "").trim()}
+                  onClick={() => void wyslijWiadomosc(row.id)}
+                >
+                  {wysylanieId === row.id ? "Wysyłanie…" : "Wyślij"}
+                </button>
+              </div>
+            ) : (
+              <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Zaloguj się, aby dopisać wiadomość.</span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ ...(shell.sectionCard || {}), marginTop: "0.85rem" }}>
@@ -321,16 +473,16 @@ export function PlanFakturPanel({
         Plan faktur sprzedażowych ({filtered.length})
       </h3>
       <p style={{ ...(st.muted || {}), marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem" }}>
-        To jest lista od prezesa (lipiec → 2027). <strong>Kierownik</strong> zaznacza „Można fakturować”, gdy
-        protokół / klauzula / zakres są OK — wtedy księgowość wie, że może wystawić FS, bez pytania na spotkaniu.
-        {moznaUwagi ? (
-          <>
-            {" "}
-            Kolumnę <strong>Uwagi</strong> może edytować każda zalogowana osoba — przy zapisie widać{" "}
-            <strong>kto</strong> i <strong>kiedy</strong> wpisał.
-          </>
-        ) : null}
+        To jest lista od prezesa (lipiec → 2027). <strong>Kierownik</strong> zaznacza „Można fakturować”. Kolumna{" "}
+        <strong>Uwagi / rozmowa</strong> działa jak czat: każdy dopisuje swoją wiadomość — widać kto, kiedy i co napisał
+        (nie nadpisuje poprzednich).
       </p>
+      {brakTabeliCzat ? (
+        <div style={{ ...(st.errBox || {}), marginBottom: "0.75rem" }} role="alert">
+          Brak tabeli czatu w bazie. Uruchom w Supabase SQL Editor:{" "}
+          <code style={st.code}>g4-app/supabase/kr-plan-faktury-komentarz-czat.sql</code>
+        </div>
+      ) : null}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "0.75rem", alignItems: "center" }}>
         <label style={{ fontSize: "0.84rem" }}>
@@ -443,97 +595,7 @@ export function PlanFakturPanel({
                     </td>
                     <td style={st.td}>{r.klient || "—"}</td>
                     <td style={{ ...(st.td || {}), maxWidth: "18rem" }}>{r.opis || "—"}</td>
-                    <td style={{ ...(st.td || {}), maxWidth: "16rem", fontSize: "0.78rem", minWidth: "11rem" }}>
-                      {moznaUwagi && uwagiEdycjaId === r.id ? (
-                        <div style={{ display: "grid", gap: "0.35rem" }}>
-                          <textarea
-                            value={uwagiDraft[r.id] ?? ""}
-                            onChange={(e) =>
-                              setUwagiDraft((prev) => ({ ...prev, [r.id]: e.target.value }))
-                            }
-                            rows={3}
-                            disabled={uwagiZapisId === r.id}
-                            style={{
-                              width: "100%",
-                              resize: "vertical",
-                              minHeight: "3.2rem",
-                              padding: "0.35rem 0.45rem",
-                              borderRadius: "8px",
-                              border: "1px solid rgba(148,163,184,0.45)",
-                              background: "#0f172a",
-                              color: "#e2e8f0",
-                              font: "inherit",
-                              fontSize: "0.78rem",
-                            }}
-                            autoFocus
-                            placeholder="Wpisz uwagi…"
-                          />
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-                            <button
-                              type="button"
-                              style={{ ...(st.btn || {}), fontSize: "0.74rem", padding: "0.2rem 0.5rem" }}
-                              disabled={uwagiZapisId === r.id}
-                              onClick={() => void zapiszUwagi(r.id)}
-                            >
-                              {uwagiZapisId === r.id ? "Zapis…" : "Zapisz"}
-                            </button>
-                            <button
-                              type="button"
-                              style={{ ...(st.btnGhost || {}), fontSize: "0.74rem", padding: "0.2rem 0.5rem" }}
-                              disabled={uwagiZapisId === r.id}
-                              onClick={() => anulujEdycjeUwag(r.id)}
-                            >
-                              Anuluj
-                            </button>
-                          </div>
-                        </div>
-                      ) : moznaUwagi ? (
-                        <button
-                          type="button"
-                          onClick={() => rozpocznijEdycjeUwag(r)}
-                          title="Edytuj uwagi"
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            textAlign: "left",
-                            background: "rgba(15,23,42,0.55)",
-                            border: "1px dashed rgba(251,146,60,0.55)",
-                            borderRadius: "8px",
-                            padding: "0.35rem 0.45rem",
-                            color: r.uwagi ? "#e2e8f0" : "#fdba74",
-                            cursor: "pointer",
-                            font: "inherit",
-                            fontSize: "0.78rem",
-                            lineHeight: 1.35,
-                            whiteSpace: "pre-wrap",
-                          }}
-                        >
-                          {r.uwagi?.trim() ? r.uwagi : "＋ Dodaj uwagi…"}
-                          {podpisAutoraUwag(r) ? (
-                            <span
-                              style={{
-                                display: "block",
-                                marginTop: "0.28rem",
-                                fontSize: "0.7rem",
-                                color: "#94a3b8",
-                                fontWeight: 600,
-                              }}
-                            >
-                              — {podpisAutoraUwag(r)}
-                            </span>
-                          ) : null}
-                        </button>
-                      ) : (
-                        <div>
-                          <div>{r.uwagi || "—"}</div>
-                          {podpisAutoraUwag(r) ? (
-                            <div style={{ marginTop: "0.25rem", fontSize: "0.7rem", color: "#94a3b8" }}>
-                              — {podpisAutoraUwag(r)}
-                            </div>
-                          ) : null}
-                        </div>
-                      )}
-                    </td>
+                    <td style={{ ...(st.td || {}), verticalAlign: "top" }}>{renderCzatKomorka(r)}</td>
                     <td style={{ ...(st.td || {}), whiteSpace: "nowrap" }}>{formatPln(r.kwota_netto)}</td>
                     <td style={st.td}>{BLOKER_LABEL[r.bloker] || r.bloker || "—"}</td>
                     <td style={st.td}>{r.odpowiedzialny || "—"}</td>
