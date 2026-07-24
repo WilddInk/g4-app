@@ -19516,6 +19516,48 @@ export default function App() {
             <span title="Automatyczne alerty">Alerty: {listaAlertowOperacyjnych.length}</span>
             <span title="KR z podświetleniem">Uwaga KR: {liczbaTematowUwagi}</span>
           </div>
+          {czyMozeWidziecFakturowanie ? (
+            <>
+              <div style={{ ...op.navSectionLabel }}>💶 FAKTUROWANIE</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
+                {[
+                  {
+                    id: "fakturowanie_etapy",
+                    label: "Etapy fakturowania",
+                    sekcja: "etapy",
+                    help: "Etapy procesu fakturowania projektów (w przygotowaniu).",
+                  },
+                  {
+                    id: "fakturowanie_protokoly",
+                    label: "Protokoły odbioru",
+                    sekcja: "protokoly",
+                    help: "Protokoły odbioru prac — baza pod faktury sprzedażowe (w przygotowaniu).",
+                  },
+                  {
+                    id: "fakturowanie_faktury",
+                    label: "Faktury",
+                    sekcja: "faktury",
+                    help: "Faktury sprzedażowe / rozliczeniowe (w przygotowaniu).",
+                  },
+                ].map((b) => (
+                  <div key={b.id}>
+                    <button
+                      type="button"
+                      style={{
+                        ...op.navBtn,
+                        ...(widok === "fakturowanie" && fakturowanieSekcja === b.sekcja ? op.navBtnActive : {}),
+                        marginBottom: 0,
+                      }}
+                      onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoFakturowania(b.sekcja))}
+                    >
+                      {etykietaMenuZIkona(b.id, b.label)}
+                    </button>
+                    <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
           <div style={{ ...op.navSectionLabel }}>KR</div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
             {[
@@ -20002,48 +20044,6 @@ export default function App() {
               </div>
             ))}
           </div>
-          {czyMozeWidziecFakturowanie ? (
-            <>
-              <div style={{ ...op.navSectionLabel }}>💶 FAKTUROWANIE</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
-                {[
-                  {
-                    id: "fakturowanie_etapy",
-                    label: "Etapy fakturowania",
-                    sekcja: "etapy",
-                    help: "Etapy procesu fakturowania projektów (w przygotowaniu).",
-                  },
-                  {
-                    id: "fakturowanie_protokoly",
-                    label: "Protokoły odbioru",
-                    sekcja: "protokoly",
-                    help: "Protokoły odbioru prac — baza pod faktury sprzedażowe (w przygotowaniu).",
-                  },
-                  {
-                    id: "fakturowanie_faktury",
-                    label: "Faktury",
-                    sekcja: "faktury",
-                    help: "Faktury sprzedażowe / rozliczeniowe (w przygotowaniu).",
-                  },
-                ].map((b) => (
-                  <div key={b.id}>
-                    <button
-                      type="button"
-                      style={{
-                        ...op.navBtn,
-                        ...(widok === "fakturowanie" && fakturowanieSekcja === b.sekcja ? op.navBtnActive : {}),
-                        marginBottom: 0,
-                      }}
-                      onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoFakturowania(b.sekcja))}
-                    >
-                      {etykietaMenuZIkona(b.id, b.label)}
-                    </button>
-                    <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : null}
         </aside>
       </div>
     </div>
