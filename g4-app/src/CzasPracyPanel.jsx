@@ -721,7 +721,10 @@ export function CzasPracyPanel({
     [rok, miesiac, wpisyPoDniu],
   );
   const brakiGodzinSet = useMemo(() => new Set(brakiGodzinPoprzednichDni), [brakiGodzinPoprzednichDni]);
-  const blokadaDodawaniaPrzezBraki = brakiGodzinPoprzednichDni.length > 0;
+  /** Na razie wyłączone: alarm i blokada „uzupełnij zaległe godziny”. */
+  const POKAZUJ_ALARMY_BRAKOW_GODZIN = false;
+  const blokadaDodawaniaPrzezBraki =
+    POKAZUJ_ALARMY_BRAKOW_GODZIN && brakiGodzinPoprzednichDni.length > 0;
 
   useEffect(() => {
     if (!blokadaDodawaniaPrzezBraki) {

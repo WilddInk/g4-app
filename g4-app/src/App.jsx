@@ -1963,6 +1963,8 @@ export default function App() {
     error: null,
     dni: [],
   });
+  /** Na razie wyłączone: migający banner „uzupełnij godziny” na dashboardzie. */
+  const POKAZUJ_ALARMY_BRAKOW_GODZIN = false;
   const [dashboardBrakiBlink, setDashboardBrakiBlink] = useState(true);
 
   const [podwykonawcyList, setPodwykonawcyList] = useState([]);
@@ -2019,8 +2021,9 @@ export default function App() {
   /** Pełna baza faktur kosztowych (nie tylko „do zapłaty”) — osobny moduł. */
   const [fakturyKosztoweList, setFakturyKosztoweList] = useState([]);
   const [fakturySekcja, setFakturySekcja] = useState("wszystkie");
-  /** Sekcja menu FAKTUROWANIE: plan_faktur | etapy | protokoly | faktury. */
-  const [fakturowanieSekcja, setFakturowanieSekcja] = useState("plan_faktur");
+  /** Sekcja menu FAKTUROWANIE: etapy | protokoly | faktury. */
+  const [fakturowanieSekcja, setFakturowanieSekcja] = useState("biezace_kr");
+  const [fakturowanieBiezaceKrMsg, setFakturowanieBiezaceKrMsg] = useState(null);
   const [fakturyPodwykonawcaFiltrNazwa, setFakturyPodwykonawcaFiltrNazwa] = useState("");
   const [fakturyKosztoweFetchError, setFakturyKosztoweFetchError] = useState(null);
   const [fakturyKosztoweLadowanieListy, setFakturyKosztoweLadowanieListy] = useState(false);
@@ -3516,10 +3519,10 @@ export default function App() {
     }
   }
 
-  /** Moduł FAKTUROWANIE (plan faktur / etapy / protokoły / faktury) — tylko admin i kierownik. */
-  function przejdzDoFakturowania(sekcja = "plan_faktur") {
-    const dozwolone = ["plan_faktur", "etapy", "protokoly", "faktury"];
-    const s = dozwolone.includes(sekcja) ? sekcja : "plan_faktur";
+  /** Moduł FAKTUROWANIE (bieżące KR / etapy / protokoły / faktury) — tylko admin i kierownik. */
+  function przejdzDoFakturowania(sekcja = "biezace_kr") {
+    const dozwolone = ["biezace_kr", "plan_faktur", "etapy", "protokoly", "faktury"];
+    const s = dozwolone.includes(sekcja) ? sekcja : "biezace_kr";
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
     setWidokLogDlaKr(null);
@@ -3540,7 +3543,39 @@ export default function App() {
     setPwForm(podwykonawcaPustyForm());
     setFakturowanieSekcja(s);
     setWidok("fakturowanie");
+    setFakturowanieBiezaceKrMsg(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function ustawFakturowanieWTrakcie(krKod, wartosc) {
+    if (!czyMozeWidziecFakturowanie) {
+      alert("Zmianę flagi fakturowania mogą zapisać tylko kierownik lub administrator.");
+      return;
+    }
+    const k = String(krKod ?? "").trim();
+    if (!k) return;
+    const next = Boolean(wartosc);
+    setFakturowanieBiezaceKrMsg(null);
+    const { error } = await supabase.from("kr").update({ fakturowanie_w_trakcie: next }).eq("kr", k);
+    if (error) {
+      const msg = String(error.message ?? "");
+      const brakKolumny =
+        /fakturowanie_w_trakcie/i.test(msg) ||
+        /column/i.test(msg) ||
+        error.code === "PGRST204" ||
+        error.code === "42703";
+      setFakturowanieBiezaceKrMsg(
+        brakKolumny
+          ? "Brak kolumny fakturowanie_w_trakcie w bazie. Uruchom w SQL Editor: g4-app/supabase/kr-fakturowanie-w-trakcie.sql"
+          : `Nie udało się zapisać: ${msg}`,
+      );
+      return;
+    }
+    setKrZApiPelen((prev) =>
+      (prev ?? []).map((row) =>
+        String(row.kr ?? "").trim() === k ? { ...row, fakturowanie_w_trakcie: next } : row,
+      ),
+    );
   }
 
   function przejdzDoFakturPodwykonawcyFirmy(nazwaFirmy) {
@@ -5306,6 +5341,20 @@ export default function App() {
   /** Menu i widoki FAKTUROWANIE — tylko administrator i kierownik. */
   const czyMozeWidziecFakturowanie = czyAdminAktywny || czyKierownikAktywny;
 
+  /** Bieżące KR do fakturowania: status projektu „w trakcie” albo flaga fakturowanie_w_trakcie. */
+  const fakturowanieBiezaceKrList = useMemo(() => {
+    return (krList ?? [])
+      .filter((row) => {
+        const st = String(row?.status ?? "").trim().toLowerCase();
+        const flaga = row?.fakturowanie_w_trakcie === true || row?.fakturowanie_w_trakcie === "true";
+        return st === "w trakcie" || flaga;
+      })
+      .slice()
+      .sort((a, b) =>
+        String(a.kr ?? "").localeCompare(String(b.kr ?? ""), "pl", { sensitivity: "base", numeric: true }),
+      );
+  }, [krList]);
+
   async function zglosWykonanieZadania(rowId) {
     const nr =
       pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
@@ -5792,12 +5841,14 @@ export default function App() {
   }, [widok, pracownikWidokEfektywny?.nr]);
 
   useEffect(() => {
+    if (!POKAZUJ_ALARMY_BRAKOW_GODZIN) return;
     if (widok !== "dashboard") return;
     if (requireAuth && !session?.user) return;
     void fetchDashboardBrakiGodzin();
   }, [widok, requireAuth, session?.user, pracownikWidokEfektywny?.nr]);
 
   useEffect(() => {
+    if (!POKAZUJ_ALARMY_BRAKOW_GODZIN) return;
     if (dashboardBrakiGodzin.dni.length === 0) {
       setDashboardBrakiBlink(true);
       return;
@@ -7183,6 +7234,37 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  /** Szybka zmiana samego statusu KR (bez otwierania pełnej edycji). */
+  async function ustawStatusKrSzybko(krKod, nowyStatus) {
+    const k = String(krKod ?? "").trim();
+    if (!k) return;
+    const raw = String(nowyStatus ?? "").trim();
+    const statusDoBazy = raw === "" ? null : KR_STATUS_W_BAZIE.includes(raw) ? raw : null;
+    if (raw !== "" && statusDoBazy === null) {
+      alert("Nieprawidłowy status. Wybierz jedną z opcji listy.");
+      return;
+    }
+    const { error } = await supabase.from("kr").update({ status: statusDoBazy }).eq("kr", k);
+    if (error) {
+      console.error(error);
+      alert(
+        "Zmiana statusu KR: " +
+          error.message +
+          "\n\nJeśli to brak uprawnień — uruchom rls-policies-anon.sql albo kr-rls-update-admin-kierownik.sql.",
+      );
+      return;
+    }
+    setKrZApiPelen((prev) =>
+      (prev ?? []).map((row) =>
+        String(row.kr ?? "").trim() === k ? { ...row, status: statusDoBazy } : row,
+      ),
+    );
+    setEditForm((prev) => {
+      if (!prev || String(editingKrKey ?? "").trim() !== k) return prev;
+      return { ...prev, status: statusDoBazy ?? "" };
+    });
+  }
+
   function cancelEditKr() {
     setEditingKrKey(null);
   }
@@ -7669,6 +7751,7 @@ export default function App() {
       sprzet: "🛠️",
       samochody: "🚗",
       pracownik: "👥",
+      fakturowanie_biezace_kr: "📌",
       fakturowanie_plan: "📋",
       fakturowanie_etapy: "📑",
       fakturowanie_protokoly: "📝",
@@ -10223,7 +10306,7 @@ export default function App() {
               <span style={{ color: theme.danger }}>G</span>
               4 Geodezja · Panel przepływu informacji
             </h1>
-            {dashboardBrakiGodzin.dni.length > 0 ? (
+            {POKAZUJ_ALARMY_BRAKOW_GODZIN && dashboardBrakiGodzin.dni.length > 0 ? (
               <div
                 role="alert"
                 style={{
@@ -10485,7 +10568,7 @@ export default function App() {
                         )}
                       </p>
                     ) : null}
-                    {dashboardBrakiGodzin.error ? (
+                    {POKAZUJ_ALARMY_BRAKOW_GODZIN && dashboardBrakiGodzin.error ? (
                       <div
                         style={{
                           ...s.errBox,
@@ -10497,7 +10580,9 @@ export default function App() {
                         <strong>! Brak statusu godzin.</strong> {dashboardBrakiGodzin.error}
                       </div>
                     ) : null}
-                    {!dashboardBrakiGodzin.error && dashboardBrakiGodzin.dni.length > 0 ? (
+                    {POKAZUJ_ALARMY_BRAKOW_GODZIN &&
+                    !dashboardBrakiGodzin.error &&
+                    dashboardBrakiGodzin.dni.length > 0 ? (
                       <div
                         role="alert"
                         style={{
@@ -13562,8 +13647,10 @@ export default function App() {
             <>
               <div style={op.heroCard}>
                 <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>
-                  {fakturowanieSekcja === "plan_faktur"
-                    ? "Plan faktur (kolejka FS)"
+                  {fakturowanieSekcja === "biezace_kr"
+                    ? "Bieżące KR"
+                    : fakturowanieSekcja === "plan_faktur"
+                      ? "Plan faktur (kolejka FS)"
                     : fakturowanieSekcja === "etapy"
                       ? "Etapy fakturowania"
                       : fakturowanieSekcja === "protokoly"
@@ -13571,8 +13658,10 @@ export default function App() {
                         : "Faktury"}
                 </h2>
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
-                  {fakturowanieSekcja === "plan_faktur"
-                    ? "Planowane faktury sprzedażowe z listy prezesa. Kierownik zaznacza „można fakturować” — wtedy księgowość wie, że wolno wystawić FS."
+                  {fakturowanieSekcja === "biezace_kr"
+                    ? "Lista KR ze statusem „w trakcie” (projekty bieżące). Kolumna „W trakcie fakturowania” to osobna flaga w bazie — włącz ją dla KR, które aktualnie rozliczacie."
+                    : fakturowanieSekcja === "plan_faktur"
+                      ? "Planowane faktury sprzedażowe z listy prezesa. Kierownik zaznacza „można fakturować” — wtedy księgowość wie, że wolno wystawić FS."
                     : fakturowanieSekcja === "etapy"
                       ? "Tu pojawią się etapy procesu fakturowania projektów (statusy, kolejność, powiązanie z KR)."
                       : fakturowanieSekcja === "protokoly"
@@ -13580,6 +13669,7 @@ export default function App() {
                         : "Tu pojawią się faktury sprzedażowe / rozliczeniowe (osobno od faktur kosztowych w OSOBISTE)."}
                 </p>
               </div>
+
               {fakturowanieSekcja === "plan_faktur" ? (
                 <PlanFakturPanel
                   supabase={supabase}
@@ -13587,6 +13677,130 @@ export default function App() {
                   op={op}
                   czyMozeEdytowac={czyMozeWidziecFakturowanie}
                 />
+              ) : null}
+
+              {fakturowanieSekcja === "biezace_kr" ? (
+                <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
+                  <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.35rem" }}>
+                    Bieżące KR ({fakturowanieBiezaceKrList.length})
+                  </h3>
+                  <p style={{ ...op.muted, marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem" }}>
+                    Pokazuję KR ze statusem projektu <strong>w trakcie</strong> oraz te z włączoną flagą{" "}
+                    <strong>fakturowanie_w_trakcie</strong>. Jeśli flaga nie zapisuje się — uruchom w Supabase SQL:{" "}
+                    <code style={s.code}>g4-app/supabase/kr-fakturowanie-w-trakcie.sql</code>.
+                  </p>
+                  {fakturowanieBiezaceKrMsg ? (
+                    <div style={{ ...s.errBox, marginBottom: "0.85rem" }} role="alert">
+                      {fakturowanieBiezaceKrMsg}
+                    </div>
+                  ) : null}
+                  {krFetchError ? (
+                    <div style={{ ...s.errBox, marginBottom: "0.85rem" }} role="alert">
+                      Błąd pobierania KR: {krFetchError}
+                    </div>
+                  ) : null}
+                  {fakturowanieBiezaceKrList.length === 0 ? (
+                    <p style={s.muted}>
+                      Brak bieżących KR — ustaw status projektu na „w trakcie” albo włącz flagę fakturowania.
+                    </p>
+                  ) : (
+                    <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "auto" }}>
+                      <table style={{ ...s.table, fontSize: "0.84rem" }}>
+                        <thead>
+                          <tr>
+                            <th style={s.th}>KR</th>
+                            <th style={s.th}>Obiekt</th>
+                            <th style={s.th}>Dział</th>
+                            <th style={s.th}>Osoba prowadząca</th>
+                            <th style={s.th}>Status projektu</th>
+                            <th style={s.th}>W trakcie fakturowania</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fakturowanieBiezaceKrList.map((row) => {
+                            const k = String(row.kr ?? "").trim();
+                            const flaga =
+                              row?.fakturowanie_w_trakcie === true || row?.fakturowanie_w_trakcie === "true";
+                            const st = String(row?.status ?? "").trim() || "—";
+                            return (
+                              <tr key={k || row.id}>
+                                <td style={s.td}>
+                                  <button
+                                    type="button"
+                                    style={{
+                                      ...s.btnGhost,
+                                      padding: "0.1rem 0.35rem",
+                                      fontWeight: 700,
+                                      color: "#fdba74",
+                                    }}
+                                    onClick={() => {
+                                      setWidok("kr");
+                                      setKrMenu2Rozwiniete(true);
+                                      setKrSekcjaMenu2("informacje");
+                                      setWybranyKrKlucz(k);
+                                      przejdzDoSekcjiKr(row, "przeglad");
+                                    }}
+                                  >
+                                    {k || "—"}
+                                  </button>
+                                </td>
+                                <td style={s.td}>{String(row.nazwa_obiektu ?? "").trim() || "—"}</td>
+                                <td style={s.td}>{String(row.dzial ?? "").trim() || "—"}</td>
+                                <td style={s.td}>
+                                  {(() => {
+                                    const nr = String(row.osoba_prowadzaca ?? "").trim();
+                                    if (!nr) return "—";
+                                    const p = pracownicy.find((x) => String(x.nr).trim() === nr);
+                                    return p?.imie_nazwisko ? `${nr} — ${p.imie_nazwisko}` : nr;
+                                  })()}
+                                </td>
+                                <td style={s.td}>
+                                  <span
+                                    style={{
+                                      display: "inline-block",
+                                      padding: "0.12rem 0.45rem",
+                                      borderRadius: "999px",
+                                      fontSize: "0.75rem",
+                                      fontWeight: 650,
+                                      background:
+                                        st.toLowerCase() === "w trakcie"
+                                          ? "rgba(56,189,248,0.18)"
+                                          : "rgba(148,163,184,0.12)",
+                                      color: st.toLowerCase() === "w trakcie" ? "#7dd3fc" : "#cbd5e1",
+                                      border: "1px solid rgba(148,163,184,0.25)",
+                                    }}
+                                  >
+                                    {st}
+                                  </span>
+                                </td>
+                                <td style={s.td}>
+                                  <label
+                                    style={{
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: "0.4rem",
+                                      cursor: "pointer",
+                                      fontSize: "0.82rem",
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={flaga}
+                                      onChange={(ev) => void ustawFakturowanieWTrakcie(k, ev.target.checked)}
+                                    />
+                                    <span style={{ color: flaga ? "#86efac" : "#94a3b8" }}>
+                                      {flaga ? "Tak" : "Nie"}
+                                    </span>
+                                  </label>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
                   <p style={{ ...op.muted, margin: 0, fontSize: "0.9rem" }}>
@@ -19271,7 +19485,53 @@ export default function App() {
                         {item.kr}
                       </span>
                       {wierszUwaga ? <OpStatusBadge variant="danger">Uwaga</OpStatusBadge> : null}
-                      {st ? <OpStatusBadge variant={badgeVariantDlaStatusuKr(st)}>{st}</OpStatusBadge> : null}
+                      <label
+                        style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
+                        onClick={(ev) => ev.stopPropagation()}
+                        onKeyDown={(ev) => ev.stopPropagation()}
+                      >
+                        <span style={{ ...s.muted, fontSize: "0.68rem", fontWeight: 700 }}>Status</span>
+                        <select
+                          aria-label={`Status KR ${item.kr}`}
+                          title="Szybka zmiana statusu"
+                          value={st || ""}
+                          onClick={(ev) => ev.stopPropagation()}
+                          onChange={(ev) => {
+                            ev.stopPropagation();
+                            void ustawStatusKrSzybko(item.kr, ev.target.value);
+                          }}
+                          style={{
+                            ...s.input,
+                            width: "auto",
+                            minWidth: "11.5rem",
+                            margin: 0,
+                            padding: "0.28rem 0.45rem",
+                            fontSize: "0.78rem",
+                            fontWeight: 650,
+                            borderRadius: "999px",
+                            borderColor:
+                              badgeVariantDlaStatusuKr(st) === "danger"
+                                ? "rgba(248,113,113,0.55)"
+                                : badgeVariantDlaStatusuKr(st) === "ok"
+                                  ? "rgba(74,222,128,0.45)"
+                                  : "rgba(56,189,248,0.45)",
+                            color:
+                              badgeVariantDlaStatusuKr(st) === "danger"
+                                ? "#fecaca"
+                                : badgeVariantDlaStatusuKr(st) === "ok"
+                                  ? "#bbf7d0"
+                                  : "#bae6fd",
+                            background: "rgba(15,23,42,0.85)",
+                          }}
+                        >
+                          <option value="">— brak —</option>
+                          {KR_STATUS_W_BAZIE.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       <span style={{ color: theme.text, fontWeight: 650 }}>
                         {item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "—"}
                       </span>
@@ -19536,6 +19796,12 @@ export default function App() {
               <div style={{ ...op.navSectionLabel }}>💶 FAKTUROWANIE</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
                 {[
+                  {
+                    id: "fakturowanie_biezace_kr",
+                    label: "Bieżące KR",
+                    sekcja: "biezace_kr",
+                    help: "Tylko KR bieżące (status „w trakcie”) — flaga fakturowania w trakcie.",
+                  },
                   {
                     id: "fakturowanie_plan",
                     label: "Plan faktur FS",
