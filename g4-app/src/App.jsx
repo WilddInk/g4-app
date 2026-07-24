@@ -2018,6 +2018,8 @@ export default function App() {
   /** Pełna baza faktur kosztowych (nie tylko „do zapłaty”) — osobny moduł. */
   const [fakturyKosztoweList, setFakturyKosztoweList] = useState([]);
   const [fakturySekcja, setFakturySekcja] = useState("wszystkie");
+  /** Sekcja menu FAKTUROWANIE: etapy | protokoly | faktury. */
+  const [fakturowanieSekcja, setFakturowanieSekcja] = useState("etapy");
   const [fakturyPodwykonawcaFiltrNazwa, setFakturyPodwykonawcaFiltrNazwa] = useState("");
   const [fakturyKosztoweFetchError, setFakturyKosztoweFetchError] = useState(null);
   const [fakturyKosztoweLadowanieListy, setFakturyKosztoweLadowanieListy] = useState(false);
@@ -3513,6 +3515,33 @@ export default function App() {
     }
   }
 
+  /** Moduł FAKTUROWANIE (etapy / protokoły / faktury) — tylko admin i kierownik. */
+  function przejdzDoFakturowania(sekcja = "etapy") {
+    const dozwolone = ["etapy", "protokoly", "faktury"];
+    const s = dozwolone.includes(sekcja) ? sekcja : "etapy";
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setFakturowanieSekcja(s);
+    setWidok("fakturowanie");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function przejdzDoFakturPodwykonawcyFirmy(nazwaFirmy) {
     const nazwa = String(nazwaFirmy ?? "").trim();
     przejdzDoFaktur("podwykonawcy");
@@ -4704,11 +4733,22 @@ export default function App() {
       return;
     }
     let mounted = true;
-    supabase.auth.getSession().then(({ data: { session: sess } }) => {
+    const authTimeoutMs = 12_000;
+    const authTimeout = window.setTimeout(() => {
       if (!mounted) return;
-      setSession(sess);
       setAuthReady(true);
-    });
+    }, authTimeoutMs);
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: sess } }) => {
+        if (!mounted) return;
+        setSession(sess);
+        setAuthReady(true);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setAuthReady(true);
+      });
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, sess) => {
@@ -4719,6 +4759,7 @@ export default function App() {
     });
     return () => {
       mounted = false;
+      window.clearTimeout(authTimeout);
       subscription.unsubscribe();
     };
   }, []);
@@ -5261,6 +5302,8 @@ export default function App() {
   const czyPelnaEwidencjaSprzetu = czyAdminAktywny || czyKierownikAktywny;
   const czyMozeEdytowacTickTeren = czyAdminAktywny || czyKierownikAktywny;
   const czyMozeObslugiwacAppTickety = czyAdminAktywny || czyKierownikAktywny;
+  /** Menu i widoki FAKTUROWANIE — tylko administrator i kierownik. */
+  const czyMozeWidziecFakturowanie = czyAdminAktywny || czyKierownikAktywny;
 
   async function zglosWykonanieZadania(rowId) {
     const nr =
@@ -7625,6 +7668,9 @@ export default function App() {
       sprzet: "🛠️",
       samochody: "🚗",
       pracownik: "👥",
+      fakturowanie_etapy: "📑",
+      fakturowanie_protokoly: "📝",
+      fakturowanie_faktury: "💶",
     };
     const ico = ikony[id] ?? "•";
     return `${ico} ${label}`;
@@ -13500,6 +13546,42 @@ export default function App() {
               </form>
             </div>
           ) : null}
+        </>
+      ) : null}
+
+      {widok === "fakturowanie" ? (
+        <>
+          {!czyMozeWidziecFakturowanie ? (
+            <div style={s.hintBox} role="status">
+              Moduł <strong>Fakturowanie</strong> jest dostępny tylko dla <strong>kierownika</strong> i{" "}
+              <strong>administratora</strong>.
+            </div>
+          ) : (
+            <>
+              <div style={op.heroCard}>
+                <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>
+                  {fakturowanieSekcja === "etapy"
+                    ? "Etapy fakturowania"
+                    : fakturowanieSekcja === "protokoly"
+                      ? "Protokoły odbioru"
+                      : "Faktury"}
+                </h2>
+                <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
+                  {fakturowanieSekcja === "etapy"
+                    ? "Tu pojawią się etapy procesu fakturowania projektów (statusy, kolejność, powiązanie z KR)."
+                    : fakturowanieSekcja === "protokoly"
+                      ? "Tu pojawią się protokoły odbioru prac — podstawa do wystawienia faktur sprzedażowych."
+                      : "Tu pojawią się faktury sprzedażowe / rozliczeniowe (osobno od faktur kosztowych w OSOBISTE)."}
+                </p>
+              </div>
+              <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
+                <p style={{ ...op.muted, margin: 0, fontSize: "0.9rem" }}>
+                  Sekcja w przygotowaniu — struktura menu jest już gotowa. Możemy tu dopisać tabele, formularze i
+                  powiązania z bazą w kolejnym kroku.
+                </p>
+              </div>
+            </>
+          )}
         </>
       ) : null}
 
@@ -19920,6 +20002,48 @@ export default function App() {
               </div>
             ))}
           </div>
+          {czyMozeWidziecFakturowanie ? (
+            <>
+              <div style={{ ...op.navSectionLabel }}>💶 FAKTUROWANIE</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
+                {[
+                  {
+                    id: "fakturowanie_etapy",
+                    label: "Etapy fakturowania",
+                    sekcja: "etapy",
+                    help: "Etapy procesu fakturowania projektów (w przygotowaniu).",
+                  },
+                  {
+                    id: "fakturowanie_protokoly",
+                    label: "Protokoły odbioru",
+                    sekcja: "protokoly",
+                    help: "Protokoły odbioru prac — baza pod faktury sprzedażowe (w przygotowaniu).",
+                  },
+                  {
+                    id: "fakturowanie_faktury",
+                    label: "Faktury",
+                    sekcja: "faktury",
+                    help: "Faktury sprzedażowe / rozliczeniowe (w przygotowaniu).",
+                  },
+                ].map((b) => (
+                  <div key={b.id}>
+                    <button
+                      type="button"
+                      style={{
+                        ...op.navBtn,
+                        ...(widok === "fakturowanie" && fakturowanieSekcja === b.sekcja ? op.navBtnActive : {}),
+                        marginBottom: 0,
+                      }}
+                      onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoFakturowania(b.sekcja))}
+                    >
+                      {etykietaMenuZIkona(b.id, b.label)}
+                    </button>
+                    <HelpLinijka wlaczony={trybHelp}>{b.help}</HelpLinijka>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
         </aside>
       </div>
     </div>
