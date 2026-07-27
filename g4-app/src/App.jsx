@@ -3,6 +3,7 @@ import { FakturaKosztowaEdycjaModal } from "./FakturaKosztowaEdycjaModal.jsx";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { PlanFakturPanel } from "./PlanFakturPanel.jsx";
+import { ProtokolyTerPanel } from "./ProtokolyTerPanel.jsx";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 import { TerenPlanningBoard } from "./TerenPlanningBoard.jsx";
 import { TerenZespolyPanel } from "./TerenZespolyPanel.jsx";
@@ -13654,7 +13655,7 @@ export default function App() {
                     : fakturowanieSekcja === "etapy"
                       ? "Etapy fakturowania"
                       : fakturowanieSekcja === "protokoly"
-                        ? "Protokoły odbioru"
+                        ? "Protokoły / TER"
                         : "Faktury"}
                 </h2>
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
@@ -13665,7 +13666,7 @@ export default function App() {
                     : fakturowanieSekcja === "etapy"
                       ? "Tu pojawią się etapy procesu fakturowania projektów (statusy, kolejność, powiązanie z KR)."
                       : fakturowanieSekcja === "protokoly"
-                        ? "Tu pojawią się protokoły odbioru prac — podstawa do wystawienia faktur sprzedażowych."
+                        ? "Mechanizm TER / protokołów: suma kontraktu, katalog pozycji i rejestr protokołów — pozostało do końca liczy się z linii protokołów."
                         : "Tu pojawią się faktury sprzedażowe / rozliczeniowe (osobno od faktur kosztowych w OSOBISTE)."}
                 </p>
               </div>
@@ -13683,6 +13684,15 @@ export default function App() {
                     ""
                   }
                   autorUwagiEmail={session?.user?.email || ""}
+                />
+              ) : null}
+
+              {fakturowanieSekcja === "protokoly" ? (
+                <ProtokolyTerPanel
+                  supabase={supabase}
+                  styles={s}
+                  op={op}
+                  czyMozeEdytowac={czyMozeWidziecFakturowanie}
                 />
               ) : null}
 
@@ -19823,9 +19833,9 @@ export default function App() {
                   },
                   {
                     id: "fakturowanie_protokoly",
-                    label: "Protokoły odbioru",
+                    label: "Protokoły / TER",
                     sekcja: "protokoly",
-                    help: "Protokoły odbioru prac — baza pod faktury sprzedażowe (w przygotowaniu).",
+                    help: "Suma kontraktu, katalog TER, protokoły i pozostało do końca.",
                   },
                   {
                     id: "fakturowanie_faktury",
