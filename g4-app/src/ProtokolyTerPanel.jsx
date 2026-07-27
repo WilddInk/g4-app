@@ -24,13 +24,23 @@ function parseKwota(raw) {
   return Number.isFinite(v) ? v : null;
 }
 
+/** Jak w SQL kr_ter_norm_kr — „1070” ≡ „KR1070”. */
+function normKr(raw) {
+  const t = String(raw ?? "")
+    .trim()
+    .replace(/^kr\s*/i, "")
+    .trim()
+    .toLowerCase();
+  return t || "";
+}
+
 /**
  * Mechanizm TER / protokoły + FS: suma kontraktu, postęp protokołami, zafakturowane FS.
  * Excel = szablon katalogu; protokoły wypełniane progresywnie.
  * Handlowo: pozostalo_kontrakt = suma_kontraktu − suma_faktur_fs.
  * Protokoły: pozostalo_po_protokolach = suma_kontraktu − suma_protokolow.
  */
-export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac }) {
+export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, krList = [] }) {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -47,6 +57,8 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac }) 
   const [editPozById, setEditPozById] = useState({});
   const [editProtById, setEditProtById] = useState({});
   const [noweKr, setNoweKr] = useState({ kr: "", klient: "", nazwa: "", suma: "" });
+  const [wyborKrSelect, setWyborKrSelect] = useState("");
+  const [wyborBusy, setWyborBusy] = useState(false);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -77,6 +89,87 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac }) 
     () => (rows ?? []).find((r) => Number(r.rozliczenie_id) === Number(wybraneId)) ?? null,
     [rows, wybraneId],
   );
+
+  const krOpcje = useMemo(() => {
+    const map = new Map();
+    for (const k of krList ?? []) {
+      const kod = String(k?.kr ?? "").trim();
+      if (!kod) continue;
+      const n = normKr(kod);
+      if (!n || map.has(n)) continue;
+      map.set(n, {
+        kr: kod,
+        nazwa: String(k.nazwa_obiektu ?? "").trim(),
+        klient: String(k.zleceniodawca ?? k.klient ?? "").trim(),
+      });
+    }
+    for (const r of rows ?? []) {
+      const kod = String(r?.kr ?? "").trim();
+      if (!kod) continue;
+      const n = normKr(kod);
+      if (!n || map.has(n)) continue;
+      map.set(n, {
+        kr: kod,
+        nazwa: String(r.nazwa_kontraktu ?? "").trim(),
+        klient: String(r.klient ?? "").trim(),
+      });
+    }
+    return [...map.values()].sort((a, b) =>
+      a.kr.localeCompare(b.kr, "pl", { numeric: true, sensitivity: "base" }),
+    );
+  }, [krList, rows]);
+
+  useEffect(() => {
+    if (wybrane?.kr) setWyborKrSelect(String(wybrane.kr));
+  }, [wybrane?.kr]);
+
+  function znajdzRozliczenieDlaKr(kodKr) {
+    const n = normKr(kodKr);
+    if (!n) return null;
+    return (rows ?? []).find((r) => normKr(r.kr) === n) ?? null;
+  }
+
+  async function wybierzKrZListy(kodKr) {
+    const kod = String(kodKr ?? "").trim();
+    setWyborKrSelect(kod);
+    if (!kod) {
+      setWybraneId(null);
+      return;
+    }
+    const istniejace = znajdzRozliczenieDlaKr(kod);
+    if (istniejace) {
+      setWybraneId(istniejace.rozliczenie_id);
+      setMsg(null);
+      return;
+    }
+    if (!czyMozeEdytowac) {
+      setWybraneId(null);
+      setMsg(`Brak rozliczenia TER dla KR ${kod}. Poproś kierownika/admina o dodanie.`);
+      return;
+    }
+    const meta = krOpcje.find((o) => normKr(o.kr) === normKr(kod)) ?? { kr: kod, nazwa: "", klient: "" };
+    setWyborBusy(true);
+    setMsg(null);
+    const { data, error } = await supabase
+      .from("kr_ter_rozliczenie")
+      .insert({
+        kr: meta.kr || kod,
+        klient: meta.klient || null,
+        nazwa_kontraktu: meta.nazwa || null,
+        suma_kontraktu: 0,
+        zrodlo: "z_listy_kr",
+      })
+      .select("id")
+      .single();
+    setWyborBusy(false);
+    if (error) {
+      setMsg(`Nie udało się otworzyć KR ${kod}: ${error.message}`);
+      return;
+    }
+    setMsg(`Utworzono rozliczenie TER dla KR ${kod} (suma kontraktu = 0 — uzupełnij).`);
+    await fetchRows();
+    if (data?.id) setWybraneId(data.id);
+  }
 
   const fetchDetail = useCallback(
     async (rozliczenieId) => {
@@ -479,9 +572,36 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac }) 
       ) : null}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "0.75rem" }}>
-        <button type="button" style={s.btnGhost} onClick={() => void fetchRows()} disabled={loading}>
+        <label style={{ fontSize: "0.84rem", display: "flex", flexDirection: "column", gap: 4, minWidth: "14rem" }}>
+          Wybierz KR
+          <select
+            style={{ ...s.input, minWidth: "14rem" }}
+            value={wyborKrSelect}
+            disabled={loading || wyborBusy}
+            onChange={(e) => void wybierzKrZListy(e.target.value)}
+          >
+            <option value="">— wybierz z listy —</option>
+            {krOpcje.map((o) => {
+              const maTer = Boolean(znajdzRozliczenieDlaKr(o.kr));
+              const label = [o.kr, o.nazwa || o.klient || null, maTer ? null : "(brak TER)"]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <option key={normKr(o.kr) || o.kr} value={o.kr}>
+                  {label}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        <button type="button" style={s.btnGhost} onClick={() => void fetchRows()} disabled={loading || wyborBusy}>
           Odśwież
         </button>
+        {wybrane ? (
+          <button type="button" style={s.btnGhost} onClick={() => { setWybraneId(null); setWyborKrSelect(""); }}>
+            Zamknij szczegóły
+          </button>
+        ) : null}
         <span style={{ ...op.muted, fontSize: "0.84rem" }}>
           KR: {rows.length} · kontrakty {formatPln(sumy.kontrakt)} · FS {formatPln(sumy.fs)} · pozostało handlowo{" "}
           {formatPln(sumy.pozostaloKontrakt)} · protokołami {formatPln(sumy.wyk)} / pozostało{" "}

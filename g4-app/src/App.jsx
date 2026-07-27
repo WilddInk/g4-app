@@ -13693,6 +13693,7 @@ export default function App() {
                   styles={s}
                   op={op}
                   czyMozeEdytowac={czyMozeWidziecFakturowanie}
+                  krList={krList}
                 />
               ) : null}
 
