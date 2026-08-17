@@ -9548,7 +9548,9 @@ export default function App() {
 
     if (sekcja === "jednostki") {
       const krK = String(item.kr ?? "").trim();
-      const listaFakturKr = krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK);
+      const listaFakturKr = krFakturyDoZaplatyList.filter(
+        (row) => String(row.kr ?? "").trim() === krK && fakturaLiczyWSumach(row),
+      );
       const draft = {
         budzetBrutto: "",
         ha: "",
