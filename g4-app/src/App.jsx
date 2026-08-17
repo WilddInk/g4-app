@@ -1244,6 +1244,16 @@ function kwotaBruttoEtykieta(wartosc) {
   return n.toLocaleString("pl-PL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " zł";
 }
 
+/** Scalone faktury: tylko wiersz z counts_in_sums=1 liczy się w sumach (jak w Księgowości). */
+function fakturaLiczyWSumach(row) {
+  const raw = row?.counts_in_sums ?? row?.legacy_counts_in_sums;
+  if (raw == null || raw === "") return true;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  const s = String(raw).trim().toLowerCase();
+  return s === "1" || s === "true" || s === "t" || s === "yes" || s === "y" || s === "tak";
+}
+
 function czyKrTechniczneUkrywaneDlaNieAdmin(kr) {
   const k = String(kr ?? "").trim().toUpperCase();
   return k === "000" || k === "KK";
@@ -8383,7 +8393,9 @@ export default function App() {
       const listaZadanDlaKr = zadaniaList.filter(
         (z) => String(z.kr ?? "").trim() === krK,
       );
-      const listaFakturKr = krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK);
+      const listaFakturKr = krFakturyDoZaplatyList.filter(
+        (row) => String(row.kr ?? "").trim() === krK && fakturaLiczyWSumach(row),
+      );
       const etapyZakonczone = listaEtapow.filter((e) => {
         const stEt = String(e.status ?? "").toLowerCase();
         return (
@@ -9316,7 +9328,9 @@ export default function App() {
 
     if (sekcja === "budzet") {
       const krK = String(item.kr ?? "").trim();
-      const listaFakturKr = krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK);
+      const listaFakturKr = krFakturyDoZaplatyList.filter(
+        (row) => String(row.kr ?? "").trim() === krK && fakturaLiczyWSumach(row),
+      );
       const draft = {
         budzetBrutto: "",
         ha: "",

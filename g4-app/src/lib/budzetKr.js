@@ -33,7 +33,16 @@ export function zbudujDaneBudzetuKr({
   const ha = parseNum(draft?.ha);
   const dzialki = parseNum(draft?.liczbaDzialek);
 
-  const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
+  const fakturyDoSum = (listaFakturKr ?? []).filter((row) => {
+    const raw = row?.counts_in_sums ?? row?.legacy_counts_in_sums;
+    if (raw == null || raw === "") return true;
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw !== 0;
+    const s = String(raw).trim().toLowerCase();
+    return s === "1" || s === "true" || s === "t" || s === "yes" || s === "y" || s === "tak";
+  });
+
+  const sumaFakturBrutto = fakturyDoSum.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
 
   let godzinyPracy = 0;
   let sumaKosztPracy = 0;
@@ -80,7 +89,7 @@ export function zbudujDaneBudzetuKr({
     });
 
   const byTyp = new Map();
-  for (const row of listaFakturKr) {
+  for (const row of fakturyDoSum) {
     const typ = typFakturyKosztowej(row);
     const g = byTyp.get(typ) ?? { typ, suma: 0, rows: [] };
     g.suma += Number(row.kwota_brutto) || 0;
