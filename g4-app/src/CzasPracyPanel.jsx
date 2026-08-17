@@ -1324,7 +1324,7 @@ export function CzasPracyPanel({
 
   return (
     <section style={{ maxWidth: "min(1200px, 100%)" }}>
-      <h2 style={{ fontSize: "1.15rem", fontWeight: 800, color: "#fff", marginTop: 0, letterSpacing: "-0.02em" }}>
+      <h2 style={{ fontSize: "1.15rem", fontWeight: 800, color: "#0f172a", marginTop: 0, letterSpacing: "-0.02em" }}>
         Czas pracy i rozliczenie godzin
       </h2>
       <p style={{ color: theme.muted, fontSize: "0.86rem", lineHeight: 1.55, marginBottom: "1rem" }}>
@@ -1892,7 +1892,7 @@ export function CzasPracyPanel({
                       role="button"
                       tabIndex={0}
                     >
-                      <div style={{ fontWeight: 800, color: "#fff", marginBottom: "0.2rem" }}>{cell.date.getDate()}</div>
+                      <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: "0.2rem" }}>{cell.date.getDate()}</div>
                       {lista.length === 0 ? (
                         <span style={{ color: theme.muted, fontSize: "0.72rem" }}>—</span>
                       ) : (
@@ -1939,7 +1939,7 @@ export function CzasPracyPanel({
                                 <span
                                   style={{
                                     fontSize: "0.66rem",
-                                    color: "#e5e7eb",
+                                    color: "#0f172a",
                                     flex: "1 1 4rem",
                                     minWidth: 0,
                                   }}
@@ -2004,7 +2004,7 @@ export function CzasPracyPanel({
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: "0 0 0.75rem", fontSize: "1rem", color: "#fff" }}>
+            <h3 style={{ margin: "0 0 0.75rem", fontSize: "1rem", color: "#0f172a" }}>
               Dzień {modal.dzien}
               {infoDniaKalendarzaPl(parseDataIso(modal.dzien)).nazwaSwieta
                 ? ` · ${infoDniaKalendarzaPl(parseDataIso(modal.dzien)).nazwaSwieta}`
@@ -2284,7 +2284,7 @@ export function CzasPracyPanel({
 
       {mozeZarzadzacStawkami ? (
         <div style={{ marginTop: "1.5rem", paddingTop: "1.25rem", borderTop: `1px solid ${theme.border}` }}>
-          <h3 style={{ fontSize: "0.95rem", color: "#fff", margin: "0 0 0.5rem" }}>
+          <h3 style={{ fontSize: "0.95rem", color: "#0f172a", margin: "0 0 0.5rem" }}>
             Stawki za godzinę (okresy) — widoczne tylko dla administratora
           </h3>
           <p style={{ color: theme.muted, fontSize: "0.82rem", marginBottom: "0.75rem" }}>
@@ -2378,7 +2378,7 @@ const btnPrimary = {
   borderRadius: "8px",
   border: "none",
   background: "linear-gradient(180deg, rgba(249,115,22,0.95), rgba(234,88,12,0.95))",
-  color: "#fff",
+  color: "#0f172a",
   fontWeight: 700,
   cursor: "pointer",
 };

@@ -7905,7 +7905,7 @@ export default function App() {
               margin: "0 0 0.35rem",
               fontSize: "1.35rem",
               fontWeight: 800,
-              color: "#ffffff",
+              color: "#0f172a",
               letterSpacing: "-0.02em",
             }}
           >
@@ -8071,7 +8071,7 @@ export default function App() {
                         <span style={{ fontSize: "0.75rem", color: theme.muted }}>{row.status}</span>
                       ) : null}
                     </div>
-                    <div style={{ fontWeight: 650, color: "#fff", fontSize: "0.92rem" }} title={zt.title}>
+                    <div style={{ fontWeight: 650, color: "#0f172a", fontSize: "0.92rem" }} title={zt.title}>
                       {zt.text}
                     </div>
                     <div style={{ fontSize: "0.8rem", color: theme.muted, marginTop: "0.35rem" }}>
@@ -8140,7 +8140,7 @@ export default function App() {
             <span style={{ marginLeft: "0.5rem", color: theme.danger, fontWeight: 700 }}>— uwaga: status KR</span>
           ) : null}
         </div>
-        <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#fafafa", marginBottom: "0.45rem" }}>
+        <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#0f172a", marginBottom: "0.45rem" }}>
           {tekstTrim(r.nazwa_obiektu) || "—"}
         </div>
         <dl style={{ ...siatka, margin: 0 }}>
@@ -8267,7 +8267,7 @@ export default function App() {
         {item.zleceniodawca?.trim() ? (
           <div style={{ marginBottom: "0.45rem" }}>
             <span style={s.muted}>Zleceniodawca: </span>
-            <strong style={{ color: "#f5f5f5" }}>{item.zleceniodawca.trim()}</strong>
+            <strong style={{ color: "#0f172a" }}>{item.zleceniodawca.trim()}</strong>
           </div>
         ) : null}
         {item.osoba_odpowiedzialna_zleceniodawcy?.trim() ? (
@@ -8471,7 +8471,7 @@ export default function App() {
                 TABLICA KR · Centrum informacji
               </div>
               <div style={{ fontSize: "0.76rem", color: "#0369a1" }}>
-                Projekt: <strong style={{ color: "#ffffff" }}>{item.kr}</strong> ·{" "}
+                Projekt: <strong style={{ color: "#0f172a" }}>{item.kr}</strong> ·{" "}
                 {item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "bez nazwy"}
               </div>
             </div>
@@ -8796,7 +8796,7 @@ export default function App() {
                         }
                       >
                         <td style={{ ...s.td, padding: "0.55rem 0.7rem" }} title={zt.title}>
-                          <strong style={{ color: "#f5f5f5" }}>{zt.text}</strong>
+                          <strong style={{ color: "#0f172a" }}>{zt.text}</strong>
                         </td>
                         <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
                           <span
@@ -12039,7 +12039,7 @@ export default function App() {
                           </span>
                         </td>
                         <td style={s.td}>
-                          <strong style={{ color: "#fafafa" }}>{row.nazwa?.trim() || "—"}</strong>
+                          <strong style={{ color: "#0f172a" }}>{row.nazwa?.trim() || "—"}</strong>
                         </td>
                         <td style={{ ...s.td, fontSize: "0.78rem" }}>{row.zewnetrzny_id?.trim() || "—"}</td>
                         <td style={s.td}>{row.numer_inwentarzowy?.trim() ? row.numer_inwentarzowy : "—"}</td>
@@ -12188,7 +12188,7 @@ export default function App() {
                     return (
                     <tr key={p.nr}>
                       <td style={s.td}>
-                        <strong style={{ color: "#fff" }}>{p.nr}</strong>
+                        <strong style={{ color: "#0f172a" }}>{p.nr}</strong>
                       </td>
                       <td style={s.td}>
                         {czyAdminAktywny ? (
@@ -12413,7 +12413,7 @@ export default function App() {
             style={{
               fontSize: "1rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               margin: "1.5rem 0 0.65rem",
             }}
           >
@@ -12951,7 +12951,7 @@ export default function App() {
                         }
                       >
                         <td style={{ ...s.td, padding: "0.65rem 0.85rem" }} title={zt.title || undefined}>
-                          <strong style={{ color: "#f5f5f5", fontSize: "0.98rem", fontWeight: 600 }}>{zt.text}</strong>
+                          <strong style={{ color: "#0f172a", fontSize: "0.98rem", fontWeight: 600 }}>{zt.text}</strong>
                         </td>
                         <td style={{ ...s.td, padding: "0.65rem 0.85rem", fontFamily: "ui-monospace, monospace" }}>
                           {tekstTrim(row.kr) ? (
@@ -13076,7 +13076,7 @@ export default function App() {
                 style={{
                   fontSize: "1rem",
                   fontWeight: 600,
-                  color: "#fff",
+                  color: "#0f172a",
                   margin: "1.5rem 0 0.65rem",
                 }}
               >
@@ -14589,7 +14589,7 @@ export default function App() {
             style={{
               fontSize: "1rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               margin: "0 0 0.5rem",
             }}
           >
@@ -14653,7 +14653,7 @@ export default function App() {
                             <strong style={{ color: "#0369a1" }}>{z.kr?.trim() ? z.kr : "—"}</strong>
                           </td>
                           <td style={s.td}>
-                            <strong style={{ color: "#f5f5f5" }}>{firma?.trim() ? firma : "—"}</strong>
+                            <strong style={{ color: "#0f172a" }}>{firma?.trim() ? firma : "—"}</strong>
                           </td>
                           <td style={s.td}>{z.numer_zlecenia?.trim() ? z.numer_zlecenia : "—"}</td>
                           <td style={s.td} title={zakres.title || undefined}>
@@ -14702,7 +14702,7 @@ export default function App() {
                     style={{
                       fontSize: "0.95rem",
                       fontWeight: 600,
-                      color: "#fff",
+                      color: "#0f172a",
                       margin: "0 0 0.5rem",
                     }}
                   >
@@ -14955,7 +14955,7 @@ export default function App() {
             style={{
               fontSize: "1rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               margin: "0 0 0.5rem",
             }}
           >
@@ -14992,7 +14992,7 @@ export default function App() {
                               required
                             />
                           ) : (
-                            <strong style={{ color: "#f5f5f5" }}>{row.nazwa_firmy?.trim() ? row.nazwa_firmy : "—"}</strong>
+                            <strong style={{ color: "#0f172a" }}>{row.nazwa_firmy?.trim() ? row.nazwa_firmy : "—"}</strong>
                           )}
                         </td>
                         <td style={s.td}>
@@ -15152,7 +15152,7 @@ export default function App() {
               style={{
                 fontSize: "1rem",
                 fontWeight: 600,
-                color: "#fff",
+                color: "#0f172a",
                 margin: "1.5rem 0 0.65rem",
               }}
             >
@@ -15520,7 +15520,7 @@ export default function App() {
             style={{
               fontSize: "1rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               margin: "0 0 0.65rem",
             }}
           >
@@ -15827,7 +15827,7 @@ export default function App() {
             style={{
               fontSize: "1rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               margin: "0 0 0.65rem",
             }}
           >
@@ -16345,7 +16345,7 @@ export default function App() {
                                 onChange={(ev) => setSprzetForm((f) => ({ ...f, nazwa: ev.target.value }))}
                               />
                             ) : (
-                              <strong style={{ color: "#fafafa" }}>{row.nazwa?.trim() || "—"}</strong>
+                              <strong style={{ color: "#0f172a" }}>{row.nazwa?.trim() || "—"}</strong>
                             )}
                           </td>
                           <td style={s.td}>
@@ -16658,7 +16658,7 @@ export default function App() {
                   return (
                     <tr key={row.id}>
                       <td style={s.kmTd}>
-                        <strong style={{ color: "#f5f5f5", fontWeight: 600 }}>{row.etap ?? "—"}</strong>
+                        <strong style={{ color: "#0f172a", fontWeight: 600 }}>{row.etap ?? "—"}</strong>
                       </td>
                       <td
                         style={{
@@ -16752,7 +16752,7 @@ export default function App() {
             style={{
               fontSize: "0.95rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               marginTop: "1.35rem",
               marginBottom: "0.5rem",
             }}
@@ -17027,7 +17027,7 @@ export default function App() {
                     return (
                       <tr key={z.id}>
                         <td style={s.td}>
-                          <strong style={{ color: "#f5f5f5" }}>{firma?.trim() ? firma : "—"}</strong>
+                          <strong style={{ color: "#0f172a" }}>{firma?.trim() ? firma : "—"}</strong>
                         </td>
                         <td style={s.td}>{z.numer_zlecenia?.trim() ? z.numer_zlecenia : "—"}</td>
                         <td style={s.td} title={zakres.title || undefined}>
@@ -17088,7 +17088,7 @@ export default function App() {
             style={{
               fontSize: "0.95rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               margin: "0 0 0.5rem",
             }}
           >
@@ -17398,7 +17398,7 @@ export default function App() {
                         : "—"}
                     </td>
                     <td style={s.td}>
-                      <strong style={{ color: "#f5f5f5" }}>{row.typ_zdarzenia ?? "—"}</strong>
+                      <strong style={{ color: "#0f172a" }}>{row.typ_zdarzenia ?? "—"}</strong>
                     </td>
                     <td style={{ ...s.td, ...s.statusKr, fontSize: "0.82rem" }}>
                       {row.status_zdarzenia?.trim() ? row.status_zdarzenia : "—"}
@@ -17449,7 +17449,7 @@ export default function App() {
             style={{
               fontSize: "0.95rem",
               fontWeight: 600,
-              color: "#fff",
+              color: "#0f172a",
               marginTop: "1.35rem",
               marginBottom: "0.5rem",
             }}
@@ -18330,7 +18330,7 @@ export default function App() {
           ) : null}
           {!rekordKrInfo ? (
             <div style={s.errBox} role="alert">
-              Brak projektu <strong style={{ color: "#fff" }}>{widokInfoDlaKr}</strong> na aktualnej
+              Brak projektu <strong style={{ color: "#0f172a" }}>{widokInfoDlaKr}</strong> na aktualnej
               liście — odśwież stronę lub wróć do listy.
               <div style={{ marginTop: "0.75rem" }}>
                 <button type="button" style={s.btnGhost} onClick={powrotZInfoDoListy}>
@@ -18349,7 +18349,7 @@ export default function App() {
                     style={{
                       fontSize: "0.95rem",
                       fontWeight: 600,
-                      color: "#fff",
+                      color: "#0f172a",
                       margin: "0 0 0.5rem",
                     }}
                   >
@@ -18361,7 +18361,7 @@ export default function App() {
                         <tr>
                           <th style={{ ...s.th, width: "40%", textAlign: "left" }}>KR</th>
                           <td style={s.td}>
-                            <strong style={{ color: "#fff" }}>{item.kr}</strong>
+                            <strong style={{ color: "#0f172a" }}>{item.kr}</strong>
                           </td>
                         </tr>
                         <tr>
@@ -18445,7 +18445,7 @@ export default function App() {
                       {item.zleceniodawca?.trim() ? (
                         <div style={{ marginBottom: "0.35rem" }}>
                           <span style={s.muted}>Zleceniodawca: </span>
-                          <strong style={{ color: "#f5f5f5" }}>{item.zleceniodawca.trim()}</strong>
+                          <strong style={{ color: "#0f172a" }}>{item.zleceniodawca.trim()}</strong>
                         </div>
                       ) : null}
                       {item.osoba_odpowiedzialna_zleceniodawcy?.trim() ? (
@@ -18474,7 +18474,7 @@ export default function App() {
                     style={{
                       fontSize: "0.95rem",
                       fontWeight: 600,
-                      color: "#fff",
+                      color: "#0f172a",
                       margin: "1.25rem 0 0.5rem",
                     }}
                   >
@@ -18519,7 +18519,7 @@ export default function App() {
                             return (
                               <tr key={z.id}>
                                 <td style={s.td}>
-                                  <strong style={{ color: "#f5f5f5" }}>
+                                  <strong style={{ color: "#0f172a" }}>
                                     {firma?.trim() ? firma : "—"}
                                   </strong>
                                 </td>
@@ -18573,7 +18573,7 @@ export default function App() {
                     style={{
                       fontSize: "0.95rem",
                       fontWeight: 600,
-                      color: "#fff",
+                      color: "#0f172a",
                       margin: "1.25rem 0 0.5rem",
                     }}
                   >
@@ -18631,7 +18631,7 @@ export default function App() {
                             return (
                               <tr key={row.id}>
                                 <td style={s.kmTd}>
-                                  <strong style={{ color: "#f5f5f5", fontWeight: 600 }}>
+                                  <strong style={{ color: "#0f172a", fontWeight: 600 }}>
                                     {row.etap ?? "—"}
                                   </strong>
                                 </td>
@@ -18712,7 +18712,7 @@ export default function App() {
                     style={{
                       fontSize: "0.95rem",
                       fontWeight: 600,
-                      color: "#fff",
+                      color: "#0f172a",
                       margin: "1.25rem 0 0.5rem",
                     }}
                   >
@@ -18749,7 +18749,7 @@ export default function App() {
                                   : "—"}
                               </td>
                               <td style={s.td}>
-                                <strong style={{ color: "#f5f5f5" }}>{row.typ_zdarzenia ?? "—"}</strong>
+                                <strong style={{ color: "#0f172a" }}>{row.typ_zdarzenia ?? "—"}</strong>
                               </td>
                               <td style={{ ...s.td, ...s.statusKr, fontSize: "0.82rem" }}>
                                 {row.status_zdarzenia?.trim() ? row.status_zdarzenia : "—"}
@@ -18806,7 +18806,7 @@ export default function App() {
           {!wybranyRekordKr ? (
             <div style={s.errBox} role="alert">
               Nie znaleziono projektu o kodzie{" "}
-              <strong style={{ color: "#fff" }}>{wybranyKrKlucz}</strong> w aktualnej liście.
+              <strong style={{ color: "#0f172a" }}>{wybranyKrKlucz}</strong> w aktualnej liście.
               <div style={{ marginTop: "0.75rem" }}>
                 <button type="button" style={s.btnGhost} onClick={powrotDoListyKr}>
                   Wróć do listy
@@ -18966,7 +18966,7 @@ export default function App() {
                       <div style={s.editPanel}>
                         <p style={{ ...s.muted, margin: 0, fontSize: "0.85rem" }}>
                           Edycja rekordu tabeli <code style={s.code}>kr</code> — pierwotnie{" "}
-                          <strong style={{ color: "#fff" }}>{item.kr}</strong>
+                          <strong style={{ color: "#0f172a" }}>{item.kr}</strong>
                         </p>
                         <div
                           style={{
@@ -19342,7 +19342,7 @@ export default function App() {
                           <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
                             {listaEtapow.map((et) => (
                               <li key={et.id} style={s.etapItem}>
-                                <strong style={{ color: "#fff" }}>{et.etap}</strong>
+                                <strong style={{ color: "#0f172a" }}>{et.etap}</strong>
                                 {et.status ? (
                                   <span style={s.muted}> · status: {et.status}</span>
                                 ) : null}
@@ -19499,7 +19499,7 @@ export default function App() {
                         lineHeight: 1.25,
                       }}
                     >
-                      <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#ffffff", letterSpacing: "-0.03em" }}>
+                      <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.03em" }}>
                         {item.kr}
                       </span>
                       {wierszUwaga ? <OpStatusBadge variant="danger">Uwaga</OpStatusBadge> : null}
@@ -19535,11 +19535,11 @@ export default function App() {
                                   : "rgba(56,189,248,0.45)",
                             color:
                               badgeVariantDlaStatusuKr(st) === "danger"
-                                ? "#fecaca"
+                                ? "#991b1b"
                                 : badgeVariantDlaStatusuKr(st) === "ok"
-                                  ? "#bbf7d0"
-                                  : "#bae6fd",
-                            background: "rgba(15,23,42,0.85)",
+                                  ? "#166534"
+                                  : "#0369a1",
+                            background: "#ffffff",
                           }}
                         >
                           <option value="">— brak —</option>
@@ -19755,7 +19755,7 @@ export default function App() {
             style={{
               fontSize: "1rem",
               fontWeight: 800,
-              color: "#ffffff",
+              color: "#0f172a",
               letterSpacing: "-0.03em",
               marginBottom: "1rem",
               lineHeight: 1.2,

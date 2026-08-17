@@ -425,7 +425,7 @@ export const FakturaKosztowaEdycjaModal = memo(function FakturaKosztowaEdycjaMod
                         padding: "0.35rem 0.65rem",
                         cursor: "pointer",
                         fontSize: "0.84rem",
-                        color: "#e2e8f0",
+                        color: "#0f172a",
                       }}
                     >
                       {tekstTrim(p.imie_nazwisko) || "—"}{" "}

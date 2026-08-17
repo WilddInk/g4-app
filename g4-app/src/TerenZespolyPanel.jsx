@@ -405,7 +405,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
             >
               ← Miesiąc
             </button>
-            <span style={{ fontSize: "0.88rem", color: "#e2e8f0", minWidth: "10rem", textAlign: "center" }}>
+            <span style={{ fontSize: "0.88rem", color: "#0f172a", minWidth: "10rem", textAlign: "center" }}>
               {new Date(kalRok, kalMiesiac - 1, 15).toLocaleDateString("pl-PL", { month: "long", year: "numeric" })}
             </span>
             <button
@@ -471,7 +471,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
                           lineHeight: 1.25,
                           padding: "0.2rem 0.1rem",
                           background: lista.length ? "rgba(249,115,22,0.35)" : "rgba(51,65,85,0.4)",
-                          color: "#e2e8f0",
+                          color: "#0f172a",
                         }}
                       >
                         {lista.length ? (
@@ -494,7 +494,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
           </table>
         </div>
 
-        <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#fff", margin: "0 0 0.5rem" }}>
+        <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.5rem" }}>
           {zadanieEdycjaId != null ? "Edycja przydziału" : "Nowy przydział"}
         </h4>
         <form style={{ ...s.form, maxWidth: "min(42rem, 100%)", marginBottom: "1rem" }} onSubmit={zapiszZadanie}>
@@ -605,7 +605,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
           </div>
         </form>
 
-        <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#fff", margin: "0 0 0.5rem" }}>
+        <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.5rem" }}>
           Lista w wybranym miesiącu (z uwzględnieniem filtrów)
         </h4>
         <div style={s.tableWrap}>
@@ -633,7 +633,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
                   <tr key={row.id}>
                     <td style={s.td}>{dataPLZFormat(dataDoInputa(row.data_dnia))}</td>
                     <td style={s.td}>
-                      <strong style={{ color: "#fff" }}>{String(row.kr ?? "").trim() || "—"}</strong>
+                      <strong style={{ color: "#0f172a" }}>{String(row.kr ?? "").trim() || "—"}</strong>
                     </td>
                     <td style={s.td}>{row.opis?.trim() || "—"}</td>
                     <td style={s.td}>{row.ilosc_plan != null ? String(row.ilosc_plan) : "—"}</td>
@@ -670,7 +670,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
           wiążą się z jednym KR; przydziały do projektów ustawiasz wyżej, dzień po dniu.
         </p>
 
-        <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#fff", margin: "0 0 0.5rem" }}>Nowy zespół</h4>
+        <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.5rem" }}>Nowy zespół</h4>
         <form style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1rem" }} onSubmit={zapiszZespol}>
           <label style={s.label}>
             Nazwa <span style={{ color: "#fca5a5" }}>*</span>
@@ -727,7 +727,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
                       }
                     >
                       <td style={s.td}>
-                        <strong style={{ color: "#fff" }}>{z.nazwa?.trim() || "—"}</strong>
+                        <strong style={{ color: "#0f172a" }}>{z.nazwa?.trim() || "—"}</strong>
                       </td>
                       <td style={{ ...s.td, fontSize: "0.82rem", color: theme.muted }}>{z.notatki?.trim() || "—"}</td>
                       <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
@@ -802,7 +802,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
                     background: "rgba(15,23,42,0.75)",
                     border: `1px solid ${theme.border}`,
                     fontSize: "0.82rem",
-                    color: "#e2e8f0",
+                    color: "#0f172a",
                   }}
                 >
                   {etykietaPrac(pracownicy, nr)}

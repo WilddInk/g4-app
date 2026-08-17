@@ -653,7 +653,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
                       cursor: "grab",
                     }}
                   >
-                    <div style={{ color: "#f8fafc", fontSize: "0.78rem", fontWeight: 700 }}>{w.nazwa}</div>
+                    <div style={{ color: "#0f172a", fontSize: "0.78rem", fontWeight: 700 }}>{w.nazwa}</div>
                     <div style={{ color: "#cbd5e1", fontSize: "0.68rem" }}>
                       {dataPLZFormat(isoDate(w.data_plan_od))} - {dataPLZFormat(isoDate(w.data_plan_do))}
                     </div>
@@ -725,7 +725,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
                                     borderRadius: "5px",
                                     padding: "0.15rem 0.2rem",
                                     background: rs.bar,
-                                    color: "#f8fafc",
+                                    color: "#0f172a",
                                     cursor: "grab",
                                   }}
                                 >
@@ -745,7 +745,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
                                         border: "none",
                                         borderRadius: "3px",
                                         background: "rgba(15,23,42,0.35)",
-                                        color: "#f8fafc",
+                                        color: "#0f172a",
                                         fontSize: "0.62rem",
                                         cursor: "pointer",
                                         padding: "0 0.15rem",
@@ -765,7 +765,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
                                         border: "none",
                                         borderRadius: "3px",
                                         background: "rgba(15,23,42,0.35)",
-                                        color: "#f8fafc",
+                                        color: "#0f172a",
                                         fontSize: "0.62rem",
                                         cursor: "pointer",
                                         padding: "0 0.15rem",
@@ -801,13 +801,13 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
               return (
                 <div key={w.id} style={{ border: `1px solid ${st.bar}`, background: st.bg, borderRadius: "10px", padding: "0.45rem 0.6rem" }}>
                   <div style={{ display: "flex", gap: "0.55rem", alignItems: "center", justifyContent: "space-between" }}>
-                    <strong style={{ color: "#f8fafc", fontSize: "0.82rem" }}>{w.nazwa || `Praca #${w.id}`}</strong>
+                    <strong style={{ color: "#0f172a", fontSize: "0.82rem" }}>{w.nazwa || `Praca #${w.id}`}</strong>
                     <span style={{ fontSize: "0.72rem", color: st.fg, fontWeight: 700, textTransform: "uppercase" }}>{risk.status}</span>
                   </div>
                   <div style={{ fontSize: "0.72rem", color: "#cbd5e1", marginTop: "0.2rem" }}>
                     {dataPLZFormat(isoDate(w.data_plan_od))} - {dataPLZFormat(isoDate(w.data_plan_do))} • postęp {risk.progress ?? 0}%
                   </div>
-                  <div style={{ fontSize: "0.72rem", color: "#e2e8f0", marginTop: "0.2rem" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#0f172a", marginTop: "0.2rem" }}>
                     {risk.reasons.length > 0 ? `Dlaczego: ${risk.reasons.join("; ")}` : "Dlaczego: brak sygnałów ryzyka"}
                   </div>
                 </div>
@@ -984,7 +984,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
                       title={`${r.label} (${dataPLZFormat(r.start)} - ${dataPLZFormat(r.end)})${r.risk ? ` | ${r.risk}` : ""}${r.reasons?.length ? ` | ${r.reasons.join("; ")}` : ""}`}
                       style={{ position: "absolute", left: `${left}px`, top: "4px", height: "16px", width: `${width}px`, borderRadius: "999px", background: bg, opacity: 0.9 }}
                     />
-                    <span style={{ position: "absolute", left: "6px", top: "3px", fontSize: "0.68rem", color: "#e2e8f0", maxWidth: "38%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.label}</span>
+                    <span style={{ position: "absolute", left: "6px", top: "3px", fontSize: "0.68rem", color: "#0f172a", maxWidth: "38%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.label}</span>
                   </div>
                 );
               })}
@@ -1000,7 +1000,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
 
       <div style={{ ...op.sectionCard, marginTop: "0.9rem" }}>
         <h3 style={{ ...op.sectionTitle, margin: "0 0 0.45rem", fontSize: "0.9rem" }}>Szybka kontrola operacyjna</h3>
-        <div style={{ fontSize: "0.8rem", color: "#e2e8f0", lineHeight: 1.45 }}>
+        <div style={{ fontSize: "0.8rem", color: "#0f172a", lineHeight: 1.45 }}>
           <div>Otwarte prace: {works.filter((w) => w.status !== "zakonczone" && w.status !== "anulowane").length}</div>
           <div>Raporty dzisiaj: {reports.filter((r) => isoDate(r.data_raportu) === isoDate(new Date().toISOString())).length}</div>
           <div>Dzienne wpisy pod zadaniami: {dailyTasks.filter((x) => x.praca_id != null).length} / {dailyTasks.length}</div>

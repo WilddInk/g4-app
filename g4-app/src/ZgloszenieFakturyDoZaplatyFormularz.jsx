@@ -63,7 +63,7 @@ export const ZgloszenieFakturyDoZaplatyFormularz = memo(function ZgloszenieFaktu
 
   return (
     <>
-      <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e2e8f0", margin: "0 0 0.65rem" }}>
+      <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.65rem" }}>
         Nowe zgłoszenie (projekt {krEtykieta})
       </h4>
       <form style={{ ...s.form, maxWidth: "min(40rem, 100%)" }} onSubmit={(e) => void handleSubmit(e)}>
