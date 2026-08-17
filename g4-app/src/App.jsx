@@ -1564,7 +1564,6 @@ const FAKTURY_KOLUMNY_USTAWIENIA = [
   { key: "data", label: "Data", def: 112 },
   { key: "nazwa", label: "Nazwa pliku", def: 60 },
   { key: "sprzedawca", label: "Sprzedawca", def: 220 },
-  { key: "nip", label: "NIP", def: 132 },
   { key: "odbiorca", label: "Odbiorca", def: 224 },
   { key: "platnik", label: "Płatnik", def: 192 },
   { key: "typ", label: "Typ", def: 132 },
@@ -1574,7 +1573,6 @@ const FAKTURY_KOLUMNY_USTAWIENIA = [
   { key: "nr", label: "Nr faktury", def: 176 },
   { key: "lokalny", label: "Ścieżka lokalna", def: 208 },
   { key: "box", label: "Link Box", def: 112 },
-  { key: "status", label: "Status", def: 144 },
 ];
 
 function fakturyKolumnyDomyslne() {
@@ -14256,7 +14254,6 @@ export default function App() {
                     </thead>
                     <tbody>
                         {listPoFirmie.map((row) => {
-                        const st = String(row.status ?? "do_zaplaty").trim();
                         const txtNazwa =
                           tekstTrim(row.legacy_nazwa_pliku) ||
                           (tekstTrim(row.legacy_pdf_file) ? String(row.legacy_pdf_file).split(/[\\/]/).pop() : "");
@@ -14409,15 +14406,6 @@ export default function App() {
                             <td
                               style={{
                                 ...FAKTURY_KOSZTOWE_TD,
-                                width: `${szerFakturyKolumny("nip")}px`,
-                                maxWidth: `${szerFakturyKolumny("nip")}px`,
-                              }}
-                            >
-                              {identyfikatorPodatkowyZnormalizowany(row.sprzedawca_nip || row.legacy_issuer_id) || "—"}
-                            </td>
-                            <td
-                              style={{
-                                ...FAKTURY_KOSZTOWE_TD,
                                 width: `${szerFakturyKolumny("odbiorca")}px`,
                                 maxWidth: `${szerFakturyKolumny("odbiorca")}px`,
                               }}
@@ -14530,29 +14518,6 @@ export default function App() {
                                 </a>
                               ) : (
                                 "—"
-                              )}
-                            </td>
-                            <td
-                              style={{
-                                ...FAKTURY_KOSZTOWE_TD,
-                                width: `${szerFakturyKolumny("status")}px`,
-                                maxWidth: `${szerFakturyKolumny("status")}px`,
-                              }}
-                            >
-                              {FAKTURY_KOSZTOWE_EDYCJA_WLACZONA ? (
-                                <select
-                                  style={{ ...s.input, padding: "0.25rem 0.35rem", fontSize: "0.78rem", minWidth: "8.5rem" }}
-                                  value={FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(st) ? st : "do_zaplaty"}
-                                  onChange={(ev) => void zapiszStatusKrFakturaDoZaplaty(row.id, ev.target.value, row.kr)}
-                                >
-                                  {FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.map((v) => (
-                                    <option key={v} value={v}>
-                                      {etykietaFakturyDoZaplatyStatus(v)}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span>{etykietaFakturyDoZaplatyStatus(st)}</span>
                               )}
                             </td>
                           </tr>
