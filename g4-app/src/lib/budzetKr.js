@@ -219,7 +219,10 @@ export function zbudujDaneBudzetuKr({
 
   const fakturyDoSum = deduplikujFakturyDoBudzetu(listaFakturKr);
 
-  const sumaFakturBrutto = fakturyDoSum.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
+  const sumaFakturBrutto = fakturyDoSum.reduce(
+    (acc, row) => acc + parseNum(row.kwota_brutto ?? row.price_brutto),
+    0,
+  );
 
   let godzinyPracy = 0;
   let sumaKosztPracy = 0;
@@ -269,7 +272,7 @@ export function zbudujDaneBudzetuKr({
   for (const row of fakturyDoSum) {
     const typ = typFakturyKosztowej(row);
     const g = byTyp.get(typ) ?? { typ, suma: 0, rows: [] };
-    g.suma += Number(row.kwota_brutto) || 0;
+    g.suma += parseNum(row.kwota_brutto ?? row.price_brutto);
     g.rows.push(row);
     byTyp.set(typ, g);
   }
@@ -293,7 +296,7 @@ export function zbudujDaneBudzetuKr({
     budzetBrutto,
     ha,
     dzialki,
-    sumaFakturBrutto,
+    sumaFakturBrutto: Math.round(sumaFakturBrutto * 100) / 100,
     sumaKosztPracy: Math.round(sumaKosztPracy * 100) / 100,
     godzinyPracy,
     godzinyBezStawki,

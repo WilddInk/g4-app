@@ -1238,6 +1238,14 @@ function kwotaBruttoDoPayload(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Kwota do sum (PLN z przecinkiem lub kropką) — nigdy NaN. */
+function kwotaFakturyDoLiczby(wartosc) {
+  if (wartosc == null || wartosc === "") return 0;
+  if (typeof wartosc === "number") return Number.isFinite(wartosc) ? wartosc : 0;
+  const n = kwotaBruttoDoPayload(wartosc);
+  return n ?? 0;
+}
+
 function kwotaBruttoEtykieta(wartosc) {
   if (wartosc == null || wartosc === "") return "—";
   const n =
@@ -8454,7 +8462,7 @@ export default function App() {
       const procZadan = listaZadanDlaKr.length
         ? Math.round((zadaniaDomkniete / listaZadanDlaKr.length) * 100)
         : 0;
-      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
+      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + kwotaFakturyDoLiczby(row.kwota_brutto), 0);
       const sumaGodzinPracy = krCzasPracyWpisyList.reduce((acc, w) => {
         if (grupaTypuCzasuWpisu(w.typ) !== "praca") return acc;
         return acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0);
@@ -8479,7 +8487,7 @@ export default function App() {
             String(row.rodzaj_kosztu_nazwa ?? "").trim() ||
             String(row.rodzaj_kosztu ?? "").trim() ||
             "Nieokreślony";
-          map.set(key, (map.get(key) ?? 0) + (Number(row.kwota_brutto) || 0));
+          map.set(key, (map.get(key) ?? 0) + kwotaFakturyDoLiczby(row.kwota_brutto));
           return map;
         }, new Map()).entries(),
       ).sort((a, b) => b[1] - a[1]);
@@ -9612,7 +9620,7 @@ export default function App() {
           ...prev,
           [krK]: { budzetBrutto: "", ha: "", liczbaDzialek: "", ...(prev[krK] ?? {}), ...patch },
         }));
-      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
+      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + kwotaFakturyDoLiczby(row.kwota_brutto), 0);
       const ha = parseNum(draft.ha);
       const dzialki = parseNum(draft.liczbaDzialek);
       const kosztNaHa = ha > 0 ? sumaFakturBrutto / ha : 0;
