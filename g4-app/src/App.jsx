@@ -291,7 +291,7 @@ function stylTerminuHarmonogramu(planRaw, dziśYmd) {
     return {
       border: "1px solid rgba(234,179,8,0.4)",
       background: "rgba(234,179,8,0.07)",
-      color: "#fde68a",
+      color: "#92400e",
     };
   }
   return {
@@ -8298,7 +8298,7 @@ export default function App() {
         ) : null}
         <div style={{ marginTop: "0.9rem", paddingTop: "0.85rem", borderTop: "1px solid rgba(148,163,184,0.15)" }}>
           <div style={{ ...op.muted, fontSize: "0.78rem", marginBottom: "0.5rem", lineHeight: 1.45 }}>
-            <strong style={{ color: "#fde68a" }}>Faktury kosztowe (zgłoszenie do opłacenia)</strong> — osobna zakładka:
+            <strong style={{ color: "#92400e" }}>Faktury kosztowe (zgłoszenie do opłacenia)</strong> — osobna zakładka:
             komu przelew, konto, kwota brutto. To <strong>nie</strong> jest blok „Koszty (placeholder)” na pulpicie
             (INV).
           </div>
@@ -10529,7 +10529,7 @@ export default function App() {
               {trybHelp ? (
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "42rem" }}>
                   Skrót sytuacji w firmie — liczby z aktualnej bazy. Szczegóły ryzyk otwierasz w{" "}
-                  <strong style={{ color: "#fde68a" }}>Ostrzeżeniach</strong> lub na kartach projektów.
+                  <strong style={{ color: "#92400e" }}>Ostrzeżeniach</strong> lub na kartach projektów.
                 </p>
               ) : null}
             </div>
@@ -10895,7 +10895,7 @@ export default function App() {
               <h3
                 style={{
                   ...op.sectionTitle,
-                  ...(fakturyDoZaplatyOczekujaceList.length ? { color: "#fde68a" } : {}),
+                  ...(fakturyDoZaplatyOczekujaceList.length ? { color: "#92400e" } : {}),
                 }}
               >
                 Księgowość — faktury do opłacenia
@@ -10906,7 +10906,7 @@ export default function App() {
                   <strong>Faktury kosztowe</strong>.
                 </p>
               ) : (
-                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fde68a", fontSize: "0.84rem" }}>
+                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#92400e", fontSize: "0.84rem" }}>
                   {fakturyDoZaplatyOczekujaceList.slice(0, 10).map((z) => (
                     <li key={z.id} style={{ marginBottom: "0.55rem" }}>
                       <button
@@ -11051,7 +11051,7 @@ export default function App() {
               {krList.filter((r) => pulpitKrRekordWymagaUwagi(r)).length === 0 ? (
                 <p style={{ ...op.muted, margin: 0 }}>Brak KR ze statusem „oczekuje na zamawiającego”.</p>
               ) : (
-                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fde68a", fontSize: "0.84rem" }}>
+                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#92400e", fontSize: "0.84rem" }}>
                   {krList
                     .filter((r) => pulpitKrRekordWymagaUwagi(r))
                     .slice(0, 6)
@@ -14449,7 +14449,7 @@ export default function App() {
                                 width: `${szerFakturyKolumny("brutto")}px`,
                                 maxWidth: `${szerFakturyKolumny("brutto")}px`,
                                 fontWeight: 700,
-                                color: "#fde68a",
+                                color: "#92400e",
                               }}
                             >
                               {kwotaBruttoEtykieta(row.kwota_brutto)}
@@ -17725,7 +17725,7 @@ export default function App() {
                       padding: "0.32rem 0.65rem",
                       fontSize: "0.78rem",
                       borderColor: "rgba(251,191,36,0.45)",
-                      color: "#fde68a",
+                      color: "#92400e",
                     }}
                     title="Karta projektu → zakładka Umowa (dziś: pola KR). Wkrótce: osobna tabela na wiele linków."
                     onClick={() => przejdzDoSekcjiKr(rekordKrPulpit, "umowa")}
@@ -17935,7 +17935,7 @@ export default function App() {
                     <strong style={{ color: "#166534" }}>bez sprzedaży FS</strong> (ta jest w tabeli powyżej). BRUDNOPIS:
                     podłączenie pod osobną tabelę w bazie.
                   </p>
-                  <p style={{ ...s.muted, margin: "0 0 0.55rem", fontSize: "0.68rem", lineHeight: 1.45, color: "#fde68a" }}>
+                  <p style={{ ...s.muted, margin: "0 0 0.55rem", fontSize: "0.68rem", lineHeight: 1.45, color: "#92400e" }}>
                     <strong>Zgłoszenie kosztu do przelewu</strong> (komu, konto, kwota brutto) — osobna funkcja: przycisk
                     poniżej, nie w ramce „placeholder”.
                   </p>
@@ -18975,7 +18975,7 @@ export default function App() {
                             borderRadius: "8px",
                             border: "1px solid rgba(251,191,36,0.25)",
                             background: "rgba(251,191,36,0.08)",
-                            color: "#fde68a",
+                            color: "#92400e",
                             fontSize: "0.78rem",
                           }}
                         >
@@ -19064,7 +19064,7 @@ export default function App() {
                                 style={{
                                   ...s.btnGhost,
                                   borderColor: "rgba(56,189,248,0.45)",
-                                  color: "#bae6fd",
+                                  color: "#0369a1",
                                 }}
                                 onClick={() =>
                                   setEditForm((f) => ({
@@ -19080,7 +19080,7 @@ export default function App() {
                                 style={{
                                   ...s.btnGhost,
                                   borderColor: "rgba(56,189,248,0.45)",
-                                  color: "#bae6fd",
+                                  color: "#0369a1",
                                 }}
                                 onClick={() =>
                                   setEditForm((f) => ({

@@ -499,7 +499,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
         </h4>
         <form style={{ ...s.form, maxWidth: "min(42rem, 100%)", marginBottom: "1rem" }} onSubmit={zapiszZadanie}>
           <label style={s.label}>
-            Kod KR <span style={{ color: "#fca5a5" }}>*</span>
+            Kod KR <span style={{ color: "#b91c1c" }}>*</span>
             <select
               style={s.input}
               value={formZadanie.kr}
@@ -525,7 +525,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
             />
           </label>
           <label style={s.label}>
-            Opis pracy <span style={{ color: "#fca5a5" }}>*</span>
+            Opis pracy <span style={{ color: "#b91c1c" }}>*</span>
             <textarea
               style={{ ...s.input, minHeight: "3rem" }}
               value={formZadanie.opis}
@@ -649,7 +649,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
                       </button>{" "}
                       <button
                         type="button"
-                        style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.75rem", color: "#fca5a5" }}
+                        style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.75rem", color: "#b91c1c" }}
                         onClick={() => void usunZadanie(row.id)}
                       >
                         Usuń
@@ -673,7 +673,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
         <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.5rem" }}>Nowy zespół</h4>
         <form style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1rem" }} onSubmit={zapiszZespol}>
           <label style={s.label}>
-            Nazwa <span style={{ color: "#fca5a5" }}>*</span>
+            Nazwa <span style={{ color: "#b91c1c" }}>*</span>
             <input
               style={s.input}
               value={formZespol.nazwa}
@@ -740,7 +740,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
                         </button>{" "}
                         <button
                           type="button"
-                          style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.78rem", color: "#fca5a5" }}
+                          style={{ ...s.btnGhost, padding: "0.25rem 0.5rem", fontSize: "0.78rem", color: "#b91c1c" }}
                           onClick={() => usunZespol(z.id)}
                         >
                           Usuń
@@ -808,7 +808,7 @@ export function TerenZespolyPanel({ krList, pracownicy, trybHelp }) {
                   {etykietaPrac(pracownicy, nr)}
                   <button
                     type="button"
-                    style={{ ...s.btnGhost, padding: "0.1rem 0.35rem", fontSize: "0.72rem", color: "#fca5a5" }}
+                    style={{ ...s.btnGhost, padding: "0.1rem 0.35rem", fontSize: "0.72rem", color: "#b91c1c" }}
                     onClick={() => void usunCzlonka(nr)}
                   >
                     ×

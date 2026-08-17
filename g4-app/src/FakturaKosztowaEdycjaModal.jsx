@@ -252,13 +252,13 @@ export const FakturaKosztowaEdycjaModal = memo(function FakturaKosztowaEdycjaMod
           Automatyczny zapis w tle ok. {FAKTURA_EDYCJA_AUTO_ZAPIS_MS / 1000} s po ostatniej zmianie (wymagana poprawna kwota
           brutto). Przyciski „Zapisz” nadal możesz użyć w dowolnym momencie.
           {autoZapisStan === "zapisuje" ? (
-            <span style={{ color: "#fde68a", marginLeft: "0.35rem" }}>— Zapisuję w tle…</span>
+            <span style={{ color: "#92400e", marginLeft: "0.35rem" }}>— Zapisuję w tle…</span>
           ) : null}
           {autoZapisStan === "zapisano" ? (
-            <span style={{ color: "#86efac", marginLeft: "0.35rem" }}>— Zapisano w tle.</span>
+            <span style={{ color: "#166534", marginLeft: "0.35rem" }}>— Zapisano w tle.</span>
           ) : null}
           {autoZapisStan === "blad" ? (
-            <span style={{ color: "#fca5a5", marginLeft: "0.35rem" }}>
+            <span style={{ color: "#b91c1c", marginLeft: "0.35rem" }}>
               — Auto-zapis nie powiódł się (sprawdź konsolę / sieć); użyj „Zapisz”.
             </span>
           ) : null}
@@ -429,7 +429,7 @@ export const FakturaKosztowaEdycjaModal = memo(function FakturaKosztowaEdycjaMod
                       }}
                     >
                       {tekstTrim(p.imie_nazwisko) || "—"}{" "}
-                      <span style={{ color: "#7dd3fc", fontSize: "0.78rem" }}>(nr {String(p.nr ?? "").trim()})</span>
+                      <span style={{ color: "#0369a1", fontSize: "0.78rem" }}>(nr {String(p.nr ?? "").trim()})</span>
                     </li>
                   ))}
                 </ul>

@@ -588,7 +588,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
           </p>
         ) : null}
       </div>
-      {err ? <p style={{ ...s.muted, color: "#fca5a5" }}>{err}</p> : null}
+      {err ? <p style={{ ...s.muted, color: "#b91c1c" }}>{err}</p> : null}
 
       <div style={{ ...s.btnRow, marginBottom: "0.75rem", flexWrap: "wrap" }}>
         <label style={{ ...s.label, minWidth: "15rem", marginBottom: 0 }}>

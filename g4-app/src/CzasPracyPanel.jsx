@@ -1358,7 +1358,7 @@ export function CzasPracyPanel({
             borderRadius: "10px",
             border: "1px solid rgba(239,68,68,0.4)",
             background: "rgba(239,68,68,0.08)",
-            color: "#fecaca",
+            color: "#991b1b",
             fontSize: "0.88rem",
             marginBottom: "1rem",
           }}
@@ -1380,7 +1380,7 @@ export function CzasPracyPanel({
             borderRadius: "10px",
             border: "1px solid rgba(56,189,248,0.35)",
             background: "rgba(56,189,248,0.08)",
-            color: "#bae6fd",
+            color: "#0369a1",
             fontSize: "0.86rem",
             lineHeight: 1.45,
           }}
@@ -1398,7 +1398,7 @@ export function CzasPracyPanel({
             borderRadius: "10px",
             border: alarmBrakiBlink ? "1px solid rgba(248,113,113,0.95)" : "1px solid rgba(248,113,113,0.35)",
             background: alarmBrakiBlink ? "rgba(220,38,38,0.28)" : "rgba(127,29,29,0.16)",
-            color: "#fecaca",
+            color: "#991b1b",
             fontSize: "0.86rem",
             lineHeight: 1.45,
             boxShadow: alarmBrakiBlink ? "0 0 0 2px rgba(248,113,113,0.18)" : "none",
@@ -1630,7 +1630,7 @@ export function CzasPracyPanel({
               </span>
             ) : null}
             {importMsg ? (
-              <span style={{ color: "#86efac", lineHeight: 1.35 }}>{importMsg}</span>
+              <span style={{ color: "#166534", lineHeight: 1.35 }}>{importMsg}</span>
             ) : (
               <span style={{ opacity: 0.85 }}>
                 Najpierw wybierz plik — aplikacja pokaże listę arkuszy MM-RRRR. Możesz zaimportować jeden miesiąc albo wszystkie naraz. Przed importem (opcja domyślna) kasowane są wcześniejsze wpisy z tego samego arkusza (ten sam miesiąc w znaczniku importu).
@@ -1646,7 +1646,7 @@ export function CzasPracyPanel({
                   borderRadius: "8px",
                   border: "1px solid rgba(248,113,113,0.55)",
                   background: "rgba(248,113,113,0.12)",
-                  color: "#fca5a5",
+                  color: "#b91c1c",
                   fontWeight: 600,
                   cursor: busy || importBusy || usuwanieRozliczeniaBusy ? "wait" : "pointer",
                   fontSize: "0.8rem",
@@ -1732,7 +1732,7 @@ export function CzasPracyPanel({
             Obejmuje pracę (w tym delegację, szkolenie), urlop wypoczynkowy i na żądanie, L4 oraz opiekę nad dzieckiem zdrowym — wg zapisanych godzin (np. 8 h z importu całego dnia).
           </div>
           {rozliczenieMiesiac.tryb === "uz" ? (
-            <div style={{ marginTop: "0.45rem", color: "#fdba74", lineHeight: 1.45 }}>
+            <div style={{ marginTop: "0.45rem", color: "#c2410c", lineHeight: 1.45 }}>
               <strong>Um. zlecenie:</strong> do rozliczeń nadgodzin przyjmujemy całą sumę zapisów ({rozliczenieMiesiac.nadgodzinyRozliczeniowe.toFixed(2)} h).
             </div>
           ) : (
@@ -1740,7 +1740,7 @@ export function CzasPracyPanel({
               <div style={{ marginTop: "0.45rem", color: rozliczenieMiesiac.brakDoNormy > 0 ? "#fca5a5" : "#86efac" }}>
                 Brak do normy: {rozliczenieMiesiac.brakDoNormy.toFixed(2)} h
               </div>
-              <div style={{ marginTop: "0.2rem", color: "#fdba74" }}>
+              <div style={{ marginTop: "0.2rem", color: "#c2410c" }}>
                 Nadgodziny rozliczeniowe: {rozliczenieMiesiac.nadgodzinyRozliczeniowe.toFixed(2)} h
               </div>
               {rozliczenieMiesiac.tryb === "inne" ? (
@@ -1960,7 +1960,7 @@ export function CzasPracyPanel({
                             </span>
                           ) : null}
                           {sumaDzien > 0 ? (
-                            <span style={{ fontSize: "0.68rem", color: "#86efac" }}>{sumaDzien.toFixed(1)} h</span>
+                            <span style={{ fontSize: "0.68rem", color: "#166534" }}>{sumaDzien.toFixed(1)} h</span>
                           ) : null}
                         </div>
                       )}
@@ -2058,7 +2058,7 @@ export function CzasPracyPanel({
                             onClick={() => void usunWpis(w.id, { zamknijModal: false })}
                             style={{
                               ...btnGhost,
-                              color: "#fecaca",
+                              color: "#991b1b",
                               padding: "0.2rem 0.5rem",
                               fontSize: "0.78rem",
                             }}
@@ -2271,7 +2271,7 @@ export function CzasPracyPanel({
                     Wstecz
                   </button>
                   {form.id ? (
-                    <button type="button" style={{ ...btnGhost, color: "#fecaca" }} onClick={() => usunWpis(form.id)}>
+                    <button type="button" style={{ ...btnGhost, color: "#991b1b" }} onClick={() => usunWpis(form.id)}>
                       Usuń
                     </button>
                   ) : null}
@@ -2347,7 +2347,7 @@ export function CzasPracyPanel({
                     marginLeft: "0.5rem",
                     background: "none",
                     border: "none",
-                    color: "#fca5a5",
+                    color: "#b91c1c",
                     cursor: "pointer",
                     fontSize: "0.8rem",
                   }}

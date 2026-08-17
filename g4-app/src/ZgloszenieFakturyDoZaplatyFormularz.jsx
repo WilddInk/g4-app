@@ -93,7 +93,7 @@ export const ZgloszenieFakturyDoZaplatyFormularz = memo(function ZgloszenieFaktu
           />
         </label>
         <label style={s.label}>
-          Odbiorca <span style={{ color: "#fca5a5" }}>*</span>
+          Odbiorca <span style={{ color: "#b91c1c" }}>*</span>
           <input
             style={s.input}
             type="text"
@@ -114,7 +114,7 @@ export const ZgloszenieFakturyDoZaplatyFormularz = memo(function ZgloszenieFaktu
           />
         </label>
         <label style={s.label}>
-          Kwota brutto <span style={{ color: "#fca5a5" }}>*</span>
+          Kwota brutto <span style={{ color: "#b91c1c" }}>*</span>
           <input
             style={s.input}
             type="text"
