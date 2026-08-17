@@ -106,6 +106,35 @@ const KOLUMNY_SORT_PLAN = [
   { key: "mozna_fakturowac", label: "Można fakturować" },
 ];
 
+/** Jasna kolorystyka panelu — czarny tekst, lepsza czytelność rozmów. */
+const LIGHT = {
+  panelBg: "#f8fafc",
+  panelBorder: "1px solid #cbd5e1",
+  text: "#0f172a",
+  muted: "#475569",
+  soft: "#64748b",
+  title: "#0f172a",
+  accent: "#0369a1",
+  accentSoft: "#e0f2fe",
+  cardBg: "#ffffff",
+  cardBorder: "1px solid #cbd5e1",
+  chatClosedBg: "#ffffff",
+  chatClosedBorder: "1px dashed #94a3b8",
+  chatOpenBg: "#f1f5f9",
+  bubbleBg: "#ffffff",
+  bubbleBorder: "1px solid #e2e8f0",
+  inputBg: "#ffffff",
+  inputBorder: "1px solid #94a3b8",
+  rowReady: "rgba(22,163,74,0.12)",
+  rowFocus: "rgba(14,165,233,0.18)",
+  rowFocusOutline: "2px solid #0284c7",
+  readyText: "#166534",
+  danger: "#b91c1c",
+  thBg: "#e2e8f0",
+  tdBorder: "1px solid #e2e8f0",
+  msgOk: "#166534",
+};
+
 /**
  * Kolejka planowanych faktur sprzedażowych.
  * Uwagi = wątek rozmowy (każdy wpis osobno: kto / kiedy / treść).
@@ -420,11 +449,11 @@ export function PlanFakturPanel({
               display: "block",
               width: "100%",
               textAlign: "left",
-              background: "rgba(15,23,42,0.55)",
-              border: "1px dashed rgba(251,146,60,0.55)",
+              background: LIGHT.chatClosedBg,
+              border: LIGHT.chatClosedBorder,
               borderRadius: "8px",
               padding: "0.4rem 0.5rem",
-              color: "#e2e8f0",
+              color: LIGHT.text,
               cursor: "pointer",
               font: "inherit",
               fontSize: "0.78rem",
@@ -437,32 +466,40 @@ export function PlanFakturPanel({
                   {String(ostatnia.tresc).slice(0, 120)}
                   {String(ostatnia.tresc).length > 120 ? "…" : ""}
                 </span>
-                <span style={{ display: "block", marginTop: "0.25rem", fontSize: "0.7rem", color: "#94a3b8" }}>
+                <span style={{ display: "block", marginTop: "0.25rem", fontSize: "0.7rem", color: LIGHT.soft }}>
                   {ostatnia.autor || "—"} · {formatDataUwag(ostatnia.created_at) || "—"}
                   {wiadomosci.length > 1 ? ` · ${wiadomosci.length} wpisów` : ""}
                   {" · otwórz rozmowę"}
                 </span>
               </>
             ) : (
-              <span style={{ color: "#fdba74" }}>＋ Otwórz rozmowę / dodaj wpis…</span>
+              <span style={{ color: LIGHT.accent }}>＋ Otwórz rozmowę / dodaj wpis…</span>
             )}
           </button>
         ) : (
           <div
             style={{
-              border: "1px solid rgba(148,163,184,0.35)",
+              border: LIGHT.cardBorder,
               borderRadius: "10px",
-              background: "rgba(15,23,42,0.85)",
+              background: LIGHT.chatOpenBg,
               padding: "0.45rem",
               display: "grid",
               gap: "0.4rem",
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", alignItems: "center" }}>
-              <strong style={{ fontSize: "0.75rem", color: "#fdba74" }}>Rozmowa</strong>
+              <strong style={{ fontSize: "0.75rem", color: LIGHT.accent }}>Rozmowa</strong>
               <button
                 type="button"
-                style={{ ...(st.btnGhost || {}), fontSize: "0.7rem", padding: "0.1rem 0.4rem" }}
+                style={{
+                  background: "#fff",
+                  border: LIGHT.cardBorder,
+                  borderRadius: "6px",
+                  color: LIGHT.text,
+                  fontSize: "0.7rem",
+                  padding: "0.1rem 0.4rem",
+                  cursor: "pointer",
+                }}
                 onClick={() => setOtwartyCzatId(null)}
               >
                 Zwiń
@@ -478,7 +515,7 @@ export function PlanFakturPanel({
               }}
             >
               {wiadomosci.length === 0 ? (
-                <span style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Brak wpisów — napisz pierwszą wiadomość.</span>
+                <span style={{ fontSize: "0.75rem", color: LIGHT.soft }}>Brak wpisów — napisz pierwszą wiadomość.</span>
               ) : (
                 wiadomosci.map((w) => (
                   <div
@@ -486,17 +523,17 @@ export function PlanFakturPanel({
                     style={{
                       padding: "0.35rem 0.45rem",
                       borderRadius: "8px",
-                      background: "rgba(30,41,59,0.9)",
-                      border: "1px solid rgba(148,163,184,0.2)",
+                      background: LIGHT.bubbleBg,
+                      border: LIGHT.bubbleBorder,
                     }}
                   >
-                    <div style={{ fontSize: "0.68rem", color: "#94a3b8", marginBottom: "0.15rem" }}>
-                      <strong style={{ color: "#fdba74" }}>{w.autor || w.autor_email || "—"}</strong>
+                    <div style={{ fontSize: "0.68rem", color: LIGHT.soft, marginBottom: "0.15rem" }}>
+                      <strong style={{ color: LIGHT.accent }}>{w.autor || w.autor_email || "—"}</strong>
                       {" · "}
                       {formatDataUwag(w.created_at) || "—"}
                       {w._legacy ? " · (stary wpis)" : ""}
                     </div>
-                    <div style={{ whiteSpace: "pre-wrap", color: "#e2e8f0", fontSize: "0.78rem" }}>{w.tresc}</div>
+                    <div style={{ whiteSpace: "pre-wrap", color: LIGHT.text, fontSize: "0.78rem" }}>{w.tresc}</div>
                   </div>
                 ))
               )}
@@ -515,9 +552,9 @@ export function PlanFakturPanel({
                     minHeight: "2.6rem",
                     padding: "0.35rem 0.45rem",
                     borderRadius: "8px",
-                    border: "1px solid rgba(148,163,184,0.45)",
-                    background: "#0f172a",
-                    color: "#e2e8f0",
+                    border: LIGHT.inputBorder,
+                    background: LIGHT.inputBg,
+                    color: LIGHT.text,
                     font: "inherit",
                     fontSize: "0.78rem",
                   }}
@@ -530,7 +567,16 @@ export function PlanFakturPanel({
                 />
                 <button
                   type="button"
-                  style={{ ...(st.btn || {}), fontSize: "0.74rem", padding: "0.25rem 0.55rem" }}
+                  style={{
+                    background: LIGHT.accent,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    fontSize: "0.74rem",
+                    padding: "0.3rem 0.6rem",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
                   disabled={wysylanieId === row.id || !(draftByPlan[row.id] ?? "").trim()}
                   onClick={() => void wyslijWiadomosc(row.id)}
                 >
@@ -538,7 +584,7 @@ export function PlanFakturPanel({
                 </button>
               </div>
             ) : (
-              <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Zaloguj się, aby dopisać wiadomość.</span>
+              <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>Zaloguj się, aby dopisać wiadomość.</span>
             )}
           </div>
         )}
@@ -546,30 +592,84 @@ export function PlanFakturPanel({
     );
   }
 
+  const thLight = {
+    background: LIGHT.thBg,
+    color: LIGHT.text,
+    borderBottom: LIGHT.tdBorder,
+    padding: "0.45rem 0.5rem",
+    textAlign: "left",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  };
+  const tdLight = {
+    color: LIGHT.text,
+    borderBottom: LIGHT.tdBorder,
+    padding: "0.45rem 0.5rem",
+    verticalAlign: "top",
+    background: "#fff",
+  };
+
   return (
-    <div style={{ ...(shell.sectionCard || {}), marginTop: "0.85rem" }}>
-      <h3 style={{ ...(shell.sectionTitle || {}), marginTop: 0, marginBottom: "0.35rem" }}>
+    <div
+      style={{
+        marginTop: "0.85rem",
+        background: LIGHT.panelBg,
+        border: LIGHT.panelBorder,
+        borderRadius: "14px",
+        padding: "0.9rem 1rem 1rem",
+        color: LIGHT.text,
+      }}
+    >
+      <h3 style={{ marginTop: 0, marginBottom: "0.35rem", color: LIGHT.title, fontSize: "1.05rem" }}>
         Plan faktur sprzedażowych ({filtered.length})
       </h3>
-      <p style={{ ...(st.muted || {}), marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem" }}>
-        To jest lista od prezesa (lipiec → 2027). <strong>Kierownik</strong> zaznacza „Można fakturować”. Kolumna{" "}
-        <strong>Uwagi / rozmowa</strong> działa jak czat: każdy dopisuje swoją wiadomość — widać kto, kiedy i co napisał
-        (nie nadpisuje poprzednich).
+      <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem", color: LIGHT.muted }}>
+        To jest lista od prezesa (lipiec → 2027). <strong style={{ color: LIGHT.text }}>Kierownik</strong> zaznacza
+        „Można fakturować”. Kolumna <strong style={{ color: LIGHT.text }}>Uwagi / rozmowa</strong> działa jak czat:
+        każdy dopisuje swoją wiadomość — widać kto, kiedy i co napisał (nie nadpisuje poprzednich).
       </p>
       {brakTabeliCzat ? (
-        <div style={{ ...(st.errBox || {}), marginBottom: "0.75rem" }} role="alert">
+        <div
+          style={{
+            marginBottom: "0.75rem",
+            padding: "0.55rem 0.7rem",
+            borderRadius: "8px",
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            color: "#991b1b",
+          }}
+          role="alert"
+        >
           Brak tabeli czatu w bazie. Uruchom w Supabase SQL Editor:{" "}
-          <code style={st.code}>g4-app/supabase/kr-plan-faktury-komentarz-czat.sql</code>
+          <code style={{ background: "#fee2e2", padding: "0.05rem 0.25rem", borderRadius: 4 }}>
+            g4-app/supabase/kr-plan-faktury-komentarz-czat.sql
+          </code>
         </div>
       ) : null}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "0.75rem", alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "0.6rem",
+          marginBottom: "0.75rem",
+          alignItems: "center",
+          color: LIGHT.text,
+        }}
+      >
         <label style={{ fontSize: "0.84rem" }}>
           Horyzont{" "}
           <select
             value={filtrHoryzont}
             onChange={(e) => setFiltrHoryzont(e.target.value)}
-            style={{ marginLeft: 4 }}
+            style={{
+              marginLeft: 4,
+              background: "#fff",
+              color: LIGHT.text,
+              border: LIGHT.inputBorder,
+              borderRadius: 6,
+              padding: "0.15rem 0.35rem",
+            }}
           >
             <option value="wszystkie">Wszystkie</option>
             {HORYZONTY.map((h) => (
@@ -601,32 +701,44 @@ export function PlanFakturPanel({
           />{" "}
           Tylko z blokadą
         </label>
-        <button type="button" style={st.btnGhost} onClick={() => void fetchRows()}>
+        <button
+          type="button"
+          style={{
+            background: "#fff",
+            border: LIGHT.cardBorder,
+            borderRadius: 8,
+            color: LIGHT.text,
+            padding: "0.25rem 0.55rem",
+            cursor: "pointer",
+            fontSize: "0.82rem",
+          }}
+          onClick={() => void fetchRows()}
+        >
           Odśwież
         </button>
       </div>
 
-      <div style={{ ...(st.muted || {}), fontSize: "0.84rem", marginBottom: "0.75rem" }}>
-        Suma widocznych: <strong>{formatPln(sumy.total)}</strong>
+      <div style={{ fontSize: "0.84rem", marginBottom: "0.75rem", color: LIGHT.muted }}>
+        Suma widocznych: <strong style={{ color: LIGHT.text }}>{formatPln(sumy.total)}</strong>
         {" · "}
-        Gotowe do FS: <strong style={{ color: "#86efac" }}>{formatPln(sumy.gotowe)}</strong>
+        Gotowe do FS: <strong style={{ color: LIGHT.readyText }}>{formatPln(sumy.gotowe)}</strong>
       </div>
 
       <div
         style={{
           marginBottom: "0.85rem",
-          border: "1px solid rgba(56,189,248,0.28)",
+          border: "1px solid #7dd3fc",
           borderRadius: "12px",
-          background: "linear-gradient(180deg, rgba(14,165,233,0.12), rgba(15,23,42,0.35))",
+          background: "linear-gradient(180deg, #e0f2fe 0%, #f8fafc 100%)",
           padding: "0.65rem 0.75rem",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", alignItems: "baseline" }}>
-          <strong style={{ fontSize: "0.86rem", color: "#7dd3fc" }}>Ostatnie wpisy</strong>
-          <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>kliknij, żeby otworzyć rozmowę</span>
+          <strong style={{ fontSize: "0.86rem", color: LIGHT.accent }}>Ostatnie wpisy</strong>
+          <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>kliknij, żeby otworzyć rozmowę</span>
         </div>
         {ostatnieWpisy.length === 0 ? (
-          <p style={{ margin: "0.45rem 0 0", fontSize: "0.8rem", color: "#94a3b8" }}>
+          <p style={{ margin: "0.45rem 0 0", fontSize: "0.8rem", color: LIGHT.soft }}>
             Brak wiadomości w rozmowach.
           </p>
         ) : (
@@ -644,24 +756,23 @@ export function PlanFakturPanel({
                   width: "100%",
                   textAlign: "left",
                   cursor: "pointer",
-                  border: "1px solid rgba(148,163,184,0.22)",
+                  border: LIGHT.cardBorder,
                   borderRadius: "9px",
-                  background:
-                    podswietlonyPlanId === w.planId ? "rgba(56,189,248,0.18)" : "rgba(15,23,42,0.55)",
-                  color: "#e2e8f0",
+                  background: podswietlonyPlanId === w.planId ? LIGHT.accentSoft : LIGHT.cardBg,
+                  color: LIGHT.text,
                   padding: "0.4rem 0.55rem",
                   font: "inherit",
                 }}
               >
-                <span style={{ fontSize: "0.72rem", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: "0.72rem", color: LIGHT.soft, whiteSpace: "nowrap" }}>
                   {formatDataUwag(w.created_at) || "—"}
                 </span>
                 <span style={{ fontSize: "0.78rem", lineHeight: 1.35 }}>
-                  <strong style={{ color: "#fdba74" }}>{w.autor}</strong>
+                  <strong style={{ color: LIGHT.accent }}>{w.autor}</strong>
                   {" · "}
                   <strong>KR {w.kr}</strong>
-                  {w.klient ? <span style={{ color: "#94a3b8" }}>{` · ${w.klient}`}</span> : null}
-                  <span style={{ display: "block", marginTop: "0.12rem", color: "#cbd5e1" }}>
+                  {w.klient ? <span style={{ color: LIGHT.soft }}>{` · ${w.klient}`}</span> : null}
+                  <span style={{ display: "block", marginTop: "0.12rem", color: LIGHT.text }}>
                     {skrotTekstu(w.tresc, 110)}
                   </span>
                 </span>
@@ -672,28 +783,45 @@ export function PlanFakturPanel({
       </div>
 
       {err ? (
-        <div style={{ ...(st.errBox || {}), marginBottom: "0.85rem" }} role="alert">
+        <div
+          style={{
+            marginBottom: "0.85rem",
+            padding: "0.55rem 0.7rem",
+            borderRadius: "8px",
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            color: "#991b1b",
+          }}
+          role="alert"
+        >
           {err}
         </div>
       ) : null}
       {msg ? (
-        <div style={{ marginBottom: "0.75rem", fontSize: "0.84rem", color: "#86efac" }}>{msg}</div>
+        <div style={{ marginBottom: "0.75rem", fontSize: "0.84rem", color: LIGHT.msgOk }}>{msg}</div>
       ) : null}
 
       {loading ? (
-        <p style={st.muted}>Ładowanie…</p>
+        <p style={{ color: LIGHT.muted }}>Ładowanie…</p>
       ) : filteredSorted.length === 0 ? (
-        <p style={st.muted}>Brak pozycji dla wybranego filtra.</p>
+        <p style={{ color: LIGHT.muted }}>Brak pozycji dla wybranego filtra.</p>
       ) : (
-        <div style={{ ...(st.tableWrap || {}), borderRadius: "12px", overflow: "auto" }}>
-          <table style={{ ...(st.table || {}), fontSize: "0.82rem" }}>
+        <div
+          style={{
+            borderRadius: "12px",
+            overflow: "auto",
+            border: LIGHT.panelBorder,
+            background: "#fff",
+          }}
+        >
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", color: LIGHT.text }}>
             <thead>
               <tr>
                 {KOLUMNY_SORT_PLAN.map((kol) => {
                   const aktywna = sort.key === kol.key;
                   const strzalka = aktywna ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
                   return (
-                    <th key={kol.key} style={st.th}>
+                    <th key={kol.key} style={thLight}>
                       <button
                         type="button"
                         onClick={() => przestawSort(kol.key)}
@@ -703,7 +831,7 @@ export function PlanFakturPanel({
                           border: "none",
                           padding: 0,
                           margin: 0,
-                          color: "inherit",
+                          color: LIGHT.text,
                           font: "inherit",
                           fontWeight: aktywna ? 800 : 700,
                           cursor: "pointer",
@@ -717,7 +845,7 @@ export function PlanFakturPanel({
                     </th>
                   );
                 })}
-                {czyMozeEdytowac ? <th style={st.th}>Akcja</th> : null}
+                {czyMozeEdytowac ? <th style={thLight}>Akcja</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -732,28 +860,23 @@ export function PlanFakturPanel({
                       else delete rowRefs.current[r.id];
                     }}
                     style={{
-                      ...(gotowe ? { background: "rgba(34,197,94,0.12)" } : null),
-                      ...(podswietlony
-                        ? {
-                            background: "rgba(56,189,248,0.22)",
-                            outline: "2px solid rgba(56,189,248,0.65)",
-                            outlineOffset: "-2px",
-                          }
-                        : null),
+                      background: podswietlony ? LIGHT.rowFocus : gotowe ? LIGHT.rowReady : "#fff",
+                      outline: podswietlony ? LIGHT.rowFocusOutline : undefined,
+                      outlineOffset: podswietlony ? "-2px" : undefined,
                       transition: "background 0.35s ease",
                     }}
                   >
-                    <td style={st.td}>{HORYZONT_LABEL[r.horyzont] || r.horyzont}</td>
-                    <td style={st.td}>
+                    <td style={tdLight}>{HORYZONT_LABEL[r.horyzont] || r.horyzont}</td>
+                    <td style={tdLight}>
                       <strong>{r.kr || "—"}</strong>
                     </td>
-                    <td style={st.td}>{r.klient || "—"}</td>
-                    <td style={{ ...(st.td || {}), maxWidth: "18rem" }}>{r.opis || "—"}</td>
-                    <td style={{ ...(st.td || {}), verticalAlign: "top" }}>{renderCzatKomorka(r)}</td>
-                    <td style={{ ...(st.td || {}), whiteSpace: "nowrap" }}>{formatPln(r.kwota_netto)}</td>
-                    <td style={st.td}>{BLOKER_LABEL[r.bloker] || r.bloker || "—"}</td>
-                    <td style={st.td}>{r.odpowiedzialny || "—"}</td>
-                    <td style={st.td}>
+                    <td style={tdLight}>{r.klient || "—"}</td>
+                    <td style={{ ...tdLight, maxWidth: "18rem" }}>{r.opis || "—"}</td>
+                    <td style={{ ...tdLight, verticalAlign: "top" }}>{renderCzatKomorka(r)}</td>
+                    <td style={{ ...tdLight, whiteSpace: "nowrap" }}>{formatPln(r.kwota_netto)}</td>
+                    <td style={tdLight}>{BLOKER_LABEL[r.bloker] || r.bloker || "—"}</td>
+                    <td style={tdLight}>{r.odpowiedzialny || "—"}</td>
+                    <td style={tdLight}>
                       <label
                         style={{
                           display: "inline-flex",
@@ -761,7 +884,7 @@ export function PlanFakturPanel({
                           gap: "0.35rem",
                           cursor: czyMozeEdytowac ? "pointer" : "default",
                           fontWeight: 700,
-                          color: gotowe ? "#86efac" : undefined,
+                          color: gotowe ? LIGHT.readyText : LIGHT.text,
                         }}
                       >
                         <input
@@ -774,15 +897,17 @@ export function PlanFakturPanel({
                       </label>
                     </td>
                     {czyMozeEdytowac ? (
-                      <td style={st.td}>
+                      <td style={tdLight}>
                         <button
                           type="button"
                           style={{
-                            ...(st.btnGhost || {}),
+                            background: "#fff",
                             padding: "0.15rem 0.45rem",
                             fontSize: "0.75rem",
-                            color: "#fca5a5",
-                            borderColor: "rgba(248,113,113,0.45)",
+                            color: LIGHT.danger,
+                            border: "1px solid #fca5a5",
+                            borderRadius: 6,
+                            cursor: "pointer",
                           }}
                           title="Usuń z planu (np. FS już wystawiona)"
                           onClick={() => void usunPlan(r)}
