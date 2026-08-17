@@ -45,6 +45,28 @@ function formatDataUwag(iso) {
   }
 }
 
+/** Dopasowanie wpisów Damiana po imieniu / e-mailu (bez sztywnego konta). */
+function czyAutorDamian(autor, email) {
+  const a = String(autor ?? "").trim().toLowerCase();
+  const e = String(email ?? "").trim().toLowerCase();
+  return a.includes("damian") || e.includes("damian");
+}
+
+function ostatniWpisDamiana(wiadomosci) {
+  let last = null;
+  for (const w of wiadomosci ?? []) {
+    if (!czyAutorDamian(w?.autor, w?.autor_email)) continue;
+    if (!last) {
+      last = w;
+      continue;
+    }
+    const tLast = new Date(last.created_at || 0).getTime();
+    const tCur = new Date(w.created_at || 0).getTime();
+    if (Number.isFinite(tCur) && tCur >= (Number.isFinite(tLast) ? tLast : -Infinity)) last = w;
+  }
+  return last;
+}
+
 function porownajTekst(a, b) {
   return String(a ?? "").localeCompare(String(b ?? ""), "pl", {
     sensitivity: "base",
@@ -252,6 +274,34 @@ export function PlanFakturPanel({
     setMsg(next ? "Oznaczono: można fakturować." : "Cofnięto zgodę na fakturowanie.");
   }
 
+  async function usunPlan(row) {
+    if (!czyMozeEdytowac) {
+      alert("Usuwać pozycje z planu mogą kierownik lub administrator.");
+      return;
+    }
+    const kr = String(row?.kr ?? "").trim() || "—";
+    const opis = String(row?.opis ?? "").trim();
+    const ok = window.confirm(
+      `Usunąć z planu faktur?\n\nKR ${kr}${opis ? ` — ${opis}` : ""}\n\n` +
+        `Użyj tego, gdy FS już wystawiona (pozycja nie jest już planowana).`,
+    );
+    if (!ok) return;
+    setMsg(null);
+    const { error } = await supabase.from("kr_plan_faktury").delete().eq("id", row.id);
+    if (error) {
+      setMsg(`Nie udało się usunąć: ${error.message}`);
+      return;
+    }
+    setRows((prev) => prev.filter((r) => r.id !== row.id));
+    setKomentarzeByPlan((prev) => {
+      const next = { ...prev };
+      delete next[row.id];
+      return next;
+    });
+    if (otwartyCzatId === row.id) setOtwartyCzatId(null);
+    setMsg(`Usunięto z planu: KR ${kr}.`);
+  }
+
   function wiadomosciDlaWiersza(row) {
     const zBazy = komentarzeByPlan[row.id] ?? [];
     if (zBazy.length > 0) return zBazy;
@@ -326,10 +376,27 @@ export function PlanFakturPanel({
   const shell = op || {};
   const moznaUwagi = Boolean(czyMozeEdytowacUwagi);
 
+  const ostatniDamianGlobalnie = useMemo(() => {
+    let best = null;
+    let bestKr = "";
+    for (const row of rows ?? []) {
+      const wpis = ostatniWpisDamiana(wiadomosciDlaWiersza(row));
+      if (!wpis) continue;
+      const t = new Date(wpis.created_at || 0).getTime();
+      const tBest = best ? new Date(best.created_at || 0).getTime() : -Infinity;
+      if (!best || (Number.isFinite(t) && t >= tBest)) {
+        best = wpis;
+        bestKr = String(row.kr ?? "").trim();
+      }
+    }
+    return best ? { wpis: best, kr: bestKr } : null;
+  }, [rows, komentarzeByPlan]);
+
   function renderCzatKomorka(row) {
     const wiadomosci = wiadomosciDlaWiersza(row);
     const otwarty = otwartyCzatId === row.id;
     const ostatnia = wiadomosci.length ? wiadomosci[wiadomosci.length - 1] : null;
+    const ostatniDamian = ostatniWpisDamiana(wiadomosci);
 
     return (
       <div style={{ display: "grid", gap: "0.35rem", minWidth: "14rem", maxWidth: "22rem" }}>
@@ -363,6 +430,11 @@ export function PlanFakturPanel({
                   {wiadomosci.length > 1 ? ` · ${wiadomosci.length} wpisów` : ""}
                   {" · otwórz rozmowę"}
                 </span>
+                {ostatniDamian ? (
+                  <span style={{ display: "block", marginTop: "0.2rem", fontSize: "0.68rem", color: "#38bdf8" }}>
+                    Damian ostatnio: {formatDataUwag(ostatniDamian.created_at) || "—"}
+                  </span>
+                ) : null}
               </>
             ) : (
               <span style={{ color: "#fdba74" }}>＋ Otwórz rozmowę / dodaj wpis…</span>
@@ -531,6 +603,16 @@ export function PlanFakturPanel({
         Suma widocznych: <strong>{formatPln(sumy.total)}</strong>
         {" · "}
         Gotowe do FS: <strong style={{ color: "#86efac" }}>{formatPln(sumy.gotowe)}</strong>
+        {" · "}
+        {ostatniDamianGlobalnie ? (
+          <span style={{ color: "#38bdf8" }}>
+            Damian ostatnio napisał:{" "}
+            <strong>{formatDataUwag(ostatniDamianGlobalnie.wpis.created_at) || "—"}</strong>
+            {ostatniDamianGlobalnie.kr ? ` (KR ${ostatniDamianGlobalnie.kr})` : ""}
+          </span>
+        ) : (
+          <span style={{ color: "#94a3b8" }}>Damian jeszcze nic nie napisał w rozmowach</span>
+        )}
       </div>
 
       {err ? (
@@ -579,6 +661,7 @@ export function PlanFakturPanel({
                     </th>
                   );
                 })}
+                {czyMozeEdytowac ? <th style={st.th}>Akcja</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -619,6 +702,24 @@ export function PlanFakturPanel({
                         {gotowe ? "TAK" : "nie"}
                       </label>
                     </td>
+                    {czyMozeEdytowac ? (
+                      <td style={st.td}>
+                        <button
+                          type="button"
+                          style={{
+                            ...(st.btnGhost || {}),
+                            padding: "0.15rem 0.45rem",
+                            fontSize: "0.75rem",
+                            color: "#fca5a5",
+                            borderColor: "rgba(248,113,113,0.45)",
+                          }}
+                          title="Usuń z planu (np. FS już wystawiona)"
+                          onClick={() => void usunPlan(r)}
+                        >
+                          Usuń
+                        </button>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
