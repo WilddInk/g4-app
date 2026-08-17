@@ -393,8 +393,6 @@ export function PlanFakturPanel({
     setMsg(`Dodano wpis — ${autorNazwa}.`);
   }
 
-  const st = s || {};
-  const shell = op || {};
   const moznaUwagi = Boolean(czyMozeEdytowacUwagi);
 
   const ostatnieWpisy = useMemo(() => {
