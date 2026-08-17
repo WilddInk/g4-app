@@ -7235,6 +7235,27 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  /** Otwórz kartę KR po kodzie (lista / select / zmiana projektu). */
+  function otworzKrPoKodzie(kod) {
+    const k = String(kod ?? "").trim();
+    if (!k) return;
+    const item = krList.find((r) => String(r.kr ?? "").trim() === k);
+    setWidok("kr");
+    setKrMenu2Rozwiniete(true);
+    setKrSekcjaMenu2("informacje");
+    setWybranyKrKlucz(k);
+    setWidokInfoDlaKr(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setEditingKrKey(null);
+    if (item) {
+      przejdzDoSekcjiKr(item, "przeglad");
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   /** Szybka zmiana samego statusu KR (bez otwierania pełnej edycji). */
   async function ustawStatusKrSzybko(krKod, nowyStatus) {
     const k = String(krKod ?? "").trim();
@@ -18798,10 +18819,37 @@ export default function App() {
       !widokPwDlaKr &&
       !widokPulpitDlaKr ? (
         <>
-          <div style={{ marginBottom: "1rem" }}>
+          <div style={{ marginBottom: "1rem", display: "flex", flexWrap: "wrap", gap: "0.65rem", alignItems: "center" }}>
             <button type="button" style={s.btnGhost} onClick={powrotDoListyKr}>
               ← Lista KR / panel
             </button>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.84rem", color: theme.text }}>
+              <span style={{ fontWeight: 700, whiteSpace: "nowrap" }}>Wybierz KR</span>
+              <select
+                aria-label="Wybierz KR"
+                value={String(wybranyKrKlucz ?? "").trim()}
+                onChange={(e) => otworzKrPoKodzie(e.target.value)}
+                style={{
+                  ...s.input,
+                  width: "auto",
+                  minWidth: "16rem",
+                  maxWidth: "min(32rem, 100%)",
+                  margin: 0,
+                  padding: "0.4rem 0.55rem",
+                }}
+              >
+                {krListPosortowana.map((row) => {
+                  const kod = String(row.kr ?? "").trim();
+                  if (!kod) return null;
+                  const nazwa = String(row.nazwa_obiektu ?? "").trim();
+                  return (
+                    <option key={kod} value={kod}>
+                      {nazwa ? `${kod} — ${nazwa}` : kod}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
           </div>
           {!wybranyRekordKr ? (
             <div style={s.errBox} role="alert">
@@ -18827,16 +18875,16 @@ export default function App() {
                     borderRadius: "20px",
                     marginBottom: "1.25rem",
                     overflow: "hidden",
-                    background: "linear-gradient(145deg, rgba(30,41,59,0.52), rgba(15,23,42,0.85))",
-                    border: "1px solid rgba(148,163,184,0.12)",
-                    boxShadow: "0 24px 48px -20px rgba(0,0,0,0.55)",
+                    background: theme.surface,
+                    border: `1px solid ${theme.border}`,
+                    boxShadow: "0 12px 28px -18px rgba(15,23,42,0.2)",
                   }}
                   aria-label={`KR ${item.kr}`}
                 >
                   <header
                     style={{
                       ...s.krHead,
-                      background: "rgba(15,23,42,0.92)",
+                      background: "#f8fafc",
                       flexDirection: "column",
                       alignItems: "stretch",
                       gap: "0.75rem",
@@ -18878,7 +18926,7 @@ export default function App() {
                               <span
                                 style={{
                                   ...stylEtykietyUwagiPulpitu(pulpitKrRekordWymagaUwagi(item)),
-                                  color: pulpitKrRekordWymagaUwagi(item) ? "#fecaca" : "#a7f3d0",
+                                  color: pulpitKrRekordWymagaUwagi(item) ? "#991b1b" : "#166534",
                                 }}
                               >
                                 {item.status}
@@ -19392,8 +19440,69 @@ export default function App() {
       krList.length > 0 ? (
         <section style={s.krTopWrap} aria-labelledby="kr-introduced-heading">
           <h2 id="kr-introduced-heading" style={s.krTopTitle}>
-            Wprowadzone KR ({krList.length})
+            Wprowadzone KR ({panelKrListaFiltrowana.length}
+            {panelKrSzukaj.trim() ? ` / ${krList.length}` : ""})
           </h2>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "0.55rem 0.75rem",
+              marginBottom: "0.85rem",
+              padding: "12px 16px",
+              background: "#eff6ff",
+              borderRadius: "12px",
+              border: "1px solid #bfdbfe",
+            }}
+          >
+            <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.86rem", color: theme.text, flex: "1 1 18rem" }}>
+              <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>Wybierz KR</span>
+              <select
+                aria-label="Wybierz KR z listy"
+                defaultValue=""
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v) otworzKrPoKodzie(v);
+                  e.target.value = "";
+                }}
+                style={{
+                  ...s.input,
+                  flex: "1 1 auto",
+                  minWidth: "14rem",
+                  margin: 0,
+                  padding: "0.45rem 0.55rem",
+                  fontWeight: 600,
+                }}
+              >
+                <option value="">— wybierz kod KR —</option>
+                {krListPosortowana.map((row) => {
+                  const kod = String(row.kr ?? "").trim();
+                  if (!kod) return null;
+                  const nazwa = String(row.nazwa_obiektu ?? "").trim();
+                  return (
+                    <option key={kod} value={kod}>
+                      {nazwa ? `${kod} — ${nazwa}` : kod}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <input
+              type="search"
+              aria-label="Filtruj listę KR"
+              placeholder="Filtruj listę: kod, obiekt, dział…"
+              value={panelKrSzukaj}
+              onChange={(e) => setPanelKrSzukaj(e.target.value)}
+              style={{
+                ...s.input,
+                flex: "1 1 14rem",
+                minWidth: "12rem",
+                margin: 0,
+                maxWidth: "22rem",
+              }}
+            />
+          </div>
           <div
             style={{
               display: "flex",
@@ -19405,7 +19514,7 @@ export default function App() {
               background: theme.surface,
               borderRadius: "12px",
               border: `1px solid ${theme.border}`,
-              boxShadow: "0 4px 16px -8px rgba(0,0,0,0.35)",
+              boxShadow: "0 4px 16px -10px rgba(15,23,42,0.12)",
             }}
           >
             <span style={{ ...s.muted, fontSize: "0.78rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
@@ -19425,22 +19534,13 @@ export default function App() {
             </button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
-            {krListPosortowana.map((item) => {
+            {panelKrListaFiltrowana.length === 0 ? (
+              <p style={{ ...s.muted, margin: 0 }}>Brak KR pasujących do filtra.</p>
+            ) : null}
+            {panelKrListaFiltrowana.map((item) => {
               const wierszUwaga = kodyKrZWyroznieniemUwagi.has(String(item.kr).trim());
               const st = item.status?.trim();
-              const otworzWybraneKr = () => {
-                const k = String(item.kr ?? "").trim();
-                setWidok("kr");
-                setKrMenu2Rozwiniete(true);
-                setKrSekcjaMenu2("informacje");
-                setWybranyKrKlucz(k);
-                setWidokInfoDlaKr(null);
-                setWidokKmDlaKr(null);
-                setWidokLogDlaKr(null);
-                setWidokPwDlaKr(null);
-                setWidokPulpitDlaKr(null);
-                przejdzDoSekcjiKr(item, "przeglad");
-              };
+              const otworzWybraneKr = () => otworzKrPoKodzie(item.kr);
               return (
                 <div
                   key={item.kr}
@@ -19449,7 +19549,7 @@ export default function App() {
                     padding: "12px 14px",
                     background: theme.surface,
                     border: `1px solid ${wierszUwaga ? "rgba(239,68,68,0.4)" : theme.border}`,
-                    boxShadow: "0 2px 12px -10px rgba(0,0,0,0.4)",
+                    boxShadow: "0 2px 12px -10px rgba(15,23,42,0.18)",
                     transition: "border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease",
                     cursor: "pointer",
                   }}
@@ -19465,16 +19565,16 @@ export default function App() {
                   }}
                   onMouseEnter={(ev) => {
                     const el = ev.currentTarget;
-                    el.style.borderColor = "rgba(251,146,60,0.78)";
-                    el.style.background = "rgba(30,41,59,0.92)";
-                    el.style.boxShadow = "0 14px 34px -12px rgba(251,146,60,0.45)";
-                    el.style.transform = "translateY(-2px)";
+                    el.style.borderColor = "rgba(234,88,12,0.55)";
+                    el.style.background = "#fff7ed";
+                    el.style.boxShadow = "0 10px 24px -14px rgba(234,88,12,0.35)";
+                    el.style.transform = "translateY(-1px)";
                   }}
                   onMouseLeave={(ev) => {
                     const el = ev.currentTarget;
                     el.style.borderColor = wierszUwaga ? "rgba(239,68,68,0.4)" : theme.border;
                     el.style.background = theme.surface;
-                    el.style.boxShadow = "0 4px 22px -10px rgba(0,0,0,0.4)";
+                    el.style.boxShadow = "0 2px 12px -10px rgba(15,23,42,0.18)";
                     el.style.transform = "none";
                   }}
                 >
