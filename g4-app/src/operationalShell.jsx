@@ -1,19 +1,19 @@
 import React from "react";
 
-/** Tokeny kolorystyczne — dashboard / system operacyjny. */
+/** Tokeny kolorystyczne — jasny dashboard / system operacyjny. */
 export const theme = {
-  bg: "#0b0f14",
-  surface: "#111827",
-  sidebar: "#080c10",
-  text: "#e5e7eb",
-  muted: "#9ca3af",
-  success: "#22c55e",
-  action: "#f97316",
-  danger: "#ef4444",
-  border: "rgba(148, 163, 184, 0.1)",
+  bg: "#f1f5f9",
+  surface: "#ffffff",
+  sidebar: "#e2e8f0",
+  text: "#0f172a",
+  muted: "#475569",
+  success: "#15803d",
+  action: "#ea580c",
+  danger: "#dc2626",
+  border: "rgba(100, 116, 139, 0.28)",
 };
 
-/** Styl panelu operacyjnego — ciemny, „menedżerski”, bez zewnętrznej biblioteki UI. */
+/** Styl panelu operacyjnego — jasny, czytelny, bez zewnętrznej biblioteki UI. */
 export const op = {
   shellOuter: {
     minHeight: "100vh",
@@ -66,7 +66,7 @@ export const op = {
   brandTitle: {
     fontSize: "clamp(1.35rem, 2.2vw, 1.75rem)",
     fontWeight: 700,
-    color: "#ffffff",
+    color: theme.text,
     margin: "0 0 0.4rem",
     letterSpacing: "-0.03em",
     lineHeight: 1.15,
@@ -85,7 +85,7 @@ export const op = {
     borderWidth: "1px",
     borderStyle: "solid",
     borderColor: theme.border,
-    background: "rgba(17,24,39,0.85)",
+    background: theme.surface,
     color: theme.text,
     font: "inherit",
     fontSize: "0.84rem",
@@ -100,8 +100,8 @@ export const op = {
     padding: "0.6rem 0.85rem",
     marginBottom: "0.2rem",
     borderRadius: "10px",
-    border: "1px solid rgba(248,250,252,0.28)",
-    background: "rgba(15,23,42,0.22)",
+    border: `1px solid ${theme.border}`,
+    background: theme.surface,
     color: theme.text,
     font: "inherit",
     fontSize: "0.88rem",
@@ -111,14 +111,14 @@ export const op = {
     transition: "background 0.15s ease, border-color 0.15s ease, color 0.15s ease",
   },
   navBtnHover: {
-    background: "rgba(249,115,22,0.08)",
-    borderColor: "rgba(249,115,22,0.28)",
+    background: "rgba(234,88,12,0.08)",
+    borderColor: "rgba(234,88,12,0.35)",
   },
   navBtnActive: {
-    background: "rgba(249,115,22,0.18)",
-    borderColor: "rgba(249,115,22,0.55)",
-    color: "#fff",
-    boxShadow: "inset 0 0 0 1px rgba(249,115,22,0.25)",
+    background: "rgba(234,88,12,0.16)",
+    borderColor: "rgba(234,88,12,0.55)",
+    color: theme.text,
+    boxShadow: "inset 0 0 0 1px rgba(234,88,12,0.2)",
   },
   navSectionLabel: {
     fontSize: "0.68rem",
@@ -138,11 +138,8 @@ export const op = {
     padding: "0.32rem 0.5rem",
     marginBottom: "0.12rem",
     borderRadius: "8px",
-    border:
-      active
-        ? "1px solid rgba(249,115,22,0.45)"
-        : `1px solid ${theme.border}`,
-    background: active ? "rgba(249,115,22,0.12)" : theme.surface,
+    border: active ? "1px solid rgba(234,88,12,0.5)" : `1px solid ${theme.border}`,
+    background: active ? "rgba(234,88,12,0.12)" : theme.surface,
     color: theme.text,
     font: "inherit",
     fontSize: "0.76rem",
@@ -151,7 +148,7 @@ export const op = {
     cursor: "pointer",
     textAlign: "left",
     transition: "background 0.15s ease, border-color 0.15s ease, transform 0.12s ease",
-    boxShadow: active ? "0 3px 10px -5px rgba(0,0,0,0.32)" : "0 1px 6px -4px rgba(0,0,0,0.22)",
+    boxShadow: active ? "0 3px 10px -5px rgba(15,23,42,0.18)" : "0 1px 4px -3px rgba(15,23,42,0.12)",
   }),
   dot: (color) => ({
     width: "6px",
@@ -171,9 +168,9 @@ export const op = {
     borderRadius: "999px",
     fontSize: "0.78rem",
     fontWeight: 600,
-    border: active ? "1px solid rgba(249,115,22,0.55)" : `1px solid ${theme.border}`,
-    background: active ? "rgba(249,115,22,0.15)" : theme.surface,
-    color: active ? "#fff" : theme.muted,
+    border: active ? "1px solid rgba(234,88,12,0.55)" : `1px solid ${theme.border}`,
+    background: active ? "rgba(234,88,12,0.14)" : theme.surface,
+    color: active ? theme.text : theme.muted,
     cursor: "pointer",
     font: "inherit",
     transition: "background 0.15s ease, border-color 0.15s ease",
@@ -184,7 +181,7 @@ export const op = {
     marginBottom: "1.35rem",
     background: theme.surface,
     border: `1px solid ${theme.border}`,
-    boxShadow: "0 8px 32px -12px rgba(0,0,0,0.45)",
+    boxShadow: "0 8px 24px -14px rgba(15,23,42,0.18)",
   },
   kpiGrid: {
     display: "grid",
@@ -197,7 +194,7 @@ export const op = {
     padding: "1.1rem 1.25rem",
     background: theme.surface,
     border: `1px solid ${borderTint}`,
-    boxShadow: "0 4px 20px -8px rgba(0,0,0,0.4)",
+    boxShadow: "0 4px 16px -10px rgba(15,23,42,0.16)",
   }),
   sectionCard: {
     borderRadius: "12px",
@@ -205,12 +202,12 @@ export const op = {
     marginBottom: "1.15rem",
     background: theme.surface,
     border: `1px solid ${theme.border}`,
-    boxShadow: "0 4px 20px -8px rgba(0,0,0,0.35)",
+    boxShadow: "0 4px 16px -10px rgba(15,23,42,0.14)",
   },
   sectionTitle: {
     fontSize: "1.05rem",
     fontWeight: 700,
-    color: "#ffffff",
+    color: theme.text,
     margin: "0 0 0.9rem",
     letterSpacing: "-0.02em",
   },
@@ -230,18 +227,18 @@ export const op = {
   alertRow: (severity) => {
     const map = {
       krytyczny: {
-        bg: "rgba(239,68,68,0.1)",
-        border: "rgba(239,68,68,0.35)",
-        c: "#fecaca",
+        bg: "rgba(220,38,38,0.08)",
+        border: "rgba(220,38,38,0.35)",
+        c: "#991b1b",
       },
       wazny: {
-        bg: "rgba(249,115,22,0.1)",
-        border: "rgba(249,115,22,0.35)",
-        c: "#fdba74",
+        bg: "rgba(234,88,12,0.1)",
+        border: "rgba(234,88,12,0.35)",
+        c: "#9a3412",
       },
       info: {
-        bg: "rgba(148,163,184,0.08)",
-        border: "rgba(148,163,184,0.2)",
+        bg: "rgba(100,116,139,0.08)",
+        border: "rgba(100,116,139,0.25)",
         c: theme.muted,
       },
     };
@@ -263,19 +260,19 @@ export const op = {
 export function OpStatusBadge({ variant = "progress", children }) {
   const map = {
     ok: {
-      bg: "rgba(34,197,94,0.15)",
+      bg: "rgba(22,163,74,0.12)",
       color: theme.success,
-      border: "rgba(34,197,94,0.35)",
+      border: "rgba(22,163,74,0.35)",
     },
     progress: {
-      bg: "rgba(249,115,22,0.12)",
+      bg: "rgba(234,88,12,0.12)",
       color: theme.action,
-      border: "rgba(249,115,22,0.35)",
+      border: "rgba(234,88,12,0.35)",
     },
     danger: {
-      bg: "rgba(239,68,68,0.12)",
+      bg: "rgba(220,38,38,0.1)",
       color: theme.danger,
-      border: "rgba(239,68,68,0.35)",
+      border: "rgba(220,38,38,0.35)",
     },
   };
   const t = map[variant] || map.progress;
@@ -301,14 +298,14 @@ const kpiAccentValue = {
   success: theme.success,
   action: theme.action,
   danger: theme.danger,
-  default: "#ffffff",
+  default: theme.text,
 };
 
 export function OpKpiCard({
   label,
   value,
   hint,
-  border = "rgba(148,163,184,0.12)",
+  border = "rgba(100,116,139,0.28)",
   accent = "default",
   onClick,
   title: kpiTitle,
@@ -326,9 +323,9 @@ export function OpKpiCard({
           outline: "none",
           transform: hover || focused ? "translateY(-2px)" : undefined,
           boxShadow: focused
-            ? `0 0 0 2px rgba(249,115,22,0.45), 0 12px 28px -12px rgba(0,0,0,0.5)`
+            ? `0 0 0 2px rgba(234,88,12,0.4), 0 12px 28px -14px rgba(15,23,42,0.2)`
             : hover
-              ? `0 10px 28px -10px rgba(0,0,0,0.45)`
+              ? `0 10px 24px -12px rgba(15,23,42,0.18)`
               : baseKpi.boxShadow,
         }
       : {}),
@@ -399,11 +396,11 @@ export function OpFutureModule({ title, children }) {
       style={{
         ...op.sectionCard,
         borderStyle: "dashed",
-        borderColor: "rgba(148,163,184,0.22)",
+        borderColor: "rgba(100,116,139,0.35)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.65rem" }}>
-        <span style={op.badge("rgba(249,115,22,0.2)", "#fdba74")}>Wersja koncepcyjna</span>
+        <span style={op.badge("rgba(234,88,12,0.14)", "#9a3412")}>Wersja koncepcyjna</span>
         <h3 style={{ ...op.sectionTitle, margin: 0, flex: 1 }}>{title}</h3>
       </div>
       <p style={{ ...op.muted, margin: 0 }}>{children}</p>

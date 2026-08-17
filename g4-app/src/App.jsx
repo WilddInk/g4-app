@@ -202,7 +202,7 @@ function stylKomorkiTabeliUwagi(czyUwaga) {
 function stylEtykietyUwagiPulpitu(czyUwaga) {
   if (!czyUwaga) return {};
   return {
-    color: "#fecaca",
+    color: "#991b1b",
     backgroundColor: "rgba(248,113,113,0.18)",
     padding: "0.1rem 0.35rem",
     borderRadius: "4px",
@@ -274,14 +274,14 @@ function stylTerminuHarmonogramu(planRaw, dziśYmd) {
     return {
       border: "1px solid rgba(148,163,184,0.15)",
       background: "rgba(15,23,42,0.45)",
-      color: "#cbd5e1",
+      color: "#334155",
     };
   }
   if (plan < dziśYmd) {
     return {
       border: "1px solid rgba(248,113,113,0.45)",
       background: "rgba(239,68,68,0.08)",
-      color: "#fecaca",
+      color: "#991b1b",
     };
   }
   const p = new Date(`${plan}T12:00:00`);
@@ -297,7 +297,7 @@ function stylTerminuHarmonogramu(planRaw, dziśYmd) {
   return {
     border: "1px solid rgba(148,163,184,0.12)",
     background: "rgba(15,23,42,0.35)",
-    color: "#e2e8f0",
+    color: "#0f172a",
   };
 }
 
@@ -678,7 +678,7 @@ function kmKomorkaOdniesienia(row) {
           style={{
             display: "block",
             fontSize: "0.68rem",
-            color: "#94a3b8",
+            color: "#64748b",
             fontWeight: 500,
             marginBottom: dataStr ? "0.12rem" : 0,
             lineHeight: 1.25,
@@ -5497,14 +5497,14 @@ export default function App() {
         }}
       >
         {maWyk && !maOdb ? (
-          <span style={{ fontSize: "0.72rem", color: "#86efac" }}>Wykonanie zgłoszone</span>
+          <span style={{ fontSize: "0.72rem", color: "#166534" }}>Wykonanie zgłoszone</span>
         ) : null}
         {maOdb ? (
-          <span style={{ fontSize: "0.72rem", color: "#93c5fd" }}>
+          <span style={{ fontSize: "0.72rem", color: "#0369a1" }}>
             Data odbioru: {dataDoInputa(row.data_odbioru)}
           </span>
         ) : null}
-        {arch ? <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Archiwum</span> : null}
+        {arch ? <span style={{ fontSize: "0.72rem", color: "#64748b" }}>Archiwum</span> : null}
         {pokazZglos ? (
           <button
             type="button"
@@ -5524,7 +5524,7 @@ export default function App() {
           </button>
         ) : null}
         {pokazPotwBrakZlec ? (
-          <span style={{ fontSize: "0.68rem", color: "#fca5a5", lineHeight: 1.35 }}>
+          <span style={{ fontSize: "0.68rem", color: "#b91c1c", lineHeight: 1.35 }}>
             Brak zlecającego w polu — dopisz w edycji.
           </span>
         ) : null}
@@ -5560,7 +5560,7 @@ export default function App() {
             gap: "0.35rem",
           }}
         >
-          <span style={{ fontSize: "0.68rem", color: "#94a3b8", fontWeight: 600 }}>
+          <span style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 600 }}>
             Bez odpowiedzialnego — przypisz:
           </span>
           {mojNr ? (
@@ -8106,7 +8106,7 @@ export default function App() {
       gap: "0.22rem 0.65rem",
       alignItems: "start",
       fontSize: "0.72rem",
-      color: "#d4d4d4",
+      color: "#0f172a",
     };
     const dd = { margin: 0, wordBreak: "break-word" };
     const ok_od = dataDoInputa(r.okres_projektu_od);
@@ -8200,7 +8200,7 @@ export default function App() {
                   href={hrefLinkuZewnetrznego(r.link_umowy)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: "#7dd3fc" }}
+                  style={{ color: "#0369a1" }}
                 >
                   link
                 </a>
@@ -8241,7 +8241,7 @@ export default function App() {
           border: "1px solid rgba(148,163,184,0.12)",
           background: "rgba(15,23,42,0.55)",
           fontSize: "0.88rem",
-          color: "#d4d4d4",
+          color: "#0f172a",
         }}
       >
         <div
@@ -8249,7 +8249,7 @@ export default function App() {
             fontSize: "0.72rem",
             textTransform: "uppercase",
             letterSpacing: "0.06em",
-            color: "#94a3b8",
+            color: "#64748b",
             marginBottom: "0.65rem",
           }}
         >
@@ -8283,7 +8283,7 @@ export default function App() {
               href={hrefLinkuZewnetrznego(item.link_umowy)}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "#7dd3fc", wordBreak: "break-all" }}
+              style={{ color: "#0369a1", wordBreak: "break-all" }}
             >
               {item.link_umowy.trim()}
             </a>
@@ -8416,12 +8416,12 @@ export default function App() {
               justifyContent: "space-between",
               alignItems: "center",
               fontSize: "0.74rem",
-              color: "#cbd5e1",
+              color: "#334155",
               marginBottom: "0.2rem",
             }}
           >
             <span>{etykieta}</span>
-            <strong style={{ color: "#f8fafc" }}>{wartosc}%</strong>
+            <strong style={{ color: "#0f172a" }}>{wartosc}%</strong>
           </div>
           <div
             style={{
@@ -8470,7 +8470,7 @@ export default function App() {
               <div style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.08em", color: "#67e8f9", fontWeight: 800 }}>
                 TABLICA KR · Centrum informacji
               </div>
-              <div style={{ fontSize: "0.76rem", color: "#93c5fd" }}>
+              <div style={{ fontSize: "0.76rem", color: "#0369a1" }}>
                 Projekt: <strong style={{ color: "#ffffff" }}>{item.kr}</strong> ·{" "}
                 {item.nazwa_obiektu?.trim() ? item.nazwa_obiektu : "bez nazwy"}
               </div>
@@ -8491,7 +8491,7 @@ export default function App() {
                   background: "rgba(2,6,23,0.48)",
                 }}
               >
-                <div style={{ fontSize: "0.72rem", color: "#cbd5e1", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                <div style={{ fontSize: "0.72rem", color: "#334155", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                   Postęp misji
                 </div>
                 {panelPasek("Etapy zakończone", procEtapow, "linear-gradient(90deg,#22d3ee,#3b82f6)", "rgba(56,189,248,0.6)")}
@@ -8508,22 +8508,22 @@ export default function App() {
                   gap: "0.35rem",
                 }}
               >
-                <div style={{ fontSize: "0.72rem", color: "#cbd5e1", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                <div style={{ fontSize: "0.72rem", color: "#334155", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                   Szybka diagnostyka
                 </div>
-                <div style={{ fontSize: "0.8rem", color: "#e2e8f0" }}>
+                <div style={{ fontSize: "0.8rem", color: "#0f172a" }}>
                   Sygnały alarmowe:{" "}
                   <strong style={{ color: poziomAlarmuKolor }}>{sygnalyAlarmowe}</strong>
                 </div>
-                <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
-                  Etapy domknięte: <strong style={{ color: "#f8fafc" }}>{etapyZakonczone}</strong> / {listaEtapow.length}
+                <div style={{ fontSize: "0.78rem", color: "#64748b" }}>
+                  Etapy domknięte: <strong style={{ color: "#0f172a" }}>{etapyZakonczone}</strong> / {listaEtapow.length}
                 </div>
-                <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
-                  Zadania domknięte: <strong style={{ color: "#f8fafc" }}>{zadaniaDomkniete}</strong> / {listaZadanDlaKr.length}
+                <div style={{ fontSize: "0.78rem", color: "#64748b" }}>
+                  Zadania domknięte: <strong style={{ color: "#0f172a" }}>{zadaniaDomkniete}</strong> / {listaZadanDlaKr.length}
                 </div>
-                <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
+                <div style={{ fontSize: "0.78rem", color: "#64748b" }}>
                   Status projektu:{" "}
-                  <strong style={{ color: "#f8fafc" }}>{item.status?.trim() ? item.status : "—"}</strong>
+                  <strong style={{ color: "#0f172a" }}>{item.status?.trim() ? item.status : "—"}</strong>
                 </div>
               </div>
             </div>
@@ -8531,29 +8531,29 @@ export default function App() {
           <div style={{ ...op.kpiGrid, marginBottom: "1rem" }}>
             <div style={op.kpiCard("rgba(56,189,248,0.22)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>Etapy</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{listaEtapow.length}</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#0f172a" }}>{listaEtapow.length}</div>
             </div>
             <div style={op.kpiCard("rgba(147,197,253,0.22)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>Zgłoszenia (otwarte)</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{logOtwarte}</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#0f172a" }}>{logOtwarte}</div>
             </div>
             <div style={op.kpiCard("rgba(251,191,36,0.25)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>PW — uwaga termin</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{pwPoTerminie}</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#0f172a" }}>{pwPoTerminie}</div>
             </div>
             <div style={op.kpiCard("rgba(248,113,113,0.28)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>Etapy z ryzykiem</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#f8fafc" }}>{etapyRyzyko}</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#0f172a" }}>{etapyRyzyko}</div>
             </div>
             <div style={op.kpiCard("rgba(249,115,22,0.25)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>Faktury kosztowe (brutto)</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#f8fafc" }}>
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#0f172a" }}>
                 {kwotaBruttoEtykieta(sumaFakturBrutto)}
               </div>
             </div>
             <div style={op.kpiCard("rgba(34,197,94,0.22)")}>
               <div style={{ ...op.muted, fontSize: "0.7rem" }}>Roboczogodziny (praca)</div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#f8fafc" }}>
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#0f172a" }}>
                 {sumaGodzinPracy.toFixed(2)} h
               </div>
             </div>
@@ -8583,10 +8583,10 @@ export default function App() {
                         background: uw ? "rgba(248,113,113,0.07)" : "rgba(15,23,42,0.5)",
                       }}
                     >
-                      <div style={{ fontWeight: 700, color: "#f1f5f9", marginBottom: "0.25rem" }}>
+                      <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: "0.25rem" }}>
                         {et.etap ?? "—"}
                       </div>
-                      <div style={{ fontSize: "0.76rem", color: "#94a3b8" }}>
+                      <div style={{ fontSize: "0.76rem", color: "#64748b" }}>
                         {et.status ? <span>Status: {et.status} · </span> : null}
                         {et.data_planowana ? (
                           <span>Plan: {dataDoInputa(et.data_planowana)}</span>
@@ -8640,13 +8640,13 @@ export default function App() {
                       border: "1px solid rgba(148,163,184,0.1)",
                       background: "rgba(15,23,42,0.45)",
                       fontSize: "0.8rem",
-                      color: "#e2e8f0",
+                      color: "#0f172a",
                     }}
                   >
                     <span style={op.badge("rgba(59,130,246,0.2)", "#bfdbfe")}>
                       {row.typ_zdarzenia ?? "—"}
                     </span>{" "}
-                    <span style={{ color: "#94a3b8" }}>
+                    <span style={{ color: "#64748b" }}>
                       {row.data_zdarzenia ? dataDoInputa(row.data_zdarzenia) : "—"}
                     </span>
                     <div style={{ marginTop: "0.35rem" }}>
@@ -8662,19 +8662,19 @@ export default function App() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "0.6rem" }}>
               <div style={{ ...op.kpiCard("rgba(99,102,241,0.18)") }}>
                 <div style={{ ...op.muted, fontSize: "0.72rem" }}>Okres realizacji</div>
-                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#f8fafc" }}>{okresStart} — {okresKoniec}</div>
+                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>{okresStart} — {okresKoniec}</div>
               </div>
               <div style={{ ...op.kpiCard("rgba(56,189,248,0.18)") }}>
                 <div style={{ ...op.muted, fontSize: "0.72rem" }}>Zaangażowani pracownicy</div>
-                <div style={{ fontSize: "1.12rem", fontWeight: 800, color: "#f8fafc" }}>{pracownicyZaangazowani}</div>
+                <div style={{ fontSize: "1.12rem", fontWeight: 800, color: "#0f172a" }}>{pracownicyZaangazowani}</div>
               </div>
               <div style={{ ...op.kpiCard("rgba(14,165,233,0.18)") }}>
                 <div style={{ ...op.muted, fontSize: "0.72rem" }}>Podwykonawcy w KR</div>
-                <div style={{ fontSize: "1.12rem", fontWeight: 800, color: "#f8fafc" }}>{podwykonawcySet.size}</div>
+                <div style={{ fontSize: "1.12rem", fontWeight: 800, color: "#0f172a" }}>{podwykonawcySet.size}</div>
               </div>
               <div style={{ ...op.kpiCard("rgba(250,204,21,0.2)") }}>
                 <div style={{ ...op.muted, fontSize: "0.72rem" }}>Zadania (otwarte / wszystkie)</div>
-                <div style={{ fontSize: "1.02rem", fontWeight: 800, color: "#f8fafc" }}>
+                <div style={{ fontSize: "1.02rem", fontWeight: 800, color: "#0f172a" }}>
                   {Math.max(0, listaZadanDlaKr.length - zadaniaDomkniete)} / {listaZadanDlaKr.length}
                 </div>
               </div>
@@ -8688,11 +8688,11 @@ export default function App() {
                 {grupyFaktur.length === 0 ? (
                   <p style={{ ...s.muted, margin: 0 }}>Brak faktur kosztowych dla tej KR.</p>
                 ) : (
-                  <ul style={{ margin: 0, paddingLeft: "1rem", color: "#e2e8f0", fontSize: "0.8rem", lineHeight: 1.45 }}>
+                  <ul style={{ margin: 0, paddingLeft: "1rem", color: "#0f172a", fontSize: "0.8rem", lineHeight: 1.45 }}>
                     {grupyFaktur.slice(0, 5).map(([typ, suma]) => (
                       <li key={typ}>
-                        <span style={{ color: "#cbd5e1" }}>{typ}</span> —{" "}
-                        <strong style={{ color: "#f8fafc" }}>{kwotaBruttoEtykieta(suma)}</strong>
+                        <span style={{ color: "#334155" }}>{typ}</span> —{" "}
+                        <strong style={{ color: "#0f172a" }}>{kwotaBruttoEtykieta(suma)}</strong>
                       </li>
                     ))}
                   </ul>
@@ -8703,11 +8703,11 @@ export default function App() {
                 {roboczogodzinyWgPracownika.length === 0 ? (
                   <p style={{ ...s.muted, margin: 0 }}>Brak wpisów czasu pracy typu „praca”.</p>
                 ) : (
-                  <ul style={{ margin: 0, paddingLeft: "1rem", color: "#e2e8f0", fontSize: "0.8rem", lineHeight: 1.45 }}>
+                  <ul style={{ margin: 0, paddingLeft: "1rem", color: "#0f172a", fontSize: "0.8rem", lineHeight: 1.45 }}>
                     {roboczogodzinyWgPracownika.slice(0, 6).map(([nr, h]) => (
                       <li key={String(nr)}>
-                        <span style={{ color: "#cbd5e1" }}>{etykietaPrac(nr)}</span> —{" "}
-                        <strong style={{ color: "#f8fafc" }}>{Number(h).toFixed(2)} h</strong>
+                        <span style={{ color: "#334155" }}>{etykietaPrac(nr)}</span> —{" "}
+                        <strong style={{ color: "#0f172a" }}>{Number(h).toFixed(2)} h</strong>
                       </li>
                     ))}
                   </ul>
@@ -8769,10 +8769,10 @@ export default function App() {
                   <tr>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Zadanie</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Typ zadania</th>
-                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#7dd3fc" }}>Dział</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#0369a1" }}>Dział</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Odpow.</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Zlecający</th>
-                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#a7f3d0" }}>Status</th>
+                    <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#166534" }}>Status</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal", color: "#a5b4fc" }}>Estym.</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Deadline</th>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Data odbioru</th>
@@ -8885,7 +8885,7 @@ export default function App() {
             </div>
           )}
 
-          <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e2e8f0", margin: "0 0 0.65rem" }}>
+          <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.65rem" }}>
             {zadanieEdycjaId != null ? "Edycja zadania" : "Nowe zadanie"} (KR {krK})
           </h4>
           <p style={{ ...op.muted, margin: "0 0 0.75rem", fontSize: "0.78rem" }}>
@@ -9082,7 +9082,7 @@ export default function App() {
                   </option>
                 </select>
               </div>
-              <span style={{ fontSize: "0.76rem", color: "#94a3b8", marginTop: "0.3rem", display: "block", lineHeight: 1.45 }}>
+              <span style={{ fontSize: "0.76rem", color: "#64748b", marginTop: "0.3rem", display: "block", lineHeight: 1.45 }}>
                 W bazie zapisujemy zawsze <strong>roboczogodziny</strong>; przy wyborze dni roboczych wartość jest mnożona
                 przez {ROB_H_NA_DZIEN_ROBOCZY_ZADANIE}. W listach przy dniach pokazywany jest też przelicznik na rob. h.
               </span>
@@ -9111,7 +9111,7 @@ export default function App() {
               />
             </label>
             {pracFetchError ? (
-              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#b91c1c" }}>
                 Lista ID: {pracFetchError}
               </p>
             ) : null}
@@ -9178,7 +9178,7 @@ export default function App() {
               gap: "0.65rem",
               marginBottom: "1rem",
               fontSize: "0.82rem",
-              color: "#e2e8f0",
+              color: "#0f172a",
             }}
           >
             <div
@@ -9579,7 +9579,7 @@ export default function App() {
                         <td style={{ ...s.td, fontWeight: 600, color: opl ? "#86efac" : "#fde68a" }}>
                           {kwotaBruttoEtykieta(row.kwota_brutto)}
                         </td>
-                        <td style={{ ...s.td, color: "#fca5a5" }}>
+                        <td style={{ ...s.td, color: "#b91c1c" }}>
                           {row.kwota_vat != null ? kwotaBruttoEtykieta(row.kwota_vat) : "—"}
                         </td>
                         <td style={s.td}>{row.numer_faktury?.trim() ? row.numer_faktury : "—"}</td>
@@ -9594,7 +9594,7 @@ export default function App() {
                           title={tekstTrim(row.legacy_pdf_file) ? String(row.legacy_pdf_file) : undefined}
                         >
                           {tekstTrim(row.legacy_pdf_file) ? (
-                            <span style={{ color: "#94a3b8" }}>
+                            <span style={{ color: "#64748b" }}>
                               {tekstUcietyKoniecPrezentacja(String(row.legacy_pdf_file), 42)}
                             </span>
                           ) : (
@@ -9607,7 +9607,7 @@ export default function App() {
                               href={hrefLinkuZewnetrznego(row.link_faktury)}
                               target="_blank"
                               rel="noopener noreferrer"
-                              style={{ color: "#7dd3fc" }}
+                              style={{ color: "#0369a1" }}
                             >
                               otwórz
                             </a>
@@ -9785,7 +9785,7 @@ export default function App() {
                   PW
                 </button>
               </div>
-              <div style={{ fontSize: "0.76rem", color: "#94a3b8", marginBottom: "0.45rem" }}>
+              <div style={{ fontSize: "0.76rem", color: "#64748b", marginBottom: "0.45rem" }}>
                 Zakres: {dataPLZFormat(dataDoInputa(start.toISOString().slice(0, 10)))} -{" "}
                 {dataPLZFormat(dataDoInputa(koniec.toISOString().slice(0, 10)))}
               </div>
@@ -9805,7 +9805,7 @@ export default function App() {
                   {ticks.map((t, i) => (
                     <div key={`tick-${i}`} style={{ position: "absolute", left: `${xPos(t.toISOString().slice(0, 10))}px`, top: 0, bottom: 0 }}>
                       <div style={{ width: "1px", height: "100%", background: "rgba(148,163,184,0.45)" }} />
-                      <div style={{ position: "absolute", top: "2px", left: "4px", fontSize: "0.66rem", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                      <div style={{ position: "absolute", top: "2px", left: "4px", fontSize: "0.66rem", color: "#64748b", whiteSpace: "nowrap" }}>
                         {tickLabel(t)}
                       </div>
                     </div>
@@ -9825,7 +9825,7 @@ export default function App() {
               <div style={{ display: "grid", gap: "0.45rem" }}>
                 {ganttWarstwy.projekt ? (
                   <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "0.5rem", alignItems: "center" }}>
-                    <div style={{ color: "#e2e8f0", fontSize: "0.8rem" }}>Projekt (okres KR)</div>
+                    <div style={{ color: "#0f172a", fontSize: "0.8rem" }}>Projekt (okres KR)</div>
                     <div
                       style={{
                         position: "relative",
@@ -9865,7 +9865,7 @@ export default function App() {
                 ) : null}
                 {ganttWarstwy.etapy ? (
                   <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "0.5rem", alignItems: "start" }}>
-                    <div style={{ color: "#e2e8f0", fontSize: "0.8rem", paddingTop: "0.2rem" }}>Etapy</div>
+                    <div style={{ color: "#0f172a", fontSize: "0.8rem", paddingTop: "0.2rem" }}>Etapy</div>
                     <div
                       style={{
                         position: "relative",
@@ -9911,7 +9911,7 @@ export default function App() {
                 ) : null}
                 {ganttWarstwy.pw ? (
                   <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "0.5rem", alignItems: "start" }}>
-                    <div style={{ color: "#e2e8f0", fontSize: "0.8rem", paddingTop: "0.2rem" }}>Podwykonawcy (PW)</div>
+                    <div style={{ color: "#0f172a", fontSize: "0.8rem", paddingTop: "0.2rem" }}>Podwykonawcy (PW)</div>
                     <div
                       style={{
                         position: "relative",
@@ -9957,11 +9957,11 @@ export default function App() {
                 ) : null}
               </div>
               </div>
-              <div style={{ marginTop: "0.65rem", fontSize: "0.76rem", color: "#94a3b8", display: "flex", gap: "0.7rem", flexWrap: "wrap", lineHeight: 1.5 }}>
+              <div style={{ marginTop: "0.65rem", fontSize: "0.76rem", color: "#64748b", display: "flex", gap: "0.7rem", flexWrap: "wrap", lineHeight: 1.5 }}>
                 <span>Legenda:</span>
-                <span style={{ color: "#38bdf8" }}>● etap w trakcie</span>
+                <span style={{ color: "#0284c7" }}>● etap w trakcie</span>
                 <span style={{ color: "#34d399" }}>● etap zakończony</span>
-                <span style={{ color: "#94a3b8" }}>● anulowane / zamrożone</span>
+                <span style={{ color: "#64748b" }}>● anulowane / zamrożone</span>
                 <span style={{ color: "#fbbf24" }}>▼ termin PW</span>
                 <span style={{ color: "#f87171" }}>▼ PW po terminie</span>
                 <span style={{ color: "#f97316" }}>| dziś</span>
@@ -10009,10 +10009,10 @@ export default function App() {
                           : "—"}
                       </span>
                     </div>
-                    <p style={{ margin: "0 0 0.45rem", color: "#e2e8f0", fontSize: "0.85rem" }}>
+                    <p style={{ margin: "0 0 0.45rem", color: "#0f172a", fontSize: "0.85rem" }}>
                       {row.opis?.trim() ? row.opis : "—"}
                     </p>
-                    <div style={{ fontSize: "0.78rem", color: "#94a3b8", lineHeight: 1.45 }}>
+                    <div style={{ fontSize: "0.78rem", color: "#64748b", lineHeight: 1.45 }}>
                       <div>
                         Zgłaszający:{" "}
                         {podpisOsobyProwadzacej(row.osoba_zglaszajaca, mapaProwadzacychId) ?? "—"}
@@ -10137,11 +10137,11 @@ export default function App() {
                     border: "1px solid rgba(148,163,184,0.12)",
                     background: "rgba(15,23,42,0.45)",
                     fontSize: "0.82rem",
-                    color: "#cbd5e1",
+                    color: "#334155",
                   }}
                 >
-                  <span style={{ color: "#94a3b8" }}>{ln.r}: </span>
-                  <strong style={{ color: "#f1f5f9" }}>{ln.o}</strong>
+                  <span style={{ color: "#64748b" }}>{ln.r}: </span>
+                  <strong style={{ color: "#0f172a" }}>{ln.o}</strong>
                 </li>
               ))}
             </ul>
@@ -10180,11 +10180,11 @@ export default function App() {
                       background: "rgba(15,23,42,0.5)",
                     }}
                   >
-                    <div style={{ fontWeight: 700, color: "#f8fafc" }}>
+                    <div style={{ fontWeight: 700, color: "#0f172a" }}>
                       {z.numer_zlecenia?.trim() ? z.numer_zlecenia : "—"}{" "}
-                      <span style={{ fontWeight: 500, color: "#94a3b8" }}>· {firma}</span>
+                      <span style={{ fontWeight: 500, color: "#64748b" }}>· {firma}</span>
                     </div>
-                    <div style={{ fontSize: "0.8rem", color: "#cbd5e1", marginTop: "0.35rem" }} title={zak.title}>
+                    <div style={{ fontSize: "0.8rem", color: "#334155", marginTop: "0.35rem" }} title={zak.title}>
                       {zak.text}
                     </div>
                     <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: "0.35rem" }}>
@@ -10226,11 +10226,11 @@ export default function App() {
                       border: "1px solid rgba(148,163,184,0.12)",
                       background: "rgba(15,23,42,0.5)",
                       fontSize: "0.82rem",
-                      color: "#e2e8f0",
+                      color: "#0f172a",
                     }}
                   >
                     <strong>{pw?.nazwa_firmy?.trim() ? pw.nazwa_firmy : "—"}</strong>
-                    <div style={{ color: "#94a3b8", marginTop: "0.35rem" }}>
+                    <div style={{ color: "#64748b", marginTop: "0.35rem" }}>
                       Kontakt: {pw?.osoba_kontaktowa?.trim() || "—"} · Tel: {pw?.telefon?.trim() || "—"} · E-mail
                       (faktury): {tekstTrim(z.osoba_faktury_email) || "—"}
                     </div>
@@ -10319,7 +10319,7 @@ export default function App() {
                     : "2px solid rgba(254,202,202,0.45)",
                   backgroundImage:
                     "repeating-linear-gradient(45deg, rgba(220,38,38,0.92) 0 14px, rgba(250,204,21,0.95) 14px 28px)",
-                  color: "#111827",
+                  color: "#0f172a",
                   fontWeight: 900,
                   letterSpacing: "0.01em",
                   boxShadow: dashboardBrakiBlink
@@ -10397,7 +10397,7 @@ export default function App() {
                         display: "block",
                         fontSize: "0.72rem",
                         marginTop: "0.25rem",
-                        color: "#fca5a5",
+                        color: "#b91c1c",
                       }}
                     >
                       Brak powiązania z kartoteką — ustaw <code style={s.code}>auth_user_id</code> w{" "}
@@ -10594,7 +10594,7 @@ export default function App() {
                             ? "1px solid rgba(248,113,113,0.95)"
                             : "1px solid rgba(248,113,113,0.35)",
                           background: dashboardBrakiBlink ? "rgba(220,38,38,0.3)" : "rgba(127,29,29,0.16)",
-                          color: "#fecaca",
+                          color: "#991b1b",
                           fontSize: "0.84rem",
                           lineHeight: 1.45,
                           boxShadow: dashboardBrakiBlink ? "0 0 0 2px rgba(248,113,113,0.16)" : "none",
@@ -10835,7 +10835,7 @@ export default function App() {
 
           <div style={op.sectionCard}>
             <h3 style={op.sectionTitle}>Najważniejsze dziś</h3>
-            <ul style={{ margin: 0, paddingLeft: "1.15rem", color: "#cbd5e1", fontSize: "0.88rem", lineHeight: 1.6 }}>
+            <ul style={{ margin: 0, paddingLeft: "1.15rem", color: "#334155", fontSize: "0.88rem", lineHeight: 1.6 }}>
               <li>
                 <strong>{listaAlertowOperacyjnych.length}</strong> automatycznych alertów w systemie (zob. moduł
                 Ostrzeżenia).
@@ -10937,7 +10937,7 @@ export default function App() {
                               href={hrefLinkuZewnetrznego(z.link_faktury)}
                               target="_blank"
                               rel="noopener noreferrer"
-                              style={{ color: "#7dd3fc" }}
+                              style={{ color: "#0369a1" }}
                             >
                               link
                             </a>
@@ -10965,7 +10965,7 @@ export default function App() {
               <h3
                 style={{
                   ...op.sectionTitle,
-                  ...(samochodyWymagajaceNaprawyLista.length ? { color: "#fecaca" } : {}),
+                  ...(samochodyWymagajaceNaprawyLista.length ? { color: "#991b1b" } : {}),
                 }}
               >
                 Flota — wymagane naprawy
@@ -10973,14 +10973,14 @@ export default function App() {
               {samochodyWymagajaceNaprawyLista.length === 0 ? (
                 <p style={{ ...op.muted, margin: 0 }}>Brak zgłoszonych napraw (pole „wymagane naprawy” puste u wszystkich aut).</p>
               ) : (
-                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#fecaca", fontSize: "0.84rem" }}>
+                <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "#991b1b", fontSize: "0.84rem" }}>
                   {samochodyWymagajaceNaprawyLista.slice(0, 8).map((car) => (
                     <li key={car.id} style={{ marginBottom: "0.5rem" }}>
                       <strong>{car.nazwa?.trim() || "Pojazd"}</strong>
                       {car.numer_rejestracyjny?.trim() ? ` · ${car.numer_rejestracyjny}` : ""}
                       {car.wymagane_naprawy?.trim() ? (
                         <span
-                          style={{ display: "block", color: "#fca5a5", fontSize: "0.8rem", marginTop: "0.2rem", lineHeight: 1.4 }}
+                          style={{ display: "block", color: "#b91c1c", fontSize: "0.8rem", marginTop: "0.2rem", lineHeight: 1.4 }}
                         >
                           {car.wymagane_naprawy.trim().length > 140
                             ? `${car.wymagane_naprawy.trim().slice(0, 138)}…`
@@ -11007,7 +11007,7 @@ export default function App() {
               {listaAlertowOperacyjnych.filter((a) => a.severity === "krytyczny").length === 0 ? (
                 <p style={{ ...op.muted, margin: 0 }}>Brak krytycznych z automatycznej reguły — dobry znak.</p>
               ) : (
-                <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none", color: "#fecaca", fontSize: "0.84rem" }}>
+                <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none", color: "#991b1b", fontSize: "0.84rem" }}>
                   {listaAlertowOperacyjnych
                     .filter((a) => a.severity === "krytyczny")
                     .slice(0, 6)
@@ -11042,7 +11042,7 @@ export default function App() {
               <h3 style={op.sectionTitle}>Ostatnie zgłoszenia</h3>
               <p style={{ ...op.muted, margin: 0 }}>
                 Pełny podgląd zbiorczy zgłoszeń —{" "}
-                <strong style={{ color: "#93c5fd" }}>pole gotowe pod wdrożenie</strong> (widok SQL lub synchronizacja
+                <strong style={{ color: "#0369a1" }}>pole gotowe pod wdrożenie</strong> (widok SQL lub synchronizacja
                 dziennika). W projekcie zobaczysz listę w zakładce <em>Zgłoszenia</em>.
               </p>
             </div>
@@ -11082,7 +11082,7 @@ export default function App() {
             <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Ostrzeżenia operacyjne</h2>
             <p style={{ ...op.muted, marginBottom: "1rem", maxWidth: "44rem" }}>
               Lista zbudowana automatycznie z danych już w systemie (KR, etapy, zlecenia PW, zadania ogólne). Priorytet
-              poniżej to skrót dla kierownictwa — <strong style={{ color: "#e2e8f0" }}>kliknij wiersz</strong>, aby
+              poniżej to skrót dla kierownictwa — <strong style={{ color: "#0f172a" }}>kliknij wiersz</strong>, aby
               przejść do właściwej sekcji (karta projektu lub moduł Zadania).
             </p>
             <div style={{ marginBottom: "0.75rem" }}>
@@ -11212,12 +11212,12 @@ export default function App() {
             INFO — zagrożenia i podświetlenia „wymaga uwagi”
           </h2>
           <p style={{ ...s.muted, fontSize: "0.88rem", lineHeight: 1.55, marginBottom: "1.25rem" }}>
-            Poniżej reguły <strong style={{ color: "#fecaca" }}>obowiązujące w tej wersji aplikacji</strong>. Chodzi
+            Poniżej reguły <strong style={{ color: "#991b1b" }}>obowiązujące w tej wersji aplikacji</strong>. Chodzi
             o szybki odczyt przed spotkaniem: co wymaga decyzji, domknięcia lub koordynacji. Podświetlenia nie
             zastępują ludzkiej oceny — bazują na polach w bazie (statusy, daty, zaznaczenia).
           </p>
 
-          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#991b1b" }}>
             Pulpit projektu — oś czasu (wiersz listy)
           </h3>
           <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "0.65rem" }}>
@@ -11231,13 +11231,13 @@ export default function App() {
               paddingLeft: "1.25rem",
               fontSize: "0.85rem",
               lineHeight: 1.65,
-              color: "#e5e5e5",
+              color: "#0f172a",
             }}
           >
             <li style={{ marginBottom: "0.5rem" }}>
               <strong style={{ color: "#4ade80" }}>KR</strong> (pozycja startu projektu na osi): status projektu w
               tabeli <code style={s.code}>kr</code> to dokładnie{" "}
-              <strong style={{ color: "#fecaca" }}>„oczekuje na zamawiającego”</strong>.
+              <strong style={{ color: "#991b1b" }}>„oczekuje na zamawiającego”</strong>.
             </li>
             <li style={{ marginBottom: "0.5rem" }}>
               <strong style={{ color: "#f87171" }}>ETAP</strong> — <strong>którykolwiek</strong> z warunków: pole
@@ -11247,7 +11247,7 @@ export default function App() {
               <em>zrealizowane</em>, <em>rozliczone</em>, <em>anulowane</em>.
             </li>
             <li style={{ marginBottom: "0.5rem" }}>
-              <strong style={{ color: "#38bdf8" }}>LOG</strong>: status zdarzenia to{" "}
+              <strong style={{ color: "#0284c7" }}>LOG</strong>: status zdarzenia to{" "}
               <strong>„w trakcie”</strong> lub <strong>„oczekuje”</strong> (wpis nie jest uznany za domknięty —
               status <em>ukończone</em> wyłącza podświetlenie).
             </li>
@@ -11259,24 +11259,24 @@ export default function App() {
             </li>
           </ul>
 
-          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#991b1b" }}>
             Pulpit — karta „Dane projektu”
           </h3>
           <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
             <strong>Czerwona ramka</strong> i dopisek przy nagłówku karty, gdy status KR tego projektu to{" "}
-            <strong style={{ color: "#fecaca" }}>„oczekuje na zamawiającego”</strong> (ta sama reguła co dla wiersza
+            <strong style={{ color: "#991b1b" }}>„oczekuje na zamawiającego”</strong> (ta sama reguła co dla wiersza
             startu KR na osi).
           </p>
 
-          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#991b1b" }}>
             Pulpit — zielona linia „Teraz”
           </h3>
           <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
-            To <strong>nie</strong> jest zagrożenie — oznacza <strong style={{ color: "#86efac" }}>aktualną datę
+            To <strong>nie</strong> jest zagrożenie — oznacza <strong style={{ color: "#166534" }}>aktualną datę
             (dziś)</strong> na osi czasu, żeby widać było „gdzie jesteśmy” względem przeszłych i przyszłych wpisów.
           </p>
 
-          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#991b1b" }}>
             Pulpit — skrzynka „Wymaga uwagi”
           </h3>
           <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "1.15rem" }}>
@@ -11284,7 +11284,7 @@ export default function App() {
             <strong>jedna</strong> pozycja spełniająca powyższe reguły — z liczbą takich pozycji.
           </p>
 
-          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#fecaca" }}>
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#991b1b" }}>
             Lista główna KR (tabela przed wejściem w Pulpit)
           </h3>
           <p style={{ ...s.muted, fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "0.65rem" }}>
@@ -11296,7 +11296,7 @@ export default function App() {
               paddingLeft: "1.25rem",
               fontSize: "0.85rem",
               lineHeight: 1.65,
-              color: "#e5e5e5",
+              color: "#0f172a",
             }}
           >
             <li style={{ marginBottom: "0.5rem" }}>
@@ -11314,7 +11314,7 @@ export default function App() {
             <strong>pulpicie</strong> danego KR.
           </p>
 
-          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#a3a3a3" }}>
+          <h3 style={{ ...s.h2, marginTop: "1rem", fontSize: "0.95rem", color: "#475569" }}>
             Jak „zgasić” czerwień (skrót)
           </h3>
           <ul
@@ -11332,7 +11332,7 @@ export default function App() {
           </ul>
 
           <p style={{ ...s.muted, fontSize: "0.8rem", marginBottom: 0 }}>
-            Wróć do pracy: <strong style={{ color: "#d4d4d4" }}>KR</strong> (lista projektów) lub inna zakładka w menu
+            Wróć do pracy: <strong style={{ color: "#0f172a" }}>KR</strong> (lista projektów) lub inna zakładka w menu
             u góry.
           </p>
         </section>
@@ -11489,7 +11489,7 @@ export default function App() {
                         href={hrefLinkuZewnetrznego(mojeDokEdycja.arkusz)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ color: "#7dd3fc", fontWeight: 600 }}
+                        style={{ color: "#0369a1", fontWeight: 600 }}
                       >
                         Otwórz w nowej karcie ↗
                       </a>
@@ -11553,7 +11553,7 @@ export default function App() {
                             href={hrefLinkuZewnetrznego(mojeDokEdycja.arkusz)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: "#7dd3fc", fontWeight: 600, fontSize: "0.84rem" }}
+                            style={{ color: "#0369a1", fontWeight: 600, fontSize: "0.84rem" }}
                           >
                             Otwórz w nowej karcie ↗
                           </a>
@@ -11789,7 +11789,7 @@ export default function App() {
                                           border: "2px solid rgba(148,163,184,0.55)",
                                           background:
                                             "linear-gradient(180deg, rgba(71,85,105,0.55) 0%, rgba(30,41,59,0.92) 100%)",
-                                          color: "#f1f5f9",
+                                          color: "#0f172a",
                                           fontWeight: 600,
                                           boxShadow:
                                             "0 2px 0 rgba(255,255,255,0.14) inset, 0 5px 0 #0f172a, 0 8px 20px rgba(0,0,0,0.4)",
@@ -11941,7 +11941,7 @@ export default function App() {
                                                   target="_blank"
                                                   rel="noopener noreferrer"
                                                   style={{
-                                                    color: "#7dd3fc",
+                                                    color: "#0369a1",
                                                     fontWeight: 600,
                                                     fontSize: "0.82rem",
                                                     whiteSpace: "nowrap",
@@ -12084,8 +12084,8 @@ export default function App() {
           </p>
           {czyAdminAktywny ? (
             <p style={{ ...s.muted, fontSize: "0.86rem", maxWidth: "48rem", marginBottom: "0.75rem" }}>
-              <strong style={{ color: "#e5e7eb" }}>Administrator:</strong> w kolumnie{" "}
-              <strong style={{ color: "#7dd3fc" }}>Forma</strong> ustawiasz{" "}
+              <strong style={{ color: "#0f172a" }}>Administrator:</strong> w kolumnie{" "}
+              <strong style={{ color: "#0369a1" }}>Forma</strong> ustawiasz{" "}
               <strong>umowę o pracę / umowę zlecenie / inną</strong> — to steruje rozliczeniem normy i nadgodzin w
               module <strong>Czas pracy</strong>. Zmiana zapisuje się od razu (wymaga kolumny{" "}
               <code style={s.code}>forma_zatrudnienia</code> — migracja{" "}
@@ -12136,7 +12136,7 @@ export default function App() {
                   <tr>
                     <th style={sortThStyle} onClick={() => togglePracSort("nr")}>nr (ID) {strzalkaSort("nr")}</th>
                     <th style={sortThStyle} onClick={() => togglePracSort("imie_nazwisko")}>Imię i nazwisko {strzalkaSort("imie_nazwisko")}</th>
-                    <th style={{ ...sortThStyle, color: "#7dd3fc" }} onClick={() => togglePracSort("dzial")}>Dział {strzalkaSort("dzial")}</th>
+                    <th style={{ ...sortThStyle, color: "#0369a1" }} onClick={() => togglePracSort("dzial")}>Dział {strzalkaSort("dzial")}</th>
                     {czyAdminAktywny ? (
                       <th style={{ ...sortThStyle, whiteSpace: "nowrap" }} title="Uprawnienia w aplikacji — tylko administrator" onClick={() => togglePracSort("app_role")}>
                         Rola {strzalkaSort("app_role")}
@@ -12158,7 +12158,7 @@ export default function App() {
                       </th>
                     ) : null}
                     {czyAdminAktywny ? (
-                      <th style={{ ...sortThStyle, whiteSpace: "nowrap", color: "#7dd3fc" }} title="UoP vs um. zlecenie — moduł Czas pracy; edycja tylko administrator" onClick={() => togglePracSort("forma_zatrudnienia")}>
+                      <th style={{ ...sortThStyle, whiteSpace: "nowrap", color: "#0369a1" }} title="UoP vs um. zlecenie — moduł Czas pracy; edycja tylko administrator" onClick={() => togglePracSort("forma_zatrudnienia")}>
                         Forma zatrudnienia {strzalkaSort("forma_zatrudnienia")}
                       </th>
                     ) : null}
@@ -12527,8 +12527,8 @@ export default function App() {
                   ) : (
                     <>
                       Lista zadań wg filtrów (KR, pracownik). Skróty menu{" "}
-                      <strong style={{ color: "#fdba74" }}>Z KR</strong>, <strong style={{ color: "#fdba74" }}>Teren</strong>,{" "}
-                      <strong style={{ color: "#fdba74" }}>Ogólne</strong> ustawiają wstępny zakres — możesz go zmienić w
+                      <strong style={{ color: "#c2410c" }}>Z KR</strong>, <strong style={{ color: "#c2410c" }}>Teren</strong>,{" "}
+                      <strong style={{ color: "#c2410c" }}>Ogólne</strong> ustawiają wstępny zakres — możesz go zmienić w
                       filtrach.
                     </>
                   )}
@@ -12544,7 +12544,7 @@ export default function App() {
                   Tabela <code style={s.code}>zadania</code>: <code style={s.code}>kr</code> (
                   <code style={s.code}>zadania-kolumna-kr.sql</code>), <code style={s.code}>typ_zadania</code> (
                   <code style={s.code}>zadania-typ-zadania.sql</code>). Filtr <strong>Projekt (KR)</strong> w tabeli i Kanbanie.
-                  Osoby z <strong style={{ color: "#93c5fd" }}>Pracownicy</strong>.
+                  Osoby z <strong style={{ color: "#0369a1" }}>Pracownicy</strong>.
                 </p>
               </>
             ) : null}
@@ -12561,7 +12561,7 @@ export default function App() {
             }}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-              <span style={{ color: "#cbd5e1", fontSize: "0.82rem", fontWeight: 600 }}>Widok</span>
+              <span style={{ color: "#334155", fontSize: "0.82rem", fontWeight: 600 }}>Widok</span>
               <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
                 <button
                   type="button"
@@ -12573,7 +12573,7 @@ export default function App() {
                     ...(zadaniaWidok === "tabela"
                       ? {
                           borderColor: "rgba(56,189,248,0.55)",
-                          color: "#7dd3fc",
+                          color: "#0369a1",
                           background: "rgba(56,189,248,0.12)",
                         }
                       : {}),
@@ -12592,7 +12592,7 @@ export default function App() {
                     ...(zadaniaWidok === "kanban"
                       ? {
                           borderColor: "rgba(56,189,248,0.55)",
-                          color: "#7dd3fc",
+                          color: "#0369a1",
                           background: "rgba(56,189,248,0.12)",
                         }
                       : {}),
@@ -12609,7 +12609,7 @@ export default function App() {
                 marginBottom: 0,
                 minWidth: "min(18rem, 100%)",
                 fontSize: "0.88rem",
-                color: "#cbd5e1",
+                color: "#334155",
               }}
             >
               Pracownik (filtr)
@@ -12635,7 +12635,7 @@ export default function App() {
                 marginBottom: 0,
                 minWidth: "min(16rem, 100%)",
                 fontSize: "0.88rem",
-                color: "#cbd5e1",
+                color: "#334155",
               }}
             >
               Projekt (filtr KR)
@@ -12678,7 +12678,7 @@ export default function App() {
             >
               <input
                 type="checkbox"
-                style={{ width: "1.05rem", height: "1.05rem", flexShrink: 0, accentColor: "#38bdf8" }}
+                style={{ width: "1.05rem", height: "1.05rem", flexShrink: 0, accentColor: "#0284c7" }}
                 checked={zadaniaFiltrTylkoOdpowiedzialny}
                 disabled={!zadaniaFiltrPracNr}
                 onChange={(ev) => setZadaniaFiltrTylkoOdpowiedzialny(ev.target.checked)}
@@ -12691,7 +12691,7 @@ export default function App() {
                 alignItems: "center",
                 gap: "0.5rem",
                 cursor: "pointer",
-                color: "#e2e8f0",
+                color: "#0f172a",
                 fontSize: "0.88rem",
                 fontWeight: 500,
                 marginBottom: "0.15rem",
@@ -12709,7 +12709,7 @@ export default function App() {
             zadaniaFiltrKr ||
             nrZalogowanegoDoZadan ||
             taskSekcja === "wszystkie" ? (
-              <span style={{ color: "#94a3b8", fontSize: "0.86rem", alignSelf: "center" }}>
+              <span style={{ color: "#64748b", fontSize: "0.86rem", alignSelf: "center" }}>
                 Wynik: {zadaniaListaWidokuZadan.length}
                 {zadaniaFiltrKr === "__bez_kr__"
                   ? " (bez KR)"
@@ -12768,9 +12768,9 @@ export default function App() {
                   }}
                 >
                   <div style={{ marginBottom: "0.55rem", padding: "0 0.25rem" }}>
-                    <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#f1f5f9" }}>{col.label}</div>
+                    <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0f172a" }}>{col.label}</div>
                     <div style={{ ...op.muted, fontSize: "0.68rem" }}>{col.sub}</div>
-                    <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "0.2rem" }}>
+                    <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: "0.2rem" }}>
                       {zadaniaKanbanBuckets[col.key].length} kart
                     </div>
                   </div>
@@ -12794,7 +12794,7 @@ export default function App() {
                             style={{
                               fontSize: "0.8rem",
                               fontWeight: 600,
-                              color: "#f8fafc",
+                              color: "#0f172a",
                               marginBottom: "0.35rem",
                               lineHeight: 1.35,
                             }}
@@ -12821,13 +12821,13 @@ export default function App() {
                           <div
                             style={{
                               fontSize: "0.68rem",
-                              color: "#94a3b8",
+                              color: "#64748b",
                               marginBottom: "0.35rem",
                               lineHeight: 1.4,
                             }}
                           >
                             <div>
-                              <strong style={{ color: "#7dd3fc" }}>Odp.:</strong>{" "}
+                              <strong style={{ color: "#0369a1" }}>Odp.:</strong>{" "}
                               {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
                             </div>
                             <div>
@@ -12845,7 +12845,7 @@ export default function App() {
                               </div>
                             ) : null}
                             {tekstTrim(row.data_odbioru) ? (
-                              <div style={{ color: "#86efac" }}>
+                              <div style={{ color: "#166534" }}>
                                 Odbiór: {dataDoInputa(row.data_odbioru)}
                               </div>
                             ) : null}
@@ -12901,12 +12901,12 @@ export default function App() {
                   <tr>
                     {[
                       { ch: "Zadanie", extra: null },
-                      { ch: "KR", extra: { color: "#93c5fd" } },
+                      { ch: "KR", extra: { color: "#0369a1" } },
                       { ch: "Typ zadania", extra: null },
-                      { ch: "Dział", extra: { color: "#7dd3fc" } },
+                      { ch: "Dział", extra: { color: "#0369a1" } },
                       { ch: "Odpow.", extra: null },
                       { ch: "Zlecający", extra: null },
-                      { ch: "Status", extra: { color: "#a7f3d0" } },
+                      { ch: "Status", extra: { color: "#166534" } },
                       { ch: "Estym.", extra: { color: "#a5b4fc" } },
                       { ch: "Deadline", extra: null },
                       { ch: "Data odbioru", extra: null },
@@ -12955,7 +12955,7 @@ export default function App() {
                         </td>
                         <td style={{ ...s.td, padding: "0.65rem 0.85rem", fontFamily: "ui-monospace, monospace" }}>
                           {tekstTrim(row.kr) ? (
-                            <span style={{ color: "#93c5fd", fontWeight: 600 }}>{String(row.kr).trim()}</span>
+                            <span style={{ color: "#0369a1", fontWeight: 600 }}>{String(row.kr).trim()}</span>
                           ) : (
                             <span style={{ color: "#64748b" }}>—</span>
                           )}
@@ -13298,7 +13298,7 @@ export default function App() {
                   </option>
                 </select>
               </div>
-              <span style={{ fontSize: "0.76rem", color: "#94a3b8", marginTop: "0.3rem", display: "block", lineHeight: 1.45 }}>
+              <span style={{ fontSize: "0.76rem", color: "#64748b", marginTop: "0.3rem", display: "block", lineHeight: 1.45 }}>
                 W bazie zapisujemy zawsze <strong>roboczogodziny</strong>; przy wyborze dni roboczych wartość jest mnożona
                 przez {ROB_H_NA_DZIEN_ROBOCZY_ZADANIE}. W listach przy dniach pokazywany jest też przelicznik na rob. h.
               </span>
@@ -13327,7 +13327,7 @@ export default function App() {
               />
             </label>
             {pracFetchError ? (
-              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#b91c1c" }}>
                 Lista ID: {pracFetchError}
               </p>
             ) : null}
@@ -13367,7 +13367,7 @@ export default function App() {
               marginBottom: "1rem",
             }}
           >
-            <label style={{ ...s.label, color: "#cbd5e1" }}>
+            <label style={{ ...s.label, color: "#334155" }}>
               Nowe zgłoszenie (treść)
               <textarea
                 style={{ ...s.input, minHeight: "6.2rem", resize: "vertical" }}
@@ -13379,12 +13379,12 @@ export default function App() {
             </label>
             <div style={{ ...op.muted, fontSize: "0.75rem" }}>
               Zgłaszający:{" "}
-              <strong style={{ color: "#e2e8f0" }}>
+              <strong style={{ color: "#0f172a" }}>
                 {podpisOsobyProwadzacej(pracownikPowiazanyZSesja?.nr, mapaProwadzacychId) ||
                   String(pracownikPowiazanyZSesja?.imie_nazwisko ?? "").trim() ||
                   "—"}
               </strong>
-              {" · "}data zgłoszenia: <strong style={{ color: "#e2e8f0" }}>{dzisiajDataYYYYMMDD()}</strong>
+              {" · "}data zgłoszenia: <strong style={{ color: "#0f172a" }}>{dzisiajDataYYYYMMDD()}</strong>
             </div>
             <div style={s.btnRow}>
               <button type="submit" style={s.btn}>
@@ -13414,8 +13414,8 @@ export default function App() {
               style={{
                 ...s.btnGhost,
                 ...(appTicketPokazArchiwum
-                  ? { borderColor: "rgba(148,163,184,0.35)", color: "#cbd5e1" }
-                  : { borderColor: "rgba(56,189,248,0.45)", color: "#7dd3fc", background: "rgba(56,189,248,0.12)" }),
+                  ? { borderColor: "rgba(148,163,184,0.35)", color: "#334155" }
+                  : { borderColor: "rgba(56,189,248,0.45)", color: "#0369a1", background: "rgba(56,189,248,0.12)" }),
               }}
               onClick={() => setAppTicketPokazArchiwum(false)}
             >
@@ -13426,8 +13426,8 @@ export default function App() {
               style={{
                 ...s.btnGhost,
                 ...(appTicketPokazArchiwum
-                  ? { borderColor: "rgba(16,185,129,0.45)", color: "#86efac", background: "rgba(16,185,129,0.12)" }
-                  : { borderColor: "rgba(148,163,184,0.35)", color: "#cbd5e1" }),
+                  ? { borderColor: "rgba(16,185,129,0.45)", color: "#166534", background: "rgba(16,185,129,0.12)" }
+                  : { borderColor: "rgba(148,163,184,0.35)", color: "#334155" }),
               }}
               onClick={() => setAppTicketPokazArchiwum(true)}
             >
@@ -13540,7 +13540,7 @@ export default function App() {
                             {czyZglaszajacy && !zamkniety ? (
                               <button
                                 type="button"
-                                style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.2rem 0.35rem", color: "#86efac" }}
+                                style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.2rem 0.35rem", color: "#166534" }}
                                 onClick={() => void zamknijAppTicketJakoZglaszajacy(row)}
                               >
                                 Zamknij (do archiwum)
@@ -13556,7 +13556,7 @@ export default function App() {
                             {czyAdminAktywny ? (
                               <button
                                 type="button"
-                                style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.2rem 0.35rem", color: "#fca5a5" }}
+                                style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.2rem 0.35rem", color: "#b91c1c" }}
                                 onClick={() => void usunAppTicket(row.id)}
                               >
                                 Usuń
@@ -13610,7 +13610,7 @@ export default function App() {
                         <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.2rem" }}>
                           {nadawca} · {dataLogowaniaEtykieta(m.created_at)}
                         </div>
-                        <div style={{ whiteSpace: "pre-wrap", color: "#e2e8f0" }}>{String(m.tresc ?? "").trim() || "—"}</div>
+                        <div style={{ whiteSpace: "pre-wrap", color: "#0f172a" }}>{String(m.tresc ?? "").trim() || "—"}</div>
                       </div>
                     );
                   })
@@ -13749,7 +13749,7 @@ export default function App() {
                                       ...s.btnGhost,
                                       padding: "0.1rem 0.35rem",
                                       fontWeight: 700,
-                                      color: "#fdba74",
+                                      color: "#c2410c",
                                     }}
                                     onClick={() => {
                                       setWidok("kr");
@@ -13837,7 +13837,7 @@ export default function App() {
           <h2 style={{ ...s.h2, marginTop: 0 }}>Faktury kosztowe</h2>
           {fakturySekcja === "podwykonawcy" ? (
             <div style={{ ...op.sectionCard, marginBottom: "0.8rem", borderColor: "rgba(56,189,248,0.35)" }}>
-              <strong style={{ color: "#7dd3fc" }}>Widok: Podwykonawcy</strong>
+              <strong style={{ color: "#0369a1" }}>Widok: Podwykonawcy</strong>
               <div style={{ ...op.muted, marginTop: "0.25rem", fontSize: "0.82rem" }}>
                 Pokazuję tylko faktury, gdzie pole <strong>Typ</strong> zawiera słowo „Podwykonawca”.
               </div>
@@ -13888,7 +13888,7 @@ export default function App() {
                   borderRadius: "6px",
                   fontSize: "0.84rem",
                   lineHeight: 1.45,
-                  color: "#e2e8f0",
+                  color: "#0f172a",
                   background: "rgba(148,163,184,0.1)",
                   border: "1px solid rgba(148,163,184,0.28)",
                 }}
@@ -14018,7 +14018,7 @@ export default function App() {
               </div>
             </div>
             <details style={{ marginBottom: "0.65rem" }}>
-              <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: "0.84rem", userSelect: "none" }}>
+              <summary style={{ cursor: "pointer", color: "#64748b", fontSize: "0.84rem", userSelect: "none" }}>
                 Filtrowanie według kolumn (opcjonalnie — każda kolumna osobno, spełnić muszą wszystkie wypełnione)
               </summary>
               <div
@@ -14325,7 +14325,7 @@ export default function App() {
                                   style={{
                                     background: "none",
                                     border: "none",
-                                    color: "#7dd3fc",
+                                    color: "#0369a1",
                                     cursor: "pointer",
                                     fontWeight: 700,
                                     padding: 0,
@@ -14339,7 +14339,7 @@ export default function App() {
                                   )}
                                 </button>
                               ) : (
-                                <span style={{ color: "#fca5a5" }}>— nieprzypisane —</span>
+                                <span style={{ color: "#b91c1c" }}>— nieprzypisane —</span>
                               )}
                             </td>
                             <td
@@ -14459,7 +14459,7 @@ export default function App() {
                                 ...FAKTURY_KOSZTOWE_TD,
                                 width: `${szerFakturyKolumny("vat")}px`,
                                 maxWidth: `${szerFakturyKolumny("vat")}px`,
-                                color: "#fca5a5",
+                                color: "#b91c1c",
                               }}
                             >
                               {row.kwota_vat != null ? kwotaBruttoEtykieta(row.kwota_vat) : "—"}
@@ -14486,7 +14486,7 @@ export default function App() {
                               title={txtLokalny || undefined}
                             >
                               {txtLokalny ? (
-                                <span style={{ color: "#94a3b8" }}>
+                                <span style={{ color: "#64748b" }}>
                                   {tekstUcietyKoniecPrezentacja(
                                     txtLokalny,
                                     fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("lokalny")),
@@ -14504,7 +14504,7 @@ export default function App() {
                               }}
                             >
                               {tekstTrim(row.link_faktury) ? (
-                                <a href={hrefLinkuZewnetrznego(row.link_faktury)} target="_blank" rel="noopener noreferrer" style={{ color: "#7dd3fc" }}>
+                                <a href={hrefLinkuZewnetrznego(row.link_faktury)} target="_blank" rel="noopener noreferrer" style={{ color: "#0369a1" }}>
                                   otwórz
                                 </a>
                               ) : (
@@ -14576,7 +14576,7 @@ export default function App() {
           <h2 style={{ ...s.h2, marginTop: 0 }}>PW — podwykonawcy</h2>
           {trybHelp ? (
             <p style={{ ...s.muted, marginBottom: "0.75rem" }}>
-              Skrót <strong style={{ color: "#d4d4d4" }}>PW</strong> w menu to katalog firm. Zlecenia przy konkretnym KR
+              Skrót <strong style={{ color: "#0f172a" }}>PW</strong> w menu to katalog firm. Zlecenia przy konkretnym KR
               dodajesz na liście projektów przez przycisk <strong>PW</strong> przy danym wierszu projektu.
             </p>
           ) : null}
@@ -14650,7 +14650,7 @@ export default function App() {
                       return (
                         <tr key={z.id}>
                           <td style={s.td}>
-                            <strong style={{ color: "#7dd3fc" }}>{z.kr?.trim() ? z.kr : "—"}</strong>
+                            <strong style={{ color: "#0369a1" }}>{z.kr?.trim() ? z.kr : "—"}</strong>
                           </td>
                           <td style={s.td}>
                             <strong style={{ color: "#f5f5f5" }}>{firma?.trim() ? firma : "—"}</strong>
@@ -14707,14 +14707,14 @@ export default function App() {
                     }}
                   >
                     Edycja zlecenia PW — KR{" "}
-                    <strong style={{ color: "#7dd3fc" }}>{krZleceniePwKontekstKr ?? "—"}</strong>
+                    <strong style={{ color: "#0369a1" }}>{krZleceniePwKontekstKr ?? "—"}</strong>
                   </h3>
                   <form
                     style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1.75rem" }}
                     onSubmit={zapiszKrZleceniePw}
                   >
                     <label style={s.label}>
-                      Podwykonawca <span style={{ color: "#fca5a5" }}>*</span>
+                      Podwykonawca <span style={{ color: "#b91c1c" }}>*</span>
                       <select
                         style={s.input}
                         value={krZleceniePwForm.podwykonawca_id}
@@ -14801,7 +14801,7 @@ export default function App() {
                     </label>
                     <div style={{ marginBottom: "0.85rem" }}>
                       <span
-                        style={{ display: "block", marginBottom: "0.4rem", color: "#d4d4d4", fontSize: "0.82rem" }}
+                        style={{ display: "block", marginBottom: "0.4rem", color: "#0f172a", fontSize: "0.82rem" }}
                       >
                         Odbiór / weryfikacja
                       </span>
@@ -14812,7 +14812,7 @@ export default function App() {
                           gap: "0.5rem",
                           cursor: "pointer",
                           marginBottom: "0.35rem",
-                          color: "#e5e5e5",
+                          color: "#0f172a",
                           fontSize: "0.88rem",
                         }}
                       >
@@ -14831,7 +14831,7 @@ export default function App() {
                           alignItems: "center",
                           gap: "0.5rem",
                           cursor: "pointer",
-                          color: "#e5e5e5",
+                          color: "#0f172a",
                           fontSize: "0.88rem",
                         }}
                       >
@@ -15168,7 +15168,7 @@ export default function App() {
                 onSubmit={zapiszPodwykonawce}
               >
             <label style={s.label}>
-              Nazwa firmy <span style={{ color: "#fca5a5" }}>*</span>
+              Nazwa firmy <span style={{ color: "#b91c1c" }}>*</span>
               <input
                 style={s.input}
                 type="text"
@@ -15287,7 +15287,7 @@ export default function App() {
                       pathOptions={
                         aktywny
                           ? { color: "#16a34a", weight: 3, fillColor: "#22c55e", fillOpacity: 0.95 }
-                          : { color: "#0ea5e9", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.7 }
+                          : { color: "#0ea5e9", weight: 2, fillColor: "#0284c7", fillOpacity: 0.7 }
                       }
                     >
                       <Popup>
@@ -15485,7 +15485,7 @@ export default function App() {
                           style={{
                             ...s.td,
                             ...(naprawa
-                              ? { color: "#fecaca", fontWeight: 600 }
+                              ? { color: "#991b1b", fontWeight: 600 }
                               : {}),
                           }}
                           title={nap.title}
@@ -15528,7 +15528,7 @@ export default function App() {
           </h3>
           <form style={{ ...s.form, maxWidth: "min(40rem, 100%)", marginBottom: "1.75rem" }} onSubmit={zapiszSamochod}>
             <label style={s.label}>
-              Nazwa / opis pojazdu <span style={{ color: "#fca5a5" }}>*</span>
+              Nazwa / opis pojazdu <span style={{ color: "#b91c1c" }}>*</span>
               <input
                 style={s.input}
                 type="text"
@@ -15633,7 +15633,7 @@ export default function App() {
                 >
                   ← Miesiąc
                 </button>
-                <span style={{ fontSize: "0.88rem", color: "#e2e8f0", minWidth: "10rem", textAlign: "center" }}>
+                <span style={{ fontSize: "0.88rem", color: "#0f172a", minWidth: "10rem", textAlign: "center" }}>
                   {new Date(kalFlotaRok, kalFlotaMiesiac - 1, 15).toLocaleDateString("pl-PL", {
                     month: "long",
                     year: "numeric",
@@ -15668,7 +15668,7 @@ export default function App() {
                           left: 0,
                           zIndex: 2,
                           background: "#0f172a",
-                          color: "#94a3b8",
+                          color: "#64748b",
                           textAlign: "left",
                           padding: "0.35rem 0.5rem",
                           minWidth: "7.5rem",
@@ -15793,7 +15793,7 @@ export default function App() {
                 </table>
               </div>
             )}
-            <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginBottom: "0.35rem" }}>Legenda — kolory wg pracownika (ID):</div>
+            <div style={{ fontSize: "0.72rem", color: "#64748b", marginBottom: "0.35rem" }}>Legenda — kolory wg pracownika (ID):</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
               {[...new Set(rezerwacjeList.map((r) => String(r.pracownik_nr ?? "").trim()).filter(Boolean))].map((nr) => (
                 <span
@@ -15806,7 +15806,7 @@ export default function App() {
                     borderRadius: "6px",
                     background: "rgba(15,23,42,0.6)",
                     fontSize: "0.72rem",
-                    color: "#e2e8f0",
+                    color: "#0f172a",
                   }}
                 >
                   <span
@@ -15898,7 +15898,7 @@ export default function App() {
               />
             </label>
             {pracFetchError ? (
-              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#b91c1c" }}>
                 Lista pracowników: {pracFetchError}
               </p>
             ) : null}
@@ -15911,7 +15911,7 @@ export default function App() {
 
           {rezerwacjeList.length > 0 ? (
             <>
-              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#e2e8f0", margin: "0 0 0.5rem" }}>
+              <h3 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.5rem" }}>
                 Wpisy w tym miesiącu
               </h3>
               <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden", marginBottom: "2rem" }}>
@@ -15965,7 +15965,7 @@ export default function App() {
                 Ewidencja komputerów, drukarek i urządzeń MF — numer z importu (kod zewnętrzny), inwentaryzacja,
                 przegląd/serwis, przypisanie do pracownika oraz poprzedni użytkownicy (import lub własny tekst). Kolumny
                 sortujesz klikając nagłówek; edycja i nowy wpis odbywają się w tabeli.
-                <strong style={{ color: "#e5e5e5", fontWeight: 600 }}>
+                <strong style={{ color: "#0f172a", fontWeight: 600 }}>
                   {" "}
                   Administrator i kierownik widzą całą bazę i mogą dodawać, edytować oraz usuwać wpisy.
                 </strong>{" "}
@@ -16026,7 +16026,7 @@ export default function App() {
           ) : null}
 
           {pracFetchError && czyPelnaEwidencjaSprzetu ? (
-            <p style={{ ...s.muted, marginBottom: "0.65rem", fontSize: "0.82rem", color: "#fca5a5" }}>
+            <p style={{ ...s.muted, marginBottom: "0.65rem", fontSize: "0.82rem", color: "#b91c1c" }}>
               Lista pracowników (przypisanie): {pracFetchError}
             </p>
           ) : null}
@@ -16423,7 +16423,7 @@ export default function App() {
                                     style={{
                                       display: "block",
                                       marginTop: "0.3rem",
-                                      color: "#94a3b8",
+                                      color: "#64748b",
                                       fontSize: "0.72rem",
                                       lineHeight: 1.35,
                                       wordBreak: "break-word",
@@ -16438,7 +16438,7 @@ export default function App() {
                                     style={{
                                       display: "block",
                                       marginTop: "0.2rem",
-                                      color: "#94a3b8",
+                                      color: "#64748b",
                                       fontSize: "0.72rem",
                                       lineHeight: 1.35,
                                       wordBreak: "break-word",
@@ -16588,8 +16588,8 @@ export default function App() {
           </h2>
           {trybHelp ? (
             <p style={{ ...s.muted, marginBottom: "0.75rem", fontSize: "0.82rem" }}>
-              Etapy przypisane do tego KR. Pole <strong style={{ color: "#e5e5e5" }}>Etap</strong> jest wymagane, a{" "}
-              <strong style={{ color: "#a7f3d0" }}>Status</strong> wybierasz z listy. Czerwień oznacza ryzyko lub braki
+              Etapy przypisane do tego KR. Pole <strong style={{ color: "#0f172a" }}>Etap</strong> jest wymagane, a{" "}
+              <strong style={{ color: "#166534" }}>Status</strong> wybierasz z listy. Czerwień oznacza ryzyko lub braki
               wymagające reakcji.
             </p>
           ) : null}
@@ -16836,7 +16836,7 @@ export default function App() {
               </span>
             </label>
             <label style={s.label}>
-              Etap <span style={{ color: "#fca5a5" }}>*</span>
+              Etap <span style={{ color: "#b91c1c" }}>*</span>
               <input
                 style={s.input}
                 type="text"
@@ -17099,7 +17099,7 @@ export default function App() {
             onSubmit={zapiszKrZleceniePw}
           >
             <label style={s.label}>
-              Podwykonawca <span style={{ color: "#fca5a5" }}>*</span>
+              Podwykonawca <span style={{ color: "#b91c1c" }}>*</span>
               <select
                 style={s.input}
                 value={krZleceniePwForm.podwykonawca_id}
@@ -17191,7 +17191,7 @@ export default function App() {
             </label>
             <div style={{ marginBottom: "0.85rem" }}>
               <span
-                style={{ display: "block", marginBottom: "0.4rem", color: "#d4d4d4", fontSize: "0.82rem" }}
+                style={{ display: "block", marginBottom: "0.4rem", color: "#0f172a", fontSize: "0.82rem" }}
               >
                 Odbiór / weryfikacja
               </span>
@@ -17202,7 +17202,7 @@ export default function App() {
                   gap: "0.5rem",
                   cursor: "pointer",
                   marginBottom: "0.35rem",
-                  color: "#e5e5e5",
+                  color: "#0f172a",
                   fontSize: "0.88rem",
                 }}
               >
@@ -17221,7 +17221,7 @@ export default function App() {
                   alignItems: "center",
                   gap: "0.5rem",
                   cursor: "pointer",
-                  color: "#e5e5e5",
+                  color: "#0f172a",
                   fontSize: "0.88rem",
                   padding: "0.35rem 0.45rem",
                   borderRadius: "6px",
@@ -17381,7 +17381,7 @@ export default function App() {
                 <tr>
                   <th style={s.th}>Data</th>
                   <th style={s.th}>Typ</th>
-                  <th style={{ ...s.th, color: "#a7f3d0" }}>Status</th>
+                  <th style={{ ...s.th, color: "#166534" }}>Status</th>
                   <th style={s.th}>Opis</th>
                   <th style={s.th}>Zgłaszający</th>
                   <th style={s.th}>Wymagane działanie</th>
@@ -17562,7 +17562,7 @@ export default function App() {
               </select>
             </label>
             {pracFetchError ? (
-              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+              <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#b91c1c" }}>
                 Lista ID: {pracFetchError}
               </p>
             ) : null}
@@ -17835,7 +17835,7 @@ export default function App() {
                     <strong style={{ color: "#e7e5ff" }}>PW:</strong> kolumna „Odebrane” (nie to samo co protokół FS).
                   </p>
                   {krFakturySprzedazFetchError ? (
-                    <p style={{ ...s.muted, margin: "0 0 0.4rem", fontSize: "0.72rem", color: "#fca5a5" }} role="alert">
+                    <p style={{ ...s.muted, margin: "0 0 0.4rem", fontSize: "0.72rem", color: "#b91c1c" }} role="alert">
                       Faktury sprzedażowe: {krFakturySprzedazFetchError}
                     </p>
                   ) : null}
@@ -17855,19 +17855,19 @@ export default function App() {
                       >
                         <thead>
                           <tr style={{ borderBottom: "1px solid #3d3550" }}>
-                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem 0.35rem 0", color: "#a3a3a3" }}>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem 0.35rem 0", color: "#475569" }}>
                               Źródło
                             </th>
-                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#a3a3a3" }}>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#475569" }}>
                               Pozycja
                             </th>
-                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#a3a3a3" }}>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#475569" }}>
                               Zafakturowane
                             </th>
-                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#a3a3a3" }}>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", color: "#475569" }}>
                               Protokół (odbiór)
                             </th>
-                            <th style={{ textAlign: "left", padding: "0.35rem 0", color: "#a3a3a3" }}>
+                            <th style={{ textAlign: "left", padding: "0.35rem 0", color: "#475569" }}>
                               Data (FS)
                             </th>
                           </tr>
@@ -17932,14 +17932,14 @@ export default function App() {
                   </div>
                   <p style={{ ...s.muted, margin: "0 0 0.5rem", fontSize: "0.68rem", lineHeight: 1.45 }}>
                     Klauzule, paliwo, faktury PW, RBGH / wycena później —{" "}
-                    <strong style={{ color: "#a7f3d0" }}>bez sprzedaży FS</strong> (ta jest w tabeli powyżej). BRUDNOPIS:
+                    <strong style={{ color: "#166534" }}>bez sprzedaży FS</strong> (ta jest w tabeli powyżej). BRUDNOPIS:
                     podłączenie pod osobną tabelę w bazie.
                   </p>
                   <p style={{ ...s.muted, margin: "0 0 0.55rem", fontSize: "0.68rem", lineHeight: 1.45, color: "#fde68a" }}>
                     <strong>Zgłoszenie kosztu do przelewu</strong> (komu, konto, kwota brutto) — osobna funkcja: przycisk
                     poniżej, nie w ramce „placeholder”.
                   </p>
-                  <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.72rem", color: "#94a3b8" }}>
+                  <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.72rem", color: "#64748b" }}>
                     <div
                       style={{
                         padding: "0.45rem 0.55rem",
@@ -18008,7 +18008,7 @@ export default function App() {
                       background: "rgba(248,113,113,0.1)",
                       fontSize: "0.74rem",
                       lineHeight: 1.45,
-                      color: "#fecaca",
+                      color: "#991b1b",
                     }}
                   >
                     <strong style={{ color: "#f87171" }}>Wymaga uwagi</strong> — {n}{" "}
@@ -18024,7 +18024,7 @@ export default function App() {
                   padding: "0.5rem 0.7rem",
                   borderRadius: "8px",
                   border: "1px solid #333",
-                  background: "#141414",
+                  background: "#e2e8f0",
                 }}
               >
                 <div
@@ -18044,7 +18044,7 @@ export default function App() {
                     Brak danych kontaktowych w zleceniach — uzupełnij je na ekranie PW.
                   </p>
                 ) : (
-                  <div style={{ fontSize: "0.76rem", color: "#e5e5e5", lineHeight: 1.4 }}>
+                  <div style={{ fontSize: "0.76rem", color: "#0f172a", lineHeight: 1.4 }}>
                     {pulpitSkrotKontaktow.telefony.length ? (
                       <div>
                         <span style={s.muted}>Tel.: </span>
@@ -18091,7 +18091,7 @@ export default function App() {
                       alignItems: "center",
                       gap: "0.35rem",
                       fontSize: "0.7rem",
-                      color: "#a3a3a3",
+                      color: "#475569",
                       margin: 0,
                     }}
                   >
@@ -18186,7 +18186,7 @@ export default function App() {
                             gap: "0.45rem",
                             fontSize: "0.72rem",
                             fontWeight: 600,
-                            color: "#86efac",
+                            color: "#166534",
                           }}
                         >
                           <span
@@ -18373,13 +18373,13 @@ export default function App() {
                           <td style={s.td}>{item.rodzaj_pracy?.trim() ? item.rodzaj_pracy : "—"}</td>
                         </tr>
                         <tr>
-                          <th style={{ ...s.th, textAlign: "left", color: "#7dd3fc" }}>Dział</th>
+                          <th style={{ ...s.th, textAlign: "left", color: "#0369a1" }}>Dział</th>
                           <td style={{ ...s.td, ...s.dzialWartosc }}>
                             {item.dzial?.trim() ? item.dzial : "—"}
                           </td>
                         </tr>
                         <tr>
-                          <th style={{ ...s.th, textAlign: "left", color: "#a7f3d0" }}>Status</th>
+                          <th style={{ ...s.th, textAlign: "left", color: "#166534" }}>Status</th>
                           <td style={{ ...s.td, ...s.statusKr }}>
                             {item.status?.trim() ? item.status : "—"}
                           </td>
@@ -18426,9 +18426,9 @@ export default function App() {
                         padding: "0.85rem 1rem",
                         borderRadius: "10px",
                         border: "1px solid #2e2e2e",
-                        background: "#121212",
+                        background: "#f8fafc",
                         fontSize: "0.88rem",
-                        color: "#d4d4d4",
+                        color: "#0f172a",
                       }}
                     >
                       <div
@@ -18461,7 +18461,7 @@ export default function App() {
                             href={hrefLinkuZewnetrznego(item.link_umowy)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: "#7dd3fc", wordBreak: "break-all" }}
+                            style={{ color: "#0369a1", wordBreak: "break-all" }}
                           >
                             {item.link_umowy.trim()}
                           </a>
@@ -18481,7 +18481,7 @@ export default function App() {
                     Zlecenia PW (podwykonawcy)
                   </h3>
                   {krZleceniaPwFetchError ? (
-                    <p style={{ ...s.muted, color: "#fca5a5" }}>{krZleceniaPwFetchError}</p>
+                    <p style={{ ...s.muted, color: "#b91c1c" }}>{krZleceniaPwFetchError}</p>
                   ) : krZleceniaPwList.length === 0 ? (
                     <p style={s.muted}>Brak zleceń PW dla tego KR.</p>
                   ) : (
@@ -18733,7 +18733,7 @@ export default function App() {
                           <tr>
                             <th style={s.th}>Data</th>
                             <th style={s.th}>Typ</th>
-                            <th style={{ ...s.th, color: "#a7f3d0" }}>Status</th>
+                            <th style={{ ...s.th, color: "#166534" }}>Status</th>
                             <th style={s.th}>Opis</th>
                             <th style={s.th}>Zgłaszający</th>
                             <th style={s.th}>Wymagane działanie</th>
@@ -18852,7 +18852,7 @@ export default function App() {
                       }}
                     >
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.02em" }}>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>
                           <strong>{item.kr}</strong>
                           {!isEditing && item.nazwa_obiektu ? (
                             <span style={{ fontWeight: 600 }}> — {item.nazwa_obiektu}</span>
@@ -18863,7 +18863,7 @@ export default function App() {
                             style={{
                               marginTop: "0.45rem",
                               fontSize: "0.82rem",
-                              color: "#94a3b8",
+                              color: "#64748b",
                               lineHeight: 1.45,
                               whiteSpace: "nowrap",
                               overflowX: "auto",
@@ -18888,7 +18888,7 @@ export default function App() {
                               <span>
                                 {" "}
                                 · Prowadzący:{" "}
-                                <strong style={{ color: "#e2e8f0" }}>
+                                <strong style={{ color: "#0f172a" }}>
                                   {podpisOsobyProwadzacej(item.osoba_prowadzaca, mapaProwadzacychId)}
                                 </strong>
                               </span>
@@ -18897,7 +18897,7 @@ export default function App() {
                             {item.zleceniodawca?.trim() ? (
                               <span>
                                 {" "}
-                                · ZL: <strong style={{ color: "#cbd5e1" }}>{item.zleceniodawca.trim()}</strong>
+                                · ZL: <strong style={{ color: "#334155" }}>{item.zleceniodawca.trim()}</strong>
                               </span>
                             ) : null}
                             {item.link_umowy?.trim() ? (
@@ -18908,7 +18908,7 @@ export default function App() {
                                   href={hrefLinkuZewnetrznego(item.link_umowy)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  style={{ color: "#7dd3fc" }}
+                                  style={{ color: "#0369a1" }}
                                 >
                                   Umowa
                                 </a>
@@ -18997,7 +18997,7 @@ export default function App() {
                               marginBottom: "0.15rem",
                               fontSize: "0.8rem",
                               fontWeight: 800,
-                              color: "#fdba74",
+                              color: "#c2410c",
                               textTransform: "uppercase",
                               letterSpacing: "0.05em",
                             }}
@@ -19043,7 +19043,7 @@ export default function App() {
                             />
                           </label>
                           <div style={s.label}>
-                            <span style={{ color: "#7dd3fc", fontWeight: 600 }}>
+                            <span style={{ color: "#0369a1", fontWeight: 600 }}>
                               Dział <span style={{ color: "#fbbf24" }}>*</span>
                             </span>
                             <input
@@ -19055,7 +19055,7 @@ export default function App() {
                               }
                               placeholder="np. Dział prawny"
                             />
-                            <span style={{ ...s.dzialInfo, fontSize: "0.78rem", color: "#cbd5e1" }}>
+                            <span style={{ ...s.dzialInfo, fontSize: "0.78rem", color: "#334155" }}>
                               Szybki wybór działu:
                             </span>
                             <div style={s.btnRow}>
@@ -19109,7 +19109,7 @@ export default function App() {
                               marginBottom: "0.15rem",
                               fontSize: "0.8rem",
                               fontWeight: 800,
-                              color: "#fdba74",
+                              color: "#c2410c",
                               textTransform: "uppercase",
                               letterSpacing: "0.05em",
                             }}
@@ -19121,7 +19121,7 @@ export default function App() {
                               ...s.muted,
                               margin: "0.45rem 0 0",
                               fontSize: "0.8rem",
-                              color: "#94a3b8",
+                              color: "#64748b",
                             }}
                           >
                             Sekcja opcjonalna — możesz zostawić puste.
@@ -19207,18 +19207,18 @@ export default function App() {
                                 ...s.input,
                                 ...stylPolaUwagiPulpitu(krEdycjaStatusWymagaUwagi),
                                 ...stylPolaBrakWymagane(czyWartoscPusta(editForm.status)),
-                                color: czyWartoscPusta(editForm.status) ? "#111827" : "#e5e7eb",
+                                color: czyWartoscPusta(editForm.status) ? "#111827" : "#0f172a",
                               }}
                               value={editForm.status}
                               onChange={(ev) =>
                                 setEditForm((f) => ({ ...f, status: ev.target.value }))
                               }
                             >
-                              <option value="" style={{ color: "#111827" }}>
+                              <option value="" style={{ color: "#0f172a" }}>
                                 — brak —
                               </option>
                               {KR_STATUS_W_BAZIE.map((st) => (
-                                <option key={st} value={st} style={{ color: "#111827" }}>
+                                <option key={st} value={st} style={{ color: "#0f172a" }}>
                                   {st}
                                 </option>
                               ))}
@@ -19240,7 +19240,7 @@ export default function App() {
                               marginBottom: "0.15rem",
                               fontSize: "0.8rem",
                               fontWeight: 800,
-                              color: "#fdba74",
+                              color: "#c2410c",
                               textTransform: "uppercase",
                               letterSpacing: "0.05em",
                             }}
@@ -19287,7 +19287,7 @@ export default function App() {
                               ...s.muted,
                               margin: 0,
                               fontSize: "0.82rem",
-                              color: "#fca5a5",
+                              color: "#b91c1c",
                             }}
                           >
                             Nie wczytano listy pracowników: {pracFetchError}. Sprawdź SELECT dla{" "}
@@ -19296,7 +19296,7 @@ export default function App() {
                         ) : pracownicy.length === 0 ? (
                           <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem" }}>
                             Brak osób w bazie ID — najpierw dodaj je w zakładce{" "}
-                            <strong style={{ color: "#d4d4d4" }}>ID</strong>.
+                            <strong style={{ color: "#0f172a" }}>ID</strong>.
                           </p>
                         ) : null}
                         <label style={s.label}>
@@ -19647,7 +19647,7 @@ export default function App() {
           value={newDzial}
           onChange={(ev) => setNewDzial(ev.target.value)}
         />
-        <p style={{ ...s.muted, margin: 0, fontSize: "0.8rem", color: "#94a3b8" }}>
+        <p style={{ ...s.muted, margin: 0, fontSize: "0.8rem", color: "#64748b" }}>
           Zleceniodawca i umowa — opcjonalnie
         </p>
         <input
@@ -19705,12 +19705,12 @@ export default function App() {
           </select>
         </label>
         {pracFetchError ? (
-          <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#fca5a5" }}>
+          <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem", color: "#b91c1c" }}>
             Lista ID niedostępna: {pracFetchError}
           </p>
         ) : pracownicy.length === 0 ? (
           <p style={{ ...s.muted, margin: 0, fontSize: "0.82rem" }}>
-            Dodaj pracowników w zakładce <strong style={{ color: "#d4d4d4" }}>ID</strong>, aby móc tu
+            Dodaj pracowników w zakładce <strong style={{ color: "#0f172a" }}>ID</strong>, aby móc tu
             wybrać osobę.
           </p>
         ) : null}
@@ -19913,7 +19913,7 @@ export default function App() {
               >
                 <div style={{ ...op.muted, fontSize: "0.72rem", marginBottom: "0.2rem" }}>
                   KR:{" "}
-                  <strong style={{ color: "#fdba74", fontSize: "0.92rem", letterSpacing: "0.01em" }}>
+                  <strong style={{ color: "#c2410c", fontSize: "0.92rem", letterSpacing: "0.01em" }}>
                     {rekordKrMenuBoczne.kr}
                   </strong>
                 </div>
@@ -20018,7 +20018,7 @@ export default function App() {
                   gap: "0.35rem",
                   fontSize: "0.82rem",
                   fontWeight: 600,
-                  color: "#e2e8f0",
+                  color: "#0f172a",
                   marginBottom: 0,
                   borderStyle: "dashed",
                   borderColor: "rgba(251, 146, 60, 0.35)",

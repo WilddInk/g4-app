@@ -400,7 +400,7 @@ export const FakturaKosztowaEdycjaModal = memo(function FakturaKosztowaEdycjaMod
                     maxHeight: "11rem",
                     overflowY: "auto",
                     listStyle: "none",
-                    background: "#0f172a",
+                    background: "#ffffff",
                     border: "1px solid rgba(56,189,248,0.35)",
                     borderRadius: "6px",
                     zIndex: 90,

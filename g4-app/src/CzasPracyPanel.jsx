@@ -1429,7 +1429,7 @@ export function CzasPracyPanel({
                 padding: "0.45rem 0.6rem",
                 borderRadius: "8px",
                 border: `1px solid ${theme.border}`,
-                background: "#111827",
+                background: "#ffffff",
                 color: theme.text,
                 minWidth: "14rem",
               }}
@@ -1474,7 +1474,7 @@ export function CzasPracyPanel({
               padding: "0.45rem",
               borderRadius: "8px",
               border: `1px solid ${theme.border}`,
-              background: "#111827",
+              background: "#ffffff",
               color: theme.text,
             }}
           />
@@ -1488,7 +1488,7 @@ export function CzasPracyPanel({
               padding: "0.45rem 0.6rem",
               borderRadius: "8px",
               border: `1px solid ${theme.border}`,
-              background: "#111827",
+              background: "#ffffff",
               color: theme.text,
               minWidth: "10rem",
             }}
@@ -1566,7 +1566,7 @@ export function CzasPracyPanel({
                         padding: "0.35rem 0.5rem",
                         borderRadius: "8px",
                         border: `1px solid ${theme.border}`,
-                        background: "#0b0f14",
+                        background: "#f8fafc",
                         color: theme.text,
                         fontSize: "0.8rem",
                         minWidth: "6.5rem",
@@ -1680,7 +1680,7 @@ export function CzasPracyPanel({
             padding: "0.65rem 0.75rem",
             borderRadius: "10px",
             border: `1px solid ${theme.border}`,
-            background: "#111827",
+            background: "#ffffff",
             gridColumn: "span 1",
             minWidth: 0,
           }}
@@ -1719,7 +1719,7 @@ export function CzasPracyPanel({
             ))}
           </div>
         </div>
-        <div style={{ padding: "0.65rem 0.75rem", borderRadius: "10px", border: `1px solid ${theme.border}`, background: "#111827" }}>
+        <div style={{ padding: "0.65rem 0.75rem", borderRadius: "10px", border: `1px solid ${theme.border}`, background: "#ffffff" }}>
           <div style={{ fontWeight: 700, color: theme.text, marginBottom: "0.35rem" }}>Norma miesiąca (PL)</div>
           <div>Dni robocze: {rozliczenieMiesiac.dniRobocze}</div>
           <div>
@@ -1751,7 +1751,7 @@ export function CzasPracyPanel({
             </>
           )}
         </div>
-        <div style={{ padding: "0.65rem 0.75rem", borderRadius: "10px", border: `1px solid ${theme.border}`, background: "#111827" }}>
+        <div style={{ padding: "0.65rem 0.75rem", borderRadius: "10px", border: `1px solid ${theme.border}`, background: "#ffffff" }}>
           <div style={{ fontWeight: 700, color: theme.text, marginBottom: "0.25rem" }}>Godziny na KR (miesiąc)</div>
           <div style={{ lineHeight: 1.45 }}>
             {Object.keys(podsumowanie.poKr).length === 0 ? (
@@ -1771,7 +1771,7 @@ export function CzasPracyPanel({
               padding: "0.65rem 0.75rem",
               borderRadius: "10px",
               border: `1px solid ${theme.border}`,
-              background: "#111827",
+              background: "#ffffff",
             }}
           >
             <div style={{ fontWeight: 700, color: theme.text, marginBottom: "0.25rem" }}>
@@ -1993,7 +1993,7 @@ export function CzasPracyPanel({
         >
           <div
             style={{
-              background: "#111827",
+              background: "#ffffff",
               border: `1px solid ${theme.border}`,
               borderRadius: "12px",
               padding: "1.1rem",
@@ -2368,7 +2368,7 @@ const inp = {
   padding: "0.45rem 0.55rem",
   borderRadius: "8px",
   border: `1px solid ${theme.border}`,
-  background: "#0b0f14",
+  background: "#f8fafc",
   color: theme.text,
   font: "inherit",
   fontSize: "0.88rem",

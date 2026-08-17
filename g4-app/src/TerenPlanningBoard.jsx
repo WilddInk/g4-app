@@ -678,7 +678,7 @@ export function TerenPlanningBoard({ krList, pracownicy, podwykonawcy, samochody
               <tbody>
                 {plannerRows.map((row) => (
                   <tr key={`${row.kind}-${row.id}`}>
-                    <td style={{ ...s.td, position: "sticky", left: 0, zIndex: 1, background: "#0f172a", minWidth: "180px" }}>
+                    <td style={{ ...s.td, position: "sticky", left: 0, zIndex: 1, background: "#ffffff", minWidth: "180px" }}>
                       {row.label}
                     </td>
                     {plannerDays.map((day) => {
