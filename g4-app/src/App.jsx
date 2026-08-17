@@ -12,7 +12,11 @@ import { supabase, supabaseApiHostname } from "./lib/supabase.js";
 import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 import { requireAuth } from "./config/requireAuth.js";
 import { grupaTypuCzasuWpisu } from "./domain/grupaTypuCzasuWpisu.js";
-import { zbudujDaneBudzetuKr, eksportujBudzetKrDoExcela } from "./lib/budzetKr.js";
+import {
+  zbudujDaneBudzetuKr,
+  zbudujHierarchieKosztowPracy,
+  eksportujBudzetKrDoExcela,
+} from "./lib/budzetKr.js";
 import { czyDzienRoboczyPl } from "./lib/swietoPl.js";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { s } from "./styles/appDashboardStyles.js";
@@ -1617,8 +1621,6 @@ const FAKTURY_KOLUMNY_USTAWIENIA = [
   { key: "data", label: "Data", def: 112 },
   { key: "nazwa", label: "Nazwa pliku", def: 60 },
   { key: "sprzedawca", label: "Sprzedawca", def: 220 },
-  { key: "odbiorca", label: "Odbiorca", def: 224 },
-  { key: "platnik", label: "Płatnik", def: 192 },
   { key: "typ", label: "Typ", def: 132 },
   { key: "netto", label: "Netto", def: 112 },
   { key: "brutto", label: "Brutto", def: 112 },
@@ -1660,12 +1662,6 @@ function fakturaKosztowaKluczSortowania(row, key, mapaSprzedawcaPoNip) {
         nazwaSprzedawcyZMapy(mapaSprzedawcaPoNip, row?.sprzedawca_nip || row?.legacy_issuer_id) ||
         ""
       );
-    case "nip":
-      return identyfikatorPodatkowyZnormalizowany(row?.sprzedawca_nip || row?.legacy_issuer_id);
-    case "odbiorca":
-      return tekstTrim(row?.komu) || tekstTrim(row?.legacy_receiver_name) || "";
-    case "platnik":
-      return [tekstTrim(row?.legacy_payer_name), tekstTrim(row?.platnik_id)].filter(Boolean).join(" ") || "";
     case "typ":
       return [tekstTrim(row?.typ_nazwy), tekstTrim(row?.rodzaj_kosztu)].filter(Boolean).join(" ") || "";
     case "netto":
@@ -1839,17 +1835,17 @@ const KR_PROJEKT_MENU = [
   {
     id: "faktury",
     label: "Faktury kosztowe",
-    help: "Zgłoszenia do księgowości: komu zapłacić, konto, brutto, link do faktury. FS sprzedaż — przy etapach i INV.",
+    help: "Szczegóły faktur kosztowych wg typu oraz zgłoszenia do księgowości (przelew).",
   },
   {
     id: "koszty",
-    label: "Koszty",
-    help: "Godziny pracy zarejestrowane na ten KR (pole KR w module Czas pracy). Kierownik i admin widzą zespół; pracownik — tylko siebie (RLS).",
+    label: "Koszty pracownicze",
+    help: "Od ogółu do szczegółu: osoby (godziny + koszt), potem miesiące, potem co robili (opis z arkusza).",
   },
   {
     id: "budzet",
     label: "Budżet projektu",
-    help: "Suma kosztów (praca + faktury), podział wg typów i przejście od ogółu do szczegółu.",
+    help: "Ogólne podsumowanie: koszty pracy i faktury — bez szczegółów pozycji.",
   },
   {
     id: "jednostki",
@@ -2061,6 +2057,8 @@ export default function App() {
   /** Wpisy czasu pracy z przypisanym KR — zakładka Koszty na karcie projektu. */
   const [krCzasPracyWpisyList, setKrCzasPracyWpisyList] = useState([]);
   const [krCzasPracyWpisyFetchError, setKrCzasPracyWpisyFetchError] = useState(null);
+  /** Rozwinięcia w „Koszty pracownicze”: o:nr / m:nr:YYYY-MM */
+  const [krKosztyExpand, setKrKosztyExpand] = useState({});
   /** Stawki godzinowe pracowników z wpisów KR — do wyceny kosztów w BUDŻECIE. */
   const [krStawkiPracyList, setKrStawkiPracyList] = useState([]);
   /** Suma roboczogodzin (tylko typy „praca”) dla KR na pulpicie projektu — przegląd. */
@@ -7948,9 +7946,9 @@ export default function App() {
             {btnLeaf("przeglad", "Tablica KR — pełny obraz projektu")}
             {btnLeaf("os", "Oś czasu (ETAP · PW · LOG)")}
             {btnLeaf("geant", "Geant (harmonogram projektu)")}
-            {btnLeaf("faktury", "Faktury kosztowe")}
-            {btnLeaf("koszty", "Koszty — czas pracy")}
             {btnLeaf("budzet", "Budżet projektu")}
+            {btnLeaf("koszty", "Koszty pracownicze")}
+            {btnLeaf("faktury", "Faktury kosztowe")}
             {btnLeaf("jednostki", "Jednostki (ha / działki)")}
             {btnLeaf("zlecenia", "Zlecenia PW")}
             {btnLeaf("podwykonawcy", "Podwykonawcy")}
@@ -8070,7 +8068,7 @@ export default function App() {
                   : "rgba(34,197,94,0.22)"
             }
             onClick={() => pulpitNavUstawPodstrone("koszty", item)}
-            title="Szczegóły: zakładka Koszty — czas pracy na tym KR"
+            title="Szczegóły: zakładka Koszty pracownicze na tym KR"
           />
           <OpKpiCard
             label="Pulpit operacyjny"
@@ -9236,132 +9234,187 @@ export default function App() {
 
     if (sekcja === "koszty") {
       const krK = String(item.kr ?? "").trim();
-      const nazwaPrac = (nr) => {
-        const n = String(nr ?? "").trim();
-        if (!n) return "—";
-        const p = pracownicy.find((x) => String(x.nr ?? "").trim() === n);
-        return p?.imie_nazwisko?.trim() ? `${n} — ${p.imie_nazwisko.trim()}` : n;
-      };
-      const sumaWszystkich = krCzasPracyWpisyList.reduce(
-        (acc, w) => acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0),
-        0
-      );
-      const sumaPracy = krCzasPracyWpisyList.reduce((acc, w) => {
-        if (grupaTypuCzasuWpisu(w.typ) !== "praca") return acc;
-        return acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0);
-      }, 0);
+      const stawkiByNr = new Map();
+      for (const st of krStawkiPracyList) {
+        const nr = String(st.pracownik_nr ?? "").trim();
+        if (!nr) continue;
+        if (!stawkiByNr.has(nr)) stawkiByNr.set(nr, []);
+        stawkiByNr.get(nr).push(st);
+      }
+      const hier = zbudujHierarchieKosztowPracy({
+        krCzasPracyWpisyList,
+        stawkiByNr,
+        pracownicy,
+      });
+      const toggleExpand = (key) =>
+        setKrKosztyExpand((prev) => ({ ...prev, [key]: !prev[key] }));
       return (
         <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
-          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Koszty — czas pracy na KR {krK}</h3>
+          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Koszty pracownicze — KR {krK}</h3>
           <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
-            Wpisy z modułu <strong>Czas pracy</strong>, w których przy wpisie wybrano ten kod KR. Suma „godziny pracy”
-            liczy tylko typy pracy (bez urlopów itd.); „łącznie” obejmuje wszystkie wpisy w tabeli.
+            Od ogółu do szczegółu: osoba → miesiąc → co robili (opis z arkusza rozliczeń / eksportu Księgowość).
+            Koszt = godziny × stawka.
           </p>
           <div style={{ ...s.btnRow, marginBottom: "1rem" }}>
             <button type="button" style={s.btnGhost} onClick={() => przejdzDoCzasPracy()}>
               Otwórz moduł Czas pracy
             </button>
             <button type="button" style={s.btnGhost} onClick={() => void fetchCzasPracyWpisyDlaKr(krK)}>
-              Odśwież listę
+              Odśwież
             </button>
           </div>
           {krCzasPracyWpisyFetchError ? (
             <div style={{ ...s.errBox, marginBottom: "1rem" }} role="alert">
               <strong>Nie wczytano czasu pracy.</strong> {krCzasPracyWpisyFetchError}
-              <br />
-              <span style={{ fontSize: "0.88em" }}>
-                Uruchom migracje <code style={s.code}>czas-pracy-stawki-i-wpisy.sql</code> oraz{" "}
-                <code style={s.code}>czas-pracy-wpis-rls-role.sql</code>.
-              </span>
             </div>
           ) : null}
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "0.65rem",
-              marginBottom: "1rem",
-              fontSize: "0.82rem",
-              color: "#0f172a",
-            }}
-          >
-            <div
-              style={{
-                padding: "0.5rem 0.75rem",
-                borderRadius: "10px",
-                border: "1px solid rgba(56,189,248,0.35)",
-                background: "rgba(56,189,248,0.08)",
-              }}
-            >
-              Godziny pracy (typ „praca”): <strong>{sumaPracy.toFixed(2)} h</strong>
-            </div>
-            <div
-              style={{
-                padding: "0.5rem 0.75rem",
-                borderRadius: "10px",
-                border: "1px solid rgba(148,163,184,0.25)",
-                background: "rgba(15,23,42,0.45)",
-              }}
-            >
-              Łącznie (wszystkie typy): <strong>{sumaWszystkich.toFixed(2)} h</strong>
-            </div>
-          </div>
-          {krCzasPracyWpisyList.length === 0 ? (
-            <p style={{ ...op.muted, marginBottom: "1rem" }}>
-              Brak wpisów z tym KR — w module Czas pracy dodaj blok z wybranym kodem projektu (pole KR).
+          <p style={{ margin: "0 0 0.65rem", fontSize: "0.88rem", color: "#0f172a" }}>
+            Suma: <strong>{kwotaBruttoEtykieta(hier.sumaKosztPracy)}</strong>
+            <span style={{ ...op.muted, marginLeft: "0.45rem" }}>
+              • {hier.godzinyPracy.toFixed(2)} h
+              {hier.godzinyBezStawki > 0
+                ? ` — bez stawki: ${hier.godzinyBezStawki.toFixed(2)} h`
+                : ""}
+            </span>
+          </p>
+          {hier.wpisyBezOpisu > 0 ? (
+            <p style={{ ...op.muted, margin: "0 0 0.85rem", fontSize: "0.78rem", lineHeight: 1.45 }}>
+              Brak opisu czynności w {hier.wpisyBezOpisu} wpisach — w arkuszu Księgowości uzupełnij „opis
+              czynności”, potem ponów <strong>Eksport do Vercel (Supabase)</strong> w Rozliczeniach godzinowych.
+            </p>
+          ) : null}
+          {hier.osoby.length === 0 ? (
+            <p style={{ ...s.muted, margin: 0 }}>
+              Brak wpisów czasu pracy dla tej KR — dodaj je w module Czas pracy albo wyeksportuj z Księgowości.
             </p>
           ) : (
-            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
-              <table style={{ ...s.table, fontSize: "0.82rem" }}>
-                <thead>
-                  <tr>
-                    <th style={s.th}>Data</th>
-                    <th style={s.th}>Pracownik</th>
-                    <th style={s.th}>Typ</th>
-                    <th style={s.th}>Zadanie</th>
-                    <th style={s.th}>Godz.</th>
-                    <th style={s.th}>Uwagi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {krCzasPracyWpisyList.map((row) => {
-                    const h = (Number(row.godziny) || 0) + (Number(row.nadgodziny) || 0);
-                    const typLbl = String(row.typ ?? "—").replace(/_/g, " ");
-                    return (
-                      <tr key={row.id}>
-                        <td style={s.td}>{row.data ? dataDoInputa(row.data) : "—"}</td>
-                        <td style={s.td}>{nazwaPrac(row.pracownik_nr)}</td>
-                        <td style={s.td}>
-                          <span
-                            style={{
-                              ...op.badge(
-                                grupaTypuCzasuWpisu(row.typ) === "nieobecnosc"
-                                  ? "rgba(244,114,182,0.2)"
-                                  : grupaTypuCzasuWpisu(row.typ) === "praca"
-                                    ? "rgba(251,191,36,0.18)"
-                                    : "rgba(148,163,184,0.15)",
-                                grupaTypuCzasuWpisu(row.typ) === "nieobecnosc"
-                                  ? "#f9a8d4"
-                                  : "#fde68a"
-                              ),
-                              fontSize: "0.75rem",
-                            }}
-                          >
-                            {typLbl}
-                          </span>
-                        </td>
-                        <td style={{ ...s.td, maxWidth: "14rem", wordBreak: "break-word", fontSize: "0.8rem" }}>
-                          {String(row.wykonywane_zadanie ?? "").trim() ? row.wykonywane_zadanie.trim() : "—"}
-                        </td>
-                        <td style={{ ...s.td, fontVariantNumeric: "tabular-nums" }}>{h.toFixed(2)}</td>
-                        <td style={{ ...s.td, maxWidth: "18rem", wordBreak: "break-word" }}>
-                          {row.uwagi?.trim() ? row.uwagi.trim() : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+              {hier.osoby.map((os) => {
+                const oKey = `o:${os.nr}`;
+                const oOpen = Boolean(krKosztyExpand[oKey]);
+                return (
+                  <div
+                    key={oKey}
+                    style={{
+                      borderRadius: "12px",
+                      border: "1px solid rgba(148,163,184,0.25)",
+                      overflow: "hidden",
+                      background: "rgba(255,255,255,0.55)",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(oKey)}
+                      style={{
+                        display: "flex",
+                        width: "100%",
+                        alignItems: "center",
+                        gap: "0.65rem",
+                        padding: "0.65rem 0.85rem",
+                        border: "none",
+                        background: oOpen ? "rgba(56,189,248,0.1)" : "transparent",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        color: "#0f172a",
+                        fontSize: "0.86rem",
+                      }}
+                    >
+                      <span style={{ width: "1.1rem", fontWeight: 700, color: "#64748b" }}>
+                        {oOpen ? "▾" : "▸"}
+                      </span>
+                      <span style={{ flex: 1, fontWeight: 700 }}>{os.etykieta}</span>
+                      <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                        {Number(os.godziny).toFixed(2)} h
+                      </span>
+                      <span style={{ whiteSpace: "nowrap", fontWeight: 700, minWidth: "6.5rem", textAlign: "right" }}>
+                        {os.koszt != null ? kwotaBruttoEtykieta(os.koszt) : "—"}
+                      </span>
+                    </button>
+                    {oOpen ? (
+                      <div style={{ padding: "0 0.55rem 0.65rem 1.55rem" }}>
+                        {os.miesiace.map((m) => {
+                          const mKey = `m:${os.nr}:${m.ym}`;
+                          const mOpen = Boolean(krKosztyExpand[mKey]);
+                          return (
+                            <div key={mKey} style={{ marginBottom: "0.35rem" }}>
+                              <button
+                                type="button"
+                                onClick={() => toggleExpand(mKey)}
+                                style={{
+                                  display: "flex",
+                                  width: "100%",
+                                  alignItems: "center",
+                                  gap: "0.55rem",
+                                  padding: "0.45rem 0.55rem",
+                                  border: "none",
+                                  borderRadius: "8px",
+                                  background: mOpen ? "rgba(148,163,184,0.12)" : "transparent",
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                  color: "#0f172a",
+                                  fontSize: "0.82rem",
+                                }}
+                              >
+                                <span style={{ width: "1rem", color: "#64748b" }}>{mOpen ? "▾" : "▸"}</span>
+                                <span style={{ flex: 1, fontWeight: 600 }}>{m.etykieta}</span>
+                                <span style={{ whiteSpace: "nowrap" }}>{Number(m.godziny).toFixed(2)} h</span>
+                                <span
+                                  style={{
+                                    whiteSpace: "nowrap",
+                                    fontWeight: 600,
+                                    minWidth: "6rem",
+                                    textAlign: "right",
+                                  }}
+                                >
+                                  {m.koszt != null ? kwotaBruttoEtykieta(m.koszt) : "—"}
+                                </span>
+                              </button>
+                              {mOpen ? (
+                                <div style={{ ...s.tableWrap, borderRadius: "10px", overflow: "hidden", marginTop: "0.25rem" }}>
+                                  <table style={{ ...s.table, fontSize: "0.78rem", margin: 0 }}>
+                                    <thead>
+                                      <tr>
+                                        <th style={s.th}>Data</th>
+                                        <th style={s.th}>Co robili</th>
+                                        <th style={s.th}>Godz.</th>
+                                        <th style={s.th}>Koszt</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {m.wpisy.map((w) => (
+                                        <tr key={String(w.id ?? `${w.data}-${w.godziny}`)}>
+                                          <td style={{ ...s.td, whiteSpace: "nowrap" }}>
+                                            {w.data ? dataPLZFormat(dataDoInputa(w.data)) : "—"}
+                                          </td>
+                                          <td style={{ ...s.td, maxWidth: "28rem", wordBreak: "break-word" }}>
+                                            {w.zadanie ? (
+                                              w.zadanie
+                                            ) : (
+                                              <span style={{ color: "#94a3b8", fontStyle: "italic" }}>
+                                                brak opisu w arkuszu
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td style={{ ...s.td, whiteSpace: "nowrap" }}>
+                                            {Number(w.godziny).toFixed(2)} h
+                                          </td>
+                                          <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
+                                            {w.koszt != null ? kwotaBruttoEtykieta(w.koszt) : "—"}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -9406,7 +9459,15 @@ export default function App() {
               marginBottom: "0.85rem",
             }}
           >
-            <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: 0 }}>Budżet — KR {krK}</h3>
+            <div>
+              <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.25rem" }}>
+                Budżet projektu — KR {krK}
+              </h3>
+              <p style={{ ...op.muted, margin: 0, fontSize: "0.8rem", lineHeight: 1.45 }}>
+                Podsumowanie ogólne. Szczegóły: <strong>Koszty pracownicze</strong> i{" "}
+                <strong>Faktury kosztowe</strong> w menu BUDŻET.
+              </p>
+            </div>
             <button
               type="button"
               style={{ ...s.btnGhost, fontSize: "0.8rem", padding: "0.35rem 0.7rem" }}
@@ -9417,7 +9478,28 @@ export default function App() {
             </button>
           </div>
 
-          <h4 style={{ ...op.sectionTitle, fontSize: "0.95rem", margin: "0 0 0.55rem" }}>Główne dane</h4>
+          <div style={{ ...op.kpiGrid, marginBottom: "1.15rem" }}>
+            <div style={op.kpiCard("rgba(56,189,248,0.16)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszty pracownicze</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>{kwotaBruttoEtykieta(dane.sumaKosztPracy)}</div>
+              <div style={{ ...op.muted, fontSize: "0.75rem", marginTop: "0.2rem" }}>
+                {dane.godzinyPracy.toFixed(2)} h
+                {dane.godzinyBezStawki > 0 ? ` — bez stawki: ${dane.godzinyBezStawki.toFixed(2)} h` : ""}
+              </div>
+            </div>
+            <div style={op.kpiCard("rgba(251,191,36,0.16)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Faktury kosztowe</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>
+                {kwotaBruttoEtykieta(dane.sumaFakturBrutto)}
+              </div>
+            </div>
+            <div style={op.kpiCard("rgba(34,197,94,0.16)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Razem koszty</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>
+                {kwotaBruttoEtykieta((Number(dane.sumaKosztPracy) || 0) + (Number(dane.sumaFakturBrutto) || 0))}
+              </div>
+            </div>
+          </div>
 
           <div style={{ marginBottom: "1.15rem" }}>
             <div
@@ -9430,12 +9512,9 @@ export default function App() {
                 marginBottom: "0.45rem",
               }}
             >
-              <strong style={{ color: "#0f172a", fontSize: "0.9rem" }}>Koszty pracownicze</strong>
+              <strong style={{ color: "#0f172a", fontSize: "0.9rem" }}>Koszty pracownicze (wg osób)</strong>
               <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "#0f172a" }}>
                 {kwotaBruttoEtykieta(dane.sumaKosztPracy)}
-                <span style={{ ...op.muted, fontWeight: 500, marginLeft: "0.45rem" }}>
-                  ({dane.godzinyPracy.toFixed(2)} h)
-                </span>
               </span>
             </div>
             {dane.kosztyPracownicze.length === 0 ? (
@@ -9466,7 +9545,7 @@ export default function App() {
             )}
           </div>
 
-          <div style={{ marginBottom: "1.35rem" }}>
+          <div>
             <div
               style={{
                 display: "flex",
@@ -9477,7 +9556,7 @@ export default function App() {
                 marginBottom: "0.45rem",
               }}
             >
-              <strong style={{ color: "#0f172a", fontSize: "0.9rem" }}>Faktury kosztowe</strong>
+              <strong style={{ color: "#0f172a", fontSize: "0.9rem" }}>Faktury kosztowe (wg typu)</strong>
               <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "#0f172a" }}>
                 {kwotaBruttoEtykieta(dane.sumaFakturBrutto)}
               </span>
@@ -9504,115 +9583,6 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
-              </div>
-            )}
-          </div>
-
-          <h4 style={{ ...op.sectionTitle, fontSize: "0.95rem", margin: "0 0 0.65rem" }}>Szczegóły</h4>
-
-          <div style={{ marginBottom: "1.15rem" }}>
-            <strong style={{ display: "block", color: "#0f172a", fontSize: "0.88rem", marginBottom: "0.45rem" }}>
-              Koszty pracownicze
-            </strong>
-            {dane.kosztyPracownicze.length === 0 ? (
-              <p style={{ ...s.muted, margin: 0 }}>Brak danych.</p>
-            ) : (
-              <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
-                <table style={{ ...s.table, fontSize: "0.82rem" }}>
-                  <thead>
-                    <tr>
-                      <th style={s.th}>Pracownik</th>
-                      <th style={s.th}>Roboczogodziny</th>
-                      <th style={s.th}>Koszt</th>
-                      <th style={s.th}>Uwagi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dane.kosztyPracownicze.map((r) => (
-                      <tr key={`sz-${String(r.nr)}`}>
-                        <td style={s.td}>{r.etykieta}</td>
-                        <td style={{ ...s.td, whiteSpace: "nowrap" }}>{Number(r.godziny).toFixed(2)} h</td>
-                        <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
-                          {r.koszt != null ? kwotaBruttoEtykieta(r.koszt) : "—"}
-                        </td>
-                        <td style={{ ...s.td, fontSize: "0.75rem", color: "#64748b" }}>
-                          {r.bezStawkiH > 0 ? `${r.bezStawkiH.toFixed(2)} h bez stawki` : ""}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <strong style={{ display: "block", color: "#0f172a", fontSize: "0.88rem", marginBottom: "0.45rem" }}>
-              Faktury kosztowe
-            </strong>
-            {dane.fakturyWgTypu.length === 0 ? (
-              <p style={{ ...s.muted, margin: 0 }}>Brak danych.</p>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
-                {dane.fakturyWgTypu.map((g) => (
-                  <div key={`roz-${g.typ}`} style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: "0.75rem",
-                        padding: "0.55rem 0.75rem",
-                        background: "rgba(148,163,184,0.12)",
-                        borderBottom: "1px solid rgba(148,163,184,0.25)",
-                        fontSize: "0.84rem",
-                        fontWeight: 700,
-                        color: "#0f172a",
-                      }}
-                    >
-                      <span>{g.typ}</span>
-                      <span style={{ whiteSpace: "nowrap" }}>{kwotaBruttoEtykieta(g.suma)}</span>
-                    </div>
-                    <table style={{ ...s.table, fontSize: "0.8rem", margin: 0 }}>
-                      <thead>
-                        <tr>
-                          <th style={s.th}>Data</th>
-                          <th style={s.th}>Sprzedawca</th>
-                          <th style={s.th}>Nr faktury</th>
-                          <th style={s.th}>Netto</th>
-                          <th style={s.th}>Brutto</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {g.rows.map((row) => (
-                          <tr key={String(row.id)}>
-                            <td style={s.td}>
-                              {row.data_faktury
-                                ? dataPLZFormat(dataDoInputa(row.data_faktury))
-                                : row.created_at
-                                  ? new Date(row.created_at).toLocaleDateString("pl-PL")
-                                  : "—"}
-                            </td>
-                            <td style={s.td}>
-                              {tekstTrim(row.sprzedawca_nazwa) ||
-                                nazwaSprzedawcyZMapy(
-                                  mapaSprzedawcaPoNip,
-                                  row.sprzedawca_nip || row.legacy_issuer_id,
-                                ) ||
-                                "—"}
-                            </td>
-                            <td style={s.td}>{tekstTrim(row.numer_faktury) || "—"}</td>
-                            <td style={{ ...s.td, whiteSpace: "nowrap" }}>
-                              {row.kwota_netto != null ? kwotaBruttoEtykieta(row.kwota_netto) : "—"}
-                            </td>
-                            <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
-                              {row.kwota_brutto != null ? kwotaBruttoEtykieta(row.kwota_brutto) : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
               </div>
             )}
           </div>
@@ -9687,9 +9657,108 @@ export default function App() {
 
     if (sekcja === "faktury") {
       const krK = String(item.kr ?? "").trim();
+      const listaFakturKr = deduplikujFakturyKosztowe(
+        krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK),
+      );
+      const draft = {
+        budzetBrutto: "",
+        ha: "",
+        liczbaDzialek: "",
+        ...(krBudzetDraftByKr[krK] ?? {}),
+      };
+      const stawkiByNr = new Map();
+      for (const st of krStawkiPracyList) {
+        const nr = String(st.pracownik_nr ?? "").trim();
+        if (!nr) continue;
+        if (!stawkiByNr.has(nr)) stawkiByNr.set(nr, []);
+        stawkiByNr.get(nr).push(st);
+      }
+      const dane = zbudujDaneBudzetuKr({
+        kr: krK,
+        listaFakturKr,
+        krCzasPracyWpisyList,
+        stawkiByNr,
+        pracownicy,
+        draft,
+      });
       return (
         <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
-          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Faktury kosztowe — do opłacenia (zgłoszenie)</h3>
+          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Faktury kosztowe — KR {krK}</h3>
+          <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
+            Szczegóły faktur przypisanych do tej KR (wg typu). Poniżej — zgłoszenia do przelewu.
+          </p>
+          <p style={{ margin: "0 0 0.65rem", fontSize: "0.88rem", color: "#0f172a" }}>
+            Suma brutto: <strong>{kwotaBruttoEtykieta(dane.sumaFakturBrutto)}</strong>
+          </p>
+          {dane.fakturyWgTypu.length === 0 ? (
+            <p style={{ ...s.muted, marginBottom: "1.25rem" }}>Brak faktur kosztowych dla tej KR.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginBottom: "1.35rem" }}>
+              {dane.fakturyWgTypu.map((g) => (
+                <div key={`fk-${g.typ}`} style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "0.75rem",
+                      padding: "0.55rem 0.75rem",
+                      background: "rgba(148,163,184,0.12)",
+                      borderBottom: "1px solid rgba(148,163,184,0.25)",
+                      fontSize: "0.84rem",
+                      fontWeight: 700,
+                      color: "#0f172a",
+                    }}
+                  >
+                    <span>{g.typ}</span>
+                    <span style={{ whiteSpace: "nowrap" }}>{kwotaBruttoEtykieta(g.suma)}</span>
+                  </div>
+                  <table style={{ ...s.table, fontSize: "0.8rem", margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th style={s.th}>Data</th>
+                        <th style={s.th}>Sprzedawca</th>
+                        <th style={s.th}>Nr faktury</th>
+                        <th style={s.th}>Netto</th>
+                        <th style={s.th}>Brutto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.rows.map((row) => (
+                        <tr key={String(row.id)}>
+                          <td style={s.td}>
+                            {row.data_faktury
+                              ? dataPLZFormat(dataDoInputa(row.data_faktury))
+                              : row.created_at
+                                ? new Date(row.created_at).toLocaleDateString("pl-PL")
+                                : "—"}
+                          </td>
+                          <td style={s.td}>
+                            {tekstTrim(row.sprzedawca_nazwa) ||
+                              nazwaSprzedawcyZMapy(
+                                mapaSprzedawcaPoNip,
+                                row.sprzedawca_nip || row.legacy_issuer_id,
+                              ) ||
+                              "—"}
+                          </td>
+                          <td style={s.td}>{tekstTrim(row.numer_faktury) || "—"}</td>
+                          <td style={{ ...s.td, whiteSpace: "nowrap" }}>
+                            {row.kwota_netto != null ? kwotaBruttoEtykieta(row.kwota_netto) : "—"}
+                          </td>
+                          <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
+                            {row.kwota_brutto != null ? kwotaBruttoEtykieta(row.kwota_brutto) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <h4 style={{ ...op.sectionTitle, fontSize: "0.95rem", margin: "0 0 0.55rem" }}>
+            Zgłoszenia do opłacenia
+          </h4>
           <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
             <strong>Nie mylić z FS:</strong> faktury <strong>sprzedażowe</strong> są przy etapach i pulpicie (
             <strong>INV</strong>). Tu pracownik zgłasza <strong>koszt do przelewu</strong> — wpisy ze statusem „do
@@ -9710,16 +9779,12 @@ export default function App() {
             <p style={{ ...op.muted, marginBottom: "1rem" }}>Brak zgłoszeń dla tego KR — dodaj pierwsze poniżej.</p>
           ) : (
               <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
-              <table style={{ ...s.table, fontSize: "0.82rem", minWidth: "1550px" }}>
+              <table style={{ ...s.table, fontSize: "0.82rem", minWidth: "920px" }}>
                 <thead>
                   <tr>
                     <th style={{ ...s.th, minWidth: "7rem" }}>Data</th>
                     <th style={{ ...s.th, minWidth: "14rem" }}>Nazwa pliku</th>
-                    <th style={{ ...s.th, minWidth: "12rem" }}>NIP</th>
                     <th style={{ ...s.th, minWidth: "14rem" }}>Sprzedawca</th>
-                    <th style={{ ...s.th, minWidth: "14rem" }}>Odbiorca</th>
-                    <th style={{ ...s.th, minWidth: "12rem" }}>Płatnik</th>
-                    <th style={{ ...s.th, minWidth: "11rem" }}>Konto</th>
                     <th style={{ ...s.th, minWidth: "7rem" }}>Netto</th>
                     <th style={{ ...s.th, minWidth: "7rem" }}>Brutto</th>
                     <th style={{ ...s.th, minWidth: "6rem" }}>VAT</th>
@@ -9727,13 +9792,10 @@ export default function App() {
                     <th style={{ ...s.th, minWidth: "12rem" }}>Link lokalny</th>
                     <th style={{ ...s.th, minWidth: "7rem" }}>Link Box</th>
                     <th style={{ ...s.th, minWidth: "10rem" }}>Zgłosił</th>
-                    <th style={{ ...s.th, minWidth: "9rem" }}>Status</th>
-                    <th style={{ ...s.th, minWidth: "16rem" }}>Notatki</th>
                   </tr>
                 </thead>
                 <tbody>
                   {krFakturyDoZaplatyList.map((row) => {
-                    const nt = kmTekstDoKomorki(row.notatki);
                     const st = String(row.status ?? "do_zaplaty").trim();
                     const opl = st === "oplacone";
                     return (
@@ -9757,21 +9819,9 @@ export default function App() {
                               : "—")}
                         </td>
                         <td style={s.td}>
-                          {identyfikatorPodatkowyZnormalizowany(row.sprzedawca_nip || row.legacy_issuer_id) || "—"}
-                        </td>
-                        <td style={s.td}>
                           {tekstTrim(row.sprzedawca_nazwa) ||
                             nazwaSprzedawcyZMapy(mapaSprzedawcaPoNip, row.sprzedawca_nip || row.legacy_issuer_id) ||
                             "—"}
-                        </td>
-                        <td style={s.td}>
-                          <strong style={{ color: opl ? "#94a3b8" : "#f8fafc" }}>
-                            {tekstTrim(row.komu) || tekstTrim(row.legacy_receiver_name) || "—"}
-                          </strong>
-                        </td>
-                        <td style={s.td}>{tekstTrim(row.legacy_payer_name) || "—"}</td>
-                        <td style={{ ...s.td, fontFamily: "ui-monospace, monospace", fontSize: "0.78rem" }}>
-                          {row.nr_konta?.trim() ? row.nr_konta : "—"}
                         </td>
                         <td style={{ ...s.td, color: "#bfdbfe" }}>
                           {row.kwota_netto != null ? kwotaBruttoEtykieta(row.kwota_netto) : "—"}
@@ -9817,22 +9867,6 @@ export default function App() {
                         </td>
                         <td style={s.td}>
                           {podpisOsobyProwadzacej(row.zgloszil_pracownik_nr, mapaProwadzacychId) ?? "—"}
-                        </td>
-                        <td style={s.td}>
-                          <select
-                            style={{ ...s.input, padding: "0.25rem 0.35rem", fontSize: "0.78rem", minWidth: "8.5rem" }}
-                            value={FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.includes(st) ? st : "do_zaplaty"}
-                            onChange={(ev) => void zapiszStatusKrFakturaDoZaplaty(row.id, ev.target.value, krK)}
-                          >
-                            {FAKTURA_DO_ZAPLATY_STATUS_W_BAZIE.map((v) => (
-                              <option key={v} value={v}>
-                                {etykietaFakturyDoZaplatyStatus(v)}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={s.td} title={nt.title}>
-                          {nt.text}
                         </td>
                       </tr>
                     );
@@ -14442,8 +14476,6 @@ export default function App() {
                           tekstTrim(row.sprzedawca_nazwa) ||
                           nazwaSprzedawcyZMapy(mapaSprzedawcaPoNip, row.sprzedawca_nip || row.legacy_issuer_id) ||
                           "";
-                        const txtOdbiorca = tekstTrim(row.komu) || tekstTrim(row.legacy_receiver_name) || "";
-                        const txtPlatnik = tekstTrim(row.legacy_payer_name) || "";
                         const txtTyp = tekstTrim(row.typ_nazwy) || "";
                         const txtNr = tekstTrim(row.numer_faktury) || "";
                         const txtLokalny = tekstTrim(row.legacy_pdf_file) ? String(row.legacy_pdf_file) : "";
@@ -14582,32 +14614,6 @@ export default function App() {
                               {tekstUcietyKoniecPrezentacja(
                                 txtSprzedawca,
                                 fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("sprzedawca")),
-                              )}
-                            </td>
-                            <td
-                              style={{
-                                ...FAKTURY_KOSZTOWE_TD,
-                                width: `${szerFakturyKolumny("odbiorca")}px`,
-                                maxWidth: `${szerFakturyKolumny("odbiorca")}px`,
-                              }}
-                              title={txtOdbiorca || undefined}
-                            >
-                              {tekstUcietyKoniecPrezentacja(
-                                txtOdbiorca,
-                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("odbiorca")),
-                              )}
-                            </td>
-                            <td
-                              style={{
-                                ...FAKTURY_KOSZTOWE_TD,
-                                width: `${szerFakturyKolumny("platnik")}px`,
-                                maxWidth: `${szerFakturyKolumny("platnik")}px`,
-                              }}
-                              title={txtPlatnik || undefined}
-                            >
-                              {tekstUcietyKoniecPrezentacja(
-                                txtPlatnik,
-                                fakturyKosztoweMaxLenZeSzerPx(szerFakturyKolumny("platnik")),
                               )}
                             </td>
                             <td

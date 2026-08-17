@@ -48,6 +48,153 @@ function deduplikujFakturyDoBudzetu(rows) {
   return [...best.values()];
 }
 
+const MIESIACE_PL = [
+  "styczeń",
+  "luty",
+  "marzec",
+  "kwiecień",
+  "maj",
+  "czerwiec",
+  "lipiec",
+  "sierpień",
+  "wrzesień",
+  "październik",
+  "listopad",
+  "grudzień",
+];
+
+/** Opis czynności z wpisu (pole arkusza / eksportu Księgowość → wykonywane_zadanie). */
+export function opisCzynnosciZWpisuCzasu(w) {
+  const z = String(w?.wykonywane_zadanie ?? "").trim();
+  if (z) return z;
+  const uw = String(w?.uwagi ?? "").trim();
+  if (!uw) return "";
+  const lines = uw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !/^eksport:\s*księgowość/i.test(l));
+  return lines.join(" · ");
+}
+
+function etykietaMiesiacaYm(ym) {
+  const m = Number(String(ym ?? "").slice(5, 7));
+  const y = String(ym ?? "").slice(0, 4);
+  if (!Number.isFinite(m) || m < 1 || m > 12 || !y) return String(ym ?? "—");
+  return `${MIESIACE_PL[m - 1]} ${y}`;
+}
+
+/**
+ * Hierarchia kosztów pracy: osoba → miesiące → wpisy (co robili).
+ */
+export function zbudujHierarchieKosztowPracy({ krCzasPracyWpisyList, stawkiByNr, pracownicy }) {
+  const etykietaPrac = (nr) => {
+    const p = (pracownicy ?? []).find((x) => String(x.nr ?? "").trim() === String(nr ?? "").trim());
+    return p?.imie_nazwisko?.trim() ? `${nr} — ${p.imie_nazwisko.trim()}` : String(nr ?? "—");
+  };
+
+  const byPrac = new Map();
+  let godzinyPracy = 0;
+  let sumaKosztPracy = 0;
+  let godzinyBezStawki = 0;
+  let wpisyBezOpisu = 0;
+
+  for (const w of krCzasPracyWpisyList ?? []) {
+    if (grupaTypuCzasuWpisu(w.typ) !== "praca") continue;
+    const nr = String(w.pracownik_nr ?? "").trim() || "—";
+    const data = String(w.data ?? "").slice(0, 10);
+    const ym = data.length >= 7 ? data.slice(0, 7) : "????-??";
+    const stawki = stawkiByNr?.get?.(nr) ?? stawkiByNr?.[nr] ?? [];
+    const { godziny, koszt } = kosztWpisuPracy(w, stawki);
+    const zadanie = opisCzynnosciZWpisuCzasu(w);
+    if (!zadanie) wpisyBezOpisu += 1;
+
+    godzinyPracy += godziny;
+    const cur =
+      byPrac.get(nr) ??
+      ({
+        nr,
+        etykieta: etykietaPrac(nr),
+        godziny: 0,
+        koszt: 0,
+        maKoszt: false,
+        bezStawkiH: 0,
+        miesiaceMap: new Map(),
+      });
+    cur.godziny += godziny;
+    if (koszt != null) {
+      cur.koszt += koszt;
+      cur.maKoszt = true;
+      sumaKosztPracy += koszt;
+    } else {
+      cur.bezStawkiH += godziny;
+      godzinyBezStawki += godziny;
+    }
+
+    const m =
+      cur.miesiaceMap.get(ym) ??
+      ({
+        ym,
+        etykieta: etykietaMiesiacaYm(ym),
+        godziny: 0,
+        koszt: 0,
+        maKoszt: false,
+        bezStawkiH: 0,
+        wpisy: [],
+      });
+    m.godziny += godziny;
+    if (koszt != null) {
+      m.koszt += koszt;
+      m.maKoszt = true;
+    } else {
+      m.bezStawkiH += godziny;
+    }
+    m.wpisy.push({
+      id: w.id,
+      data,
+      godziny,
+      koszt: koszt != null ? Math.round(koszt * 100) / 100 : null,
+      zadanie: zadanie || null,
+      typ: w.typ,
+    });
+    cur.miesiaceMap.set(ym, m);
+    byPrac.set(nr, cur);
+  }
+
+  const osoby = Array.from(byPrac.values())
+    .map((r) => ({
+      nr: r.nr,
+      etykieta: r.etykieta,
+      godziny: r.godziny,
+      koszt: r.maKoszt ? Math.round(r.koszt * 100) / 100 : null,
+      bezStawkiH: r.bezStawkiH,
+      miesiace: Array.from(r.miesiaceMap.values())
+        .map((m) => ({
+          ym: m.ym,
+          etykieta: m.etykieta,
+          godziny: m.godziny,
+          koszt: m.maKoszt ? Math.round(m.koszt * 100) / 100 : null,
+          bezStawkiH: m.bezStawkiH,
+          wpisy: [...m.wpisy].sort((a, b) => String(b.data).localeCompare(String(a.data))),
+        }))
+        .sort((a, b) => String(b.ym).localeCompare(String(a.ym))),
+    }))
+    .sort((a, b) => {
+      const ka = a.koszt ?? -1;
+      const kb = b.koszt ?? -1;
+      if (kb !== ka) return kb - ka;
+      return b.godziny - a.godziny;
+    });
+
+  return {
+    osoby,
+    sumaKosztPracy: Math.round(sumaKosztPracy * 100) / 100,
+    godzinyPracy,
+    godzinyBezStawki,
+    wpisyBezOpisu,
+  };
+}
+
 /**
  * Agregacja kosztów pracowniczych i faktur dla widoku BUDŻET KR.
  */
