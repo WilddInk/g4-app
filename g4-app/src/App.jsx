@@ -12,6 +12,7 @@ import { supabase, supabaseApiHostname } from "./lib/supabase.js";
 import { op, OpKpiCard, OpFutureModule, theme, OpStatusBadge } from "./operationalShell.jsx";
 import { requireAuth } from "./config/requireAuth.js";
 import { grupaTypuCzasuWpisu } from "./domain/grupaTypuCzasuWpisu.js";
+import { zbudujDaneBudzetuKr, eksportujBudzetKrDoExcela } from "./lib/budzetKr.js";
 import { czyDzienRoboczyPl } from "./lib/swietoPl.js";
 import { CircleMarker, MapContainer, Popup, TileLayer } from "react-leaflet";
 import { s } from "./styles/appDashboardStyles.js";
@@ -2008,6 +2009,8 @@ export default function App() {
   /** Wpisy czasu pracy z przypisanym KR — zakładka Koszty na karcie projektu. */
   const [krCzasPracyWpisyList, setKrCzasPracyWpisyList] = useState([]);
   const [krCzasPracyWpisyFetchError, setKrCzasPracyWpisyFetchError] = useState(null);
+  /** Stawki godzinowe pracowników z wpisów KR — do wyceny kosztów w BUDŻECIE. */
+  const [krStawkiPracyList, setKrStawkiPracyList] = useState([]);
   /** Suma roboczogodzin (tylko typy „praca”) dla KR na pulpicie projektu — przegląd. */
   const [pulpitRoboczogodziny, setPulpitRoboczogodziny] = useState({
     suma: null,
@@ -2601,6 +2604,7 @@ export default function App() {
     if (!k) {
       setKrCzasPracyWpisyList([]);
       setKrCzasPracyWpisyFetchError(null);
+      setKrStawkiPracyList([]);
       return;
     }
     setKrCzasPracyWpisyFetchError(null);
@@ -2610,16 +2614,43 @@ export default function App() {
       .eq("kr", k)
       .order("data", { ascending: false })
       .order("id", { ascending: false })
-      .limit(800);
+      .limit(2000);
 
     if (error) {
       console.error("Błąd pobierania czasu pracy dla KR:", error);
       setKrCzasPracyWpisyFetchError(error.message);
       setKrCzasPracyWpisyList([]);
+      setKrStawkiPracyList([]);
       return;
     }
-    setKrCzasPracyWpisyList(data ?? []);
+    const wpisy = data ?? [];
+    setKrCzasPracyWpisyList(wpisy);
+    void fetchStawkiPracyDlaWpisyKr(wpisy);
     void fetchRoboczogodzinyPulpitDlaKr(k);
+  }
+
+  async function fetchStawkiPracyDlaWpisyKr(wpisy) {
+    const nrs = [
+      ...new Set(
+        (wpisy ?? [])
+          .map((w) => String(w.pracownik_nr ?? "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (!nrs.length) {
+      setKrStawkiPracyList([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("pracownik_stawka_okres")
+      .select("pracownik_nr, data_od, data_do, stawka_za_godzine")
+      .in("pracownik_nr", nrs);
+    if (error) {
+      console.error("Błąd pobierania stawek dla BUDŻETU KR:", error);
+      setKrStawkiPracyList([]);
+      return;
+    }
+    setKrStawkiPracyList(data ?? []);
   }
 
   /** Roboczogodziny na pulpicie: suma godzin z wpisów, gdzie typ należy do grupy „praca” (jak w module Czas pracy). */
@@ -9292,58 +9323,51 @@ export default function App() {
         liczbaDzialek: "",
         ...(krBudzetDraftByKr[krK] ?? {}),
       };
-      const parseNum = (v) => {
-        const t = String(v ?? "").trim().replace(/\s/g, "").replace(",", ".");
-        if (!t) return 0;
-        const n = Number(t);
-        return Number.isFinite(n) ? n : 0;
-      };
       const setDraft = (patch) =>
         setKrBudzetDraftByKr((prev) => ({
           ...prev,
           [krK]: { budzetBrutto: "", ha: "", liczbaDzialek: "", ...(prev[krK] ?? {}), ...patch },
         }));
-      const sumaFakturBrutto = listaFakturKr.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
-      const budzetBrutto = parseNum(draft.budzetBrutto);
-      const budzetProc = budzetBrutto > 0 ? (sumaFakturBrutto / budzetBrutto) * 100 : 0;
-      const ha = parseNum(draft.ha);
-      const dzialki = parseNum(draft.liczbaDzialek);
-      const kosztNaHa = ha > 0 ? sumaFakturBrutto / ha : 0;
-      const kosztNaDzialke = dzialki > 0 ? sumaFakturBrutto / dzialki : 0;
-      const godzinyPracy = krCzasPracyWpisyList.reduce((acc, w) => {
-        if (grupaTypuCzasuWpisu(w.typ) !== "praca") return acc;
-        return acc + (Number(w.godziny) || 0) + (Number(w.nadgodziny) || 0);
-      }, 0);
-      const grupyFaktur = Array.from(
-        listaFakturKr.reduce((map, row) => {
-          const key =
-            String(row.typ_nazwy ?? "").trim() ||
-            String(row.rodzaj_kosztu_nazwa ?? "").trim() ||
-            String(row.rodzaj_kosztu ?? "").trim() ||
-            "Nieokreślony";
-          map.set(key, (map.get(key) ?? 0) + (Number(row.kwota_brutto) || 0));
-          return map;
-        }, new Map()).entries()
-      ).sort((a, b) => b[1] - a[1]);
-      const roboczogodzinyWgPracownika = Array.from(
-        krCzasPracyWpisyList.reduce((map, row) => {
-          if (grupaTypuCzasuWpisu(row.typ) !== "praca") return map;
-          const nr = String(row.pracownik_nr ?? "").trim() || "—";
-          const h = (Number(row.godziny) || 0) + (Number(row.nadgodziny) || 0);
-          map.set(nr, (map.get(nr) ?? 0) + h);
-          return map;
-        }, new Map()).entries()
-      ).sort((a, b) => b[1] - a[1]);
-      const etykietaPrac = (nr) => {
-        const p = pracownicy.find((x) => String(x.nr ?? "").trim() === String(nr ?? "").trim());
-        return p?.imie_nazwisko?.trim() ? `${nr} — ${p.imie_nazwisko.trim()}` : String(nr ?? "—");
-      };
+      const stawkiByNr = new Map();
+      for (const st of krStawkiPracyList) {
+        const nr = String(st.pracownik_nr ?? "").trim();
+        if (!nr) continue;
+        if (!stawkiByNr.has(nr)) stawkiByNr.set(nr, []);
+        stawkiByNr.get(nr).push(st);
+      }
+      const dane = zbudujDaneBudzetuKr({
+        kr: krK,
+        listaFakturKr,
+        krCzasPracyWpisyList,
+        stawkiByNr,
+        pracownicy,
+        draft,
+      });
       return (
         <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
-          <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Budżet projektu — KR {krK}</h3>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: "0.75rem",
+              marginBottom: "0.55rem",
+            }}
+          >
+            <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: 0 }}>Budżet projektu — KR {krK}</h3>
+            <button
+              type="button"
+              style={{ ...s.btnGhost, fontSize: "0.8rem", padding: "0.35rem 0.7rem" }}
+              onClick={() => eksportujBudzetKrDoExcela(dane)}
+              title="Plik CSV — otwiera się w Excelu"
+            >
+              Eksport do Excela (CSV)
+            </button>
+          </div>
           <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
-            Widok roboczy: sumy kosztów, podział na typy oraz przeliczenie na jednostki. Uzupełnij budżet i jednostki dla
-            tej KR.
+            Koszty od ogółu do szczegółu: najpierw koszty pracownicze (godziny × stawka), poniżej faktury kosztowe
+            pogrupowane typami. Budżet i jednostki — lokalnie na tej sesji (nie zapisują się jeszcze w bazie).
           </p>
           <div style={{ ...s.formRow, marginBottom: "0.9rem" }}>
             <label style={s.label}>
@@ -9370,71 +9394,138 @@ export default function App() {
             </label>
           </div>
           <div style={{ ...op.kpiGrid, marginBottom: "1rem" }}>
+            <div style={op.kpiCard("rgba(56,189,248,0.2)")}>
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszty pracownicze</div>
+              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>{kwotaBruttoEtykieta(dane.sumaKosztPracy)}</div>
+              <div style={{ ...op.muted, fontSize: "0.72rem", marginTop: "0.2rem" }}>
+                {dane.godzinyPracy.toFixed(2)} h
+                {dane.godzinyBezStawki > 0 ? ` · bez stawki: ${dane.godzinyBezStawki.toFixed(2)} h` : ""}
+              </div>
+            </div>
             <div style={op.kpiCard("rgba(249,115,22,0.2)")}>
               <div style={{ ...op.muted, fontSize: "0.72rem" }}>Faktury kosztowe (brutto)</div>
-              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>{kwotaBruttoEtykieta(sumaFakturBrutto)}</div>
-            </div>
-            <div style={op.kpiCard("rgba(56,189,248,0.2)")}>
-              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszt pracy (roboczogodziny)</div>
-              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>{godzinyPracy.toFixed(2)} h</div>
+              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>{kwotaBruttoEtykieta(dane.sumaFakturBrutto)}</div>
             </div>
             <div style={op.kpiCard("rgba(99,102,241,0.2)")}>
-              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Realizacja budżetu</div>
-              <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>
-                {budzetBrutto > 0 ? `${budzetProc.toFixed(1)}%` : "—"}
+              <div style={{ ...op.muted, fontSize: "0.72rem" }}>Razem koszty · realizacja budżetu</div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>{kwotaBruttoEtykieta(dane.razemKoszty)}</div>
+              <div style={{ fontSize: "0.92rem", fontWeight: 700, marginTop: "0.15rem" }}>
+                {dane.budzetBrutto > 0 ? `${dane.budzetProc.toFixed(1)}%` : "—"}
               </div>
             </div>
             <div style={op.kpiCard("rgba(34,197,94,0.2)")}>
               <div style={{ ...op.muted, fontSize: "0.72rem" }}>Koszt / ha · koszt / działkę</div>
               <div style={{ fontSize: "0.92rem", fontWeight: 700 }}>
-                {ha > 0 ? kwotaBruttoEtykieta(kosztNaHa) : "—"} / ha · {dzialki > 0 ? kwotaBruttoEtykieta(kosztNaDzialke) : "—"} / dz.
+                {dane.ha > 0 ? kwotaBruttoEtykieta(dane.kosztNaHa) : "—"} / ha ·{" "}
+                {dane.dzialki > 0 ? kwotaBruttoEtykieta(dane.kosztNaDzialke) : "—"} / dz.
               </div>
             </div>
           </div>
-          <h4 style={{ ...op.sectionTitle, fontSize: "0.9rem", marginBottom: "0.55rem" }}>Faktury kosztowe wg typów</h4>
-          {grupyFaktur.length === 0 ? (
-            <p style={s.muted}>Brak danych faktur dla tej KR.</p>
+
+          <h4 style={{ ...op.sectionTitle, fontSize: "0.95rem", marginBottom: "0.45rem" }}>1. Koszty pracownicze</h4>
+          <p style={{ ...op.muted, marginTop: 0, marginBottom: "0.55rem", fontSize: "0.78rem" }}>
+            Suma: <strong style={{ color: "#0f172a" }}>{kwotaBruttoEtykieta(dane.sumaKosztPracy)}</strong> ·{" "}
+            {dane.godzinyPracy.toFixed(2)} h
+          </p>
+          {dane.kosztyPracownicze.length === 0 ? (
+            <p style={{ ...s.muted, marginBottom: "1.1rem" }}>Brak wpisów czasu pracy (typ praca) dla tej KR.</p>
           ) : (
-            <div style={{ ...s.tableWrap, marginBottom: "1rem", borderRadius: "12px", overflow: "hidden" }}>
+            <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
               <table style={{ ...s.table, fontSize: "0.82rem" }}>
                 <thead>
                   <tr>
-                    <th style={s.th}>Typ kosztu</th>
-                    <th style={s.th}>Suma brutto</th>
+                    <th style={s.th}>Pracownik</th>
+                    <th style={s.th}>Roboczogodziny</th>
+                    <th style={s.th}>Koszt</th>
+                    <th style={s.th}>Uwagi</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {grupyFaktur.map(([typ, suma]) => (
-                    <tr key={typ}>
-                      <td style={s.td}>{typ}</td>
-                      <td style={{ ...s.td, whiteSpace: "nowrap" }}>{kwotaBruttoEtykieta(suma)}</td>
+                  {dane.kosztyPracownicze.map((r) => (
+                    <tr key={String(r.nr)}>
+                      <td style={s.td}>{r.etykieta}</td>
+                      <td style={{ ...s.td, whiteSpace: "nowrap" }}>{Number(r.godziny).toFixed(2)} h</td>
+                      <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
+                        {r.koszt != null ? kwotaBruttoEtykieta(r.koszt) : "—"}
+                      </td>
+                      <td style={{ ...s.td, fontSize: "0.75rem", color: "#64748b" }}>
+                        {r.bezStawkiH > 0 ? `${r.bezStawkiH.toFixed(2)} h bez stawki` : ""}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-          <h4 style={{ ...op.sectionTitle, fontSize: "0.9rem", marginBottom: "0.55rem" }}>Roboczogodziny wg pracownika</h4>
-          {roboczogodzinyWgPracownika.length === 0 ? (
-            <p style={s.muted}>Brak wpisów czasu pracy (typ praca) dla tej KR.</p>
+
+          <h4 style={{ ...op.sectionTitle, fontSize: "0.95rem", marginBottom: "0.45rem" }}>2. Faktury kosztowe</h4>
+          <p style={{ ...op.muted, marginTop: 0, marginBottom: "0.55rem", fontSize: "0.78rem" }}>
+            Suma brutto: <strong style={{ color: "#0f172a" }}>{kwotaBruttoEtykieta(dane.sumaFakturBrutto)}</strong> ·
+            typy kosztów z rozwinięciem pozycji
+          </p>
+          {dane.fakturyWgTypu.length === 0 ? (
+            <p style={s.muted}>Brak faktur kosztowych dla tej KR.</p>
           ) : (
-            <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
-              <table style={{ ...s.table, fontSize: "0.82rem" }}>
-                <thead>
-                  <tr>
-                    <th style={s.th}>Pracownik</th>
-                    <th style={s.th}>Roboczogodziny</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {roboczogodzinyWgPracownika.map(([nr, h]) => (
-                    <tr key={String(nr)}>
-                      <td style={s.td}>{etykietaPrac(nr)}</td>
-                      <td style={{ ...s.td, whiteSpace: "nowrap" }}>{Number(h).toFixed(2)} h</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+              {dane.fakturyWgTypu.map((g) => (
+                <div key={g.typ} style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "0.75rem",
+                      padding: "0.55rem 0.75rem",
+                      background: "rgba(148,163,184,0.12)",
+                      borderBottom: "1px solid rgba(148,163,184,0.25)",
+                      fontSize: "0.84rem",
+                      fontWeight: 700,
+                      color: "#0f172a",
+                    }}
+                  >
+                    <span>{g.typ}</span>
+                    <span style={{ whiteSpace: "nowrap" }}>{kwotaBruttoEtykieta(g.suma)}</span>
+                  </div>
+                  <table style={{ ...s.table, fontSize: "0.8rem", margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th style={s.th}>Data</th>
+                        <th style={s.th}>Sprzedawca</th>
+                        <th style={s.th}>Nr faktury</th>
+                        <th style={s.th}>Netto</th>
+                        <th style={s.th}>Brutto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.rows.map((row) => (
+                        <tr key={String(row.id)}>
+                          <td style={s.td}>
+                            {row.data_faktury
+                              ? dataPLZFormat(dataDoInputa(row.data_faktury))
+                              : row.created_at
+                                ? new Date(row.created_at).toLocaleDateString("pl-PL")
+                                : "—"}
+                          </td>
+                          <td style={s.td}>
+                            {tekstTrim(row.sprzedawca_nazwa) ||
+                              nazwaSprzedawcyZMapy(
+                                mapaSprzedawcaPoNip,
+                                row.sprzedawca_nip || row.legacy_issuer_id,
+                              ) ||
+                              "—"}
+                          </td>
+                          <td style={s.td}>{tekstTrim(row.numer_faktury) || "—"}</td>
+                          <td style={{ ...s.td, whiteSpace: "nowrap" }}>
+                            {row.kwota_netto != null ? kwotaBruttoEtykieta(row.kwota_netto) : "—"}
+                          </td>
+                          <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
+                            {row.kwota_brutto != null ? kwotaBruttoEtykieta(row.kwota_brutto) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
             </div>
           )}
         </div>
