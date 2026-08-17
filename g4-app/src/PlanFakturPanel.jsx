@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const HORYZONTY = ["2026-07", "2026-08", "2026-09", "2026-Q4", "2027", "inne"];
 
@@ -45,26 +45,15 @@ function formatDataUwag(iso) {
   }
 }
 
-/** Dopasowanie wpisów Damiana po imieniu / e-mailu (bez sztywnego konta). */
-function czyAutorDamian(autor, email) {
-  const a = String(autor ?? "").trim().toLowerCase();
-  const e = String(email ?? "").trim().toLowerCase();
-  return a.includes("damian") || e.includes("damian");
+function skrotTekstu(tekst, max = 90) {
+  const t = String(tekst ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return "—";
+  return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
-function ostatniWpisDamiana(wiadomosci) {
-  let last = null;
-  for (const w of wiadomosci ?? []) {
-    if (!czyAutorDamian(w?.autor, w?.autor_email)) continue;
-    if (!last) {
-      last = w;
-      continue;
-    }
-    const tLast = new Date(last.created_at || 0).getTime();
-    const tCur = new Date(w.created_at || 0).getTime();
-    if (Number.isFinite(tCur) && tCur >= (Number.isFinite(tLast) ? tLast : -Infinity)) last = w;
-  }
-  return last;
+function czasWpisMs(iso) {
+  const t = new Date(iso || 0).getTime();
+  return Number.isFinite(t) ? t : 0;
 }
 
 function porownajTekst(a, b) {
@@ -143,6 +132,9 @@ export function PlanFakturPanel({
   const [otwartyCzatId, setOtwartyCzatId] = useState(null);
   const [wysylanieId, setWysylanieId] = useState(null);
   const [brakTabeliCzat, setBrakTabeliCzat] = useState(false);
+  const [podswietlonyPlanId, setPodswietlonyPlanId] = useState(null);
+  const rowRefs = useRef({});
+  const podswietlenieTimer = useRef(null);
 
   const fetchKomentarze = useCallback(
     async (planIds) => {
@@ -376,27 +368,47 @@ export function PlanFakturPanel({
   const shell = op || {};
   const moznaUwagi = Boolean(czyMozeEdytowacUwagi);
 
-  const ostatniDamianGlobalnie = useMemo(() => {
-    let best = null;
-    let bestKr = "";
+  const ostatnieWpisy = useMemo(() => {
+    const lista = [];
     for (const row of rows ?? []) {
-      const wpis = ostatniWpisDamiana(wiadomosciDlaWiersza(row));
-      if (!wpis) continue;
-      const t = new Date(wpis.created_at || 0).getTime();
-      const tBest = best ? new Date(best.created_at || 0).getTime() : -Infinity;
-      if (!best || (Number.isFinite(t) && t >= tBest)) {
-        best = wpis;
-        bestKr = String(row.kr ?? "").trim();
+      for (const w of wiadomosciDlaWiersza(row)) {
+        lista.push({
+          key: `${row.id}-${w.id}`,
+          planId: row.id,
+          kr: String(row.kr ?? "").trim() || "—",
+          klient: String(row.klient ?? "").trim(),
+          autor: String(w.autor || w.autor_email || "—").trim() || "—",
+          created_at: w.created_at,
+          tresc: w.tresc,
+        });
       }
     }
-    return best ? { wpis: best, kr: bestKr } : null;
+    lista.sort((a, b) => czasWpisMs(b.created_at) - czasWpisMs(a.created_at));
+    return lista.slice(0, 8);
   }, [rows, komentarzeByPlan]);
+
+  function przejdzDoWpis(planId) {
+    setFiltrHoryzont("wszystkie");
+    setTylkoGotowe(false);
+    setTylkoBlokady(false);
+    setOtwartyCzatId(planId);
+    setPodswietlonyPlanId(planId);
+    if (podswietlenieTimer.current) clearTimeout(podswietlenieTimer.current);
+    window.requestAnimationFrame(() => {
+      const el = rowRefs.current[planId];
+      if (el?.scrollIntoView) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+    podswietlenieTimer.current = window.setTimeout(() => {
+      setPodswietlonyPlanId((cur) => (cur === planId ? null : cur));
+    }, 2600);
+  }
 
   function renderCzatKomorka(row) {
     const wiadomosci = wiadomosciDlaWiersza(row);
     const otwarty = otwartyCzatId === row.id;
     const ostatnia = wiadomosci.length ? wiadomosci[wiadomosci.length - 1] : null;
-    const ostatniDamian = ostatniWpisDamiana(wiadomosci);
 
     return (
       <div style={{ display: "grid", gap: "0.35rem", minWidth: "14rem", maxWidth: "22rem" }}>
@@ -430,11 +442,6 @@ export function PlanFakturPanel({
                   {wiadomosci.length > 1 ? ` · ${wiadomosci.length} wpisów` : ""}
                   {" · otwórz rozmowę"}
                 </span>
-                {ostatniDamian ? (
-                  <span style={{ display: "block", marginTop: "0.2rem", fontSize: "0.68rem", color: "#38bdf8" }}>
-                    Damian ostatnio: {formatDataUwag(ostatniDamian.created_at) || "—"}
-                  </span>
-                ) : null}
               </>
             ) : (
               <span style={{ color: "#fdba74" }}>＋ Otwórz rozmowę / dodaj wpis…</span>
@@ -603,15 +610,64 @@ export function PlanFakturPanel({
         Suma widocznych: <strong>{formatPln(sumy.total)}</strong>
         {" · "}
         Gotowe do FS: <strong style={{ color: "#86efac" }}>{formatPln(sumy.gotowe)}</strong>
-        {" · "}
-        {ostatniDamianGlobalnie ? (
-          <span style={{ color: "#38bdf8" }}>
-            Damian ostatnio napisał:{" "}
-            <strong>{formatDataUwag(ostatniDamianGlobalnie.wpis.created_at) || "—"}</strong>
-            {ostatniDamianGlobalnie.kr ? ` (KR ${ostatniDamianGlobalnie.kr})` : ""}
-          </span>
+      </div>
+
+      <div
+        style={{
+          marginBottom: "0.85rem",
+          border: "1px solid rgba(56,189,248,0.28)",
+          borderRadius: "12px",
+          background: "linear-gradient(180deg, rgba(14,165,233,0.12), rgba(15,23,42,0.35))",
+          padding: "0.65rem 0.75rem",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", alignItems: "baseline" }}>
+          <strong style={{ fontSize: "0.86rem", color: "#7dd3fc" }}>Ostatnie wpisy</strong>
+          <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>kliknij, żeby otworzyć rozmowę</span>
+        </div>
+        {ostatnieWpisy.length === 0 ? (
+          <p style={{ margin: "0.45rem 0 0", fontSize: "0.8rem", color: "#94a3b8" }}>
+            Brak wiadomości w rozmowach.
+          </p>
         ) : (
-          <span style={{ color: "#94a3b8" }}>Damian jeszcze nic nie napisał w rozmowach</span>
+          <div style={{ display: "grid", gap: "0.35rem", marginTop: "0.5rem" }}>
+            {ostatnieWpisy.map((w) => (
+              <button
+                key={w.key}
+                type="button"
+                onClick={() => przejdzDoWpis(w.planId)}
+                title={`Przejdź do KR ${w.kr}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(5.5rem, auto) 1fr",
+                  gap: "0.2rem 0.7rem",
+                  width: "100%",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  border: "1px solid rgba(148,163,184,0.22)",
+                  borderRadius: "9px",
+                  background:
+                    podswietlonyPlanId === w.planId ? "rgba(56,189,248,0.18)" : "rgba(15,23,42,0.55)",
+                  color: "#e2e8f0",
+                  padding: "0.4rem 0.55rem",
+                  font: "inherit",
+                }}
+              >
+                <span style={{ fontSize: "0.72rem", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                  {formatDataUwag(w.created_at) || "—"}
+                </span>
+                <span style={{ fontSize: "0.78rem", lineHeight: 1.35 }}>
+                  <strong style={{ color: "#fdba74" }}>{w.autor}</strong>
+                  {" · "}
+                  <strong>KR {w.kr}</strong>
+                  {w.klient ? <span style={{ color: "#94a3b8" }}>{` · ${w.klient}`}</span> : null}
+                  <span style={{ display: "block", marginTop: "0.12rem", color: "#cbd5e1" }}>
+                    {skrotTekstu(w.tresc, 110)}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -667,10 +723,25 @@ export function PlanFakturPanel({
             <tbody>
               {filteredSorted.map((r) => {
                 const gotowe = Boolean(r.mozna_fakturowac);
+                const podswietlony = podswietlonyPlanId === r.id;
                 return (
                   <tr
                     key={r.id}
-                    style={gotowe ? { background: "rgba(34,197,94,0.12)" } : undefined}
+                    ref={(el) => {
+                      if (el) rowRefs.current[r.id] = el;
+                      else delete rowRefs.current[r.id];
+                    }}
+                    style={{
+                      ...(gotowe ? { background: "rgba(34,197,94,0.12)" } : null),
+                      ...(podswietlony
+                        ? {
+                            background: "rgba(56,189,248,0.22)",
+                            outline: "2px solid rgba(56,189,248,0.65)",
+                            outlineOffset: "-2px",
+                          }
+                        : null),
+                      transition: "background 0.35s ease",
+                    }}
                   >
                     <td style={st.td}>{HORYZONT_LABEL[r.horyzont] || r.horyzont}</td>
                     <td style={st.td}>
