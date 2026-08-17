@@ -2067,6 +2067,8 @@ export default function App() {
   const [krCzasPracyWpisyFetchError, setKrCzasPracyWpisyFetchError] = useState(null);
   /** Rozwinięcia w „Koszty pracownicze”: o:nr / m:nr:YYYY-MM */
   const [krKosztyExpand, setKrKosztyExpand] = useState({});
+  /** Rozwinięcia typów w „Faktury kosztowe”: t:Typ */
+  const [krFakturyTypExpand, setKrFakturyTypExpand] = useState({});
   /** Stawki godzinowe pracowników z wpisów KR — do wyceny kosztów w BUDŻECIE. */
   const [krStawkiPracyList, setKrStawkiPracyList] = useState([]);
   /** Suma roboczogodzin (tylko typy „praca”) dla KR na pulpicie projektu — przegląd. */
@@ -9693,7 +9695,8 @@ export default function App() {
         <div style={{ ...op.sectionCard, borderStyle: "solid", borderColor: "rgba(148,163,184,0.18)" }}>
           <h3 style={{ ...op.sectionTitle, marginTop: 0 }}>Faktury kosztowe — KR {krK}</h3>
           <p style={{ ...op.muted, marginBottom: "0.85rem", fontSize: "0.8rem", lineHeight: 1.5 }}>
-            Szczegóły faktur przypisanych do tej KR (wg typu). Poniżej — zgłoszenia do przelewu.
+            Od ogółu do szczegółu: typ faktury (suma) → kliknij, żeby zobaczyć pozycje. Poniżej — zgłoszenia do
+            przelewu.
           </p>
           <p style={{ margin: "0 0 0.65rem", fontSize: "0.88rem", color: "#0f172a" }}>
             Suma brutto: <strong>{kwotaBruttoEtykieta(dane.sumaFakturBrutto)}</strong>
@@ -9701,66 +9704,98 @@ export default function App() {
           {dane.fakturyWgTypu.length === 0 ? (
             <p style={{ ...s.muted, marginBottom: "1.25rem" }}>Brak faktur kosztowych dla tej KR.</p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginBottom: "1.35rem" }}>
-              {dane.fakturyWgTypu.map((g) => (
-                <div key={`fk-${g.typ}`} style={{ ...s.tableWrap, borderRadius: "12px", overflow: "hidden" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", marginBottom: "1.35rem" }}>
+              {dane.fakturyWgTypu.map((g) => {
+                const tKey = `t:${g.typ}`;
+                const tOpen = Boolean(krFakturyTypExpand[tKey]);
+                return (
                   <div
+                    key={tKey}
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: "0.75rem",
-                      padding: "0.55rem 0.75rem",
-                      background: "rgba(148,163,184,0.12)",
-                      borderBottom: "1px solid rgba(148,163,184,0.25)",
-                      fontSize: "0.84rem",
-                      fontWeight: 700,
-                      color: "#0f172a",
+                      borderRadius: "12px",
+                      border: "1px solid rgba(148,163,184,0.25)",
+                      overflow: "hidden",
+                      background: "rgba(255,255,255,0.55)",
                     }}
                   >
-                    <span>{g.typ}</span>
-                    <span style={{ whiteSpace: "nowrap" }}>{kwotaBruttoEtykieta(g.suma)}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setKrFakturyTypExpand((prev) => ({ ...prev, [tKey]: !prev[tKey] }))
+                      }
+                      style={{
+                        display: "flex",
+                        width: "100%",
+                        alignItems: "center",
+                        gap: "0.65rem",
+                        padding: "0.65rem 0.85rem",
+                        border: "none",
+                        background: tOpen ? "rgba(251,191,36,0.12)" : "transparent",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        color: "#0f172a",
+                        fontSize: "0.86rem",
+                      }}
+                    >
+                      <span style={{ width: "1.1rem", fontWeight: 700, color: "#64748b" }}>
+                        {tOpen ? "▾" : "▸"}
+                      </span>
+                      <span style={{ flex: 1, fontWeight: 700 }}>{g.typ}</span>
+                      <span style={{ ...op.muted, fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+                        {g.rows.length} {g.rows.length === 1 ? "faktura" : "faktur"}
+                      </span>
+                      <span style={{ whiteSpace: "nowrap", fontWeight: 700, minWidth: "6.5rem", textAlign: "right" }}>
+                        {kwotaBruttoEtykieta(g.suma)}
+                      </span>
+                    </button>
+                    {tOpen ? (
+                      <div style={{ padding: "0 0.55rem 0.65rem 0.55rem" }}>
+                        <div style={{ ...s.tableWrap, borderRadius: "10px", overflow: "hidden" }}>
+                          <table style={{ ...s.table, fontSize: "0.78rem", margin: 0 }}>
+                            <thead>
+                              <tr>
+                                <th style={s.th}>Data</th>
+                                <th style={s.th}>Sprzedawca</th>
+                                <th style={s.th}>Nr faktury</th>
+                                <th style={s.th}>Netto</th>
+                                <th style={s.th}>Brutto</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {g.rows.map((row) => (
+                                <tr key={String(row.id)}>
+                                  <td style={s.td}>
+                                    {row.data_faktury
+                                      ? dataPLZFormat(dataDoInputa(row.data_faktury))
+                                      : row.created_at
+                                        ? new Date(row.created_at).toLocaleDateString("pl-PL")
+                                        : "—"}
+                                  </td>
+                                  <td style={s.td}>
+                                    {tekstTrim(row.sprzedawca_nazwa) ||
+                                      nazwaSprzedawcyZMapy(
+                                        mapaSprzedawcaPoNip,
+                                        row.sprzedawca_nip || row.legacy_issuer_id,
+                                      ) ||
+                                      "—"}
+                                  </td>
+                                  <td style={s.td}>{tekstTrim(row.numer_faktury) || "—"}</td>
+                                  <td style={{ ...s.td, whiteSpace: "nowrap" }}>
+                                    {row.kwota_netto != null ? kwotaBruttoEtykieta(row.kwota_netto) : "—"}
+                                  </td>
+                                  <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
+                                    {row.kwota_brutto != null ? kwotaBruttoEtykieta(row.kwota_brutto) : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
-                  <table style={{ ...s.table, fontSize: "0.8rem", margin: 0 }}>
-                    <thead>
-                      <tr>
-                        <th style={s.th}>Data</th>
-                        <th style={s.th}>Sprzedawca</th>
-                        <th style={s.th}>Nr faktury</th>
-                        <th style={s.th}>Netto</th>
-                        <th style={s.th}>Brutto</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.rows.map((row) => (
-                        <tr key={String(row.id)}>
-                          <td style={s.td}>
-                            {row.data_faktury
-                              ? dataPLZFormat(dataDoInputa(row.data_faktury))
-                              : row.created_at
-                                ? new Date(row.created_at).toLocaleDateString("pl-PL")
-                                : "—"}
-                          </td>
-                          <td style={s.td}>
-                            {tekstTrim(row.sprzedawca_nazwa) ||
-                              nazwaSprzedawcyZMapy(
-                                mapaSprzedawcaPoNip,
-                                row.sprzedawca_nip || row.legacy_issuer_id,
-                              ) ||
-                              "—"}
-                          </td>
-                          <td style={s.td}>{tekstTrim(row.numer_faktury) || "—"}</td>
-                          <td style={{ ...s.td, whiteSpace: "nowrap" }}>
-                            {row.kwota_netto != null ? kwotaBruttoEtykieta(row.kwota_netto) : "—"}
-                          </td>
-                          <td style={{ ...s.td, whiteSpace: "nowrap", fontWeight: 600 }}>
-                            {row.kwota_brutto != null ? kwotaBruttoEtykieta(row.kwota_brutto) : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
