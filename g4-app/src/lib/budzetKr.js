@@ -11,6 +11,43 @@ function typFakturyKosztowej(row) {
   );
 }
 
+function fakturaLiczyWSumachLocal(row) {
+  const raw = row?.counts_in_sums ?? row?.legacy_counts_in_sums;
+  if (raw == null || raw === "") return true;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  const s = String(raw).trim().toLowerCase();
+  return s === "1" || s === "true" || s === "t" || s === "yes" || s === "y" || s === "tak";
+}
+
+function deduplikujFakturyDoBudzetu(rows) {
+  const best = new Map();
+  for (const row of rows ?? []) {
+    if (!fakturaLiczyWSumachLocal(row)) continue;
+    const nr = String(row?.numer_faktury ?? row?.invoice_number ?? "").trim().toLowerCase();
+    const data = String(row?.data_faktury ?? row?.date ?? "").trim().slice(0, 10);
+    const bruttoRaw = row?.kwota_brutto ?? row?.price_brutto;
+    const bruttoN =
+      typeof bruttoRaw === "number"
+        ? bruttoRaw
+        : Number.parseFloat(String(bruttoRaw ?? "").replace(",", ".").replace(/\s/g, ""));
+    const brutto = Number.isFinite(bruttoN) ? bruttoN.toFixed(2) : String(bruttoRaw ?? "").trim();
+    const kr = String(row?.kr ?? "").trim().toLowerCase();
+    const key = nr ? `${nr}|${data}|${brutto}|${kr}` : `id:${row?.id ?? Math.random()}`;
+    const prev = best.get(key);
+    if (!prev) {
+      best.set(key, row);
+      continue;
+    }
+    const score = (r) => {
+      const src = String(r?.zrodlo ?? "").toLowerCase();
+      return (src.includes("ksef") ? 2 : 0) + (String(r?.link_faktury ?? r?.invoice_link ?? "").trim() ? 1 : 0);
+    };
+    if (score(row) > score(prev)) best.set(key, row);
+  }
+  return [...best.values()];
+}
+
 /**
  * Agregacja kosztów pracowniczych i faktur dla widoku BUDŻET KR.
  */
@@ -33,14 +70,7 @@ export function zbudujDaneBudzetuKr({
   const ha = parseNum(draft?.ha);
   const dzialki = parseNum(draft?.liczbaDzialek);
 
-  const fakturyDoSum = (listaFakturKr ?? []).filter((row) => {
-    const raw = row?.counts_in_sums ?? row?.legacy_counts_in_sums;
-    if (raw == null || raw === "") return true;
-    if (typeof raw === "boolean") return raw;
-    if (typeof raw === "number") return raw !== 0;
-    const s = String(raw).trim().toLowerCase();
-    return s === "1" || s === "true" || s === "t" || s === "yes" || s === "y" || s === "tak";
-  });
+  const fakturyDoSum = deduplikujFakturyDoBudzetu(listaFakturKr);
 
   const sumaFakturBrutto = fakturyDoSum.reduce((acc, row) => acc + (Number(row.kwota_brutto) || 0), 0);
 

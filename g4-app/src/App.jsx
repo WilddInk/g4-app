@@ -1254,6 +1254,48 @@ function fakturaLiczyWSumach(row) {
   return s === "1" || s === "true" || s === "t" || s === "yes" || s === "y" || s === "tak";
 }
 
+function normKwotaFakturyDoDuplikatu(v) {
+  const n =
+    typeof v === "number"
+      ? v
+      : Number.parseFloat(String(v ?? "").replace(",", ".").replace(/\s/g, ""));
+  return Number.isFinite(n) ? n.toFixed(2) : String(v ?? "").trim();
+}
+
+/** Klucz biznesowy: ten sam nr + data + kwota + KR = jedna faktura w BUDŻECIE. */
+function kluczDuplikatuFakturyKosztowej(row) {
+  const nr = String(row?.numer_faktury ?? row?.invoice_number ?? "")
+    .trim()
+    .toLowerCase();
+  const data = String(row?.data_faktury ?? row?.date ?? "").trim().slice(0, 10);
+  const brutto = normKwotaFakturyDoDuplikatu(row?.kwota_brutto ?? row?.price_brutto);
+  const kr = String(row?.kr ?? "").trim().toLowerCase();
+  return `${nr}|${data}|${brutto}|${kr}`;
+}
+
+/** Zostawia jedną sztukę przy tym samym numerze/dacie/kwocie/KR (preferuje wpis z linkiem / KSeF). */
+function deduplikujFakturyKosztowe(rows) {
+  const best = new Map();
+  for (const row of rows ?? []) {
+    if (!fakturaLiczyWSumach(row)) continue;
+    const nr = String(row?.numer_faktury ?? row?.invoice_number ?? "").trim();
+    const key = nr ? kluczDuplikatuFakturyKosztowej(row) : `id:${row?.id ?? Math.random()}`;
+    const prev = best.get(key);
+    if (!prev) {
+      best.set(key, row);
+      continue;
+    }
+    const score = (r) => {
+      const src = String(r?.zrodlo ?? "").toLowerCase();
+      const ksef = src.includes("ksef") ? 2 : 0;
+      const link = String(r?.link_faktury ?? r?.invoice_link ?? "").trim() ? 1 : 0;
+      return ksef + link;
+    };
+    if (score(row) > score(prev)) best.set(key, row);
+  }
+  return [...best.values()];
+}
+
 function czyKrTechniczneUkrywaneDlaNieAdmin(kr) {
   const k = String(kr ?? "").trim().toUpperCase();
   return k === "000" || k === "KK";
@@ -8393,8 +8435,8 @@ export default function App() {
       const listaZadanDlaKr = zadaniaList.filter(
         (z) => String(z.kr ?? "").trim() === krK,
       );
-      const listaFakturKr = krFakturyDoZaplatyList.filter(
-        (row) => String(row.kr ?? "").trim() === krK && fakturaLiczyWSumach(row),
+      const listaFakturKr = deduplikujFakturyKosztowe(
+        krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK),
       );
       const etapyZakonczone = listaEtapow.filter((e) => {
         const stEt = String(e.status ?? "").toLowerCase();
@@ -9328,8 +9370,8 @@ export default function App() {
 
     if (sekcja === "budzet") {
       const krK = String(item.kr ?? "").trim();
-      const listaFakturKr = krFakturyDoZaplatyList.filter(
-        (row) => String(row.kr ?? "").trim() === krK && fakturaLiczyWSumach(row),
+      const listaFakturKr = deduplikujFakturyKosztowe(
+        krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK),
       );
       const draft = {
         budzetBrutto: "",
@@ -9580,8 +9622,8 @@ export default function App() {
 
     if (sekcja === "jednostki") {
       const krK = String(item.kr ?? "").trim();
-      const listaFakturKr = krFakturyDoZaplatyList.filter(
-        (row) => String(row.kr ?? "").trim() === krK && fakturaLiczyWSumach(row),
+      const listaFakturKr = deduplikujFakturyKosztowe(
+        krFakturyDoZaplatyList.filter((row) => String(row.kr ?? "").trim() === krK),
       );
       const draft = {
         budzetBrutto: "",
