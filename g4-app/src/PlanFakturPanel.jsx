@@ -60,17 +60,46 @@ const BLOKER_LABEL = {
 
 const BLOKER_OPCJE = Object.keys(BLOKER_LABEL);
 
+function horyzontBiezacyMiesiac() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function pustyFormularzNowej() {
   return {
     kr: "",
     klient: "",
     opis: "",
-    horyzont: "2026-07",
+    horyzont: horyzontBiezacyMiesiac(),
     horyzontCustom: "",
     kwota_netto: "",
     bloker: "brak",
     odpowiedzialny: "",
     mozna_fakturowac: false,
+  };
+}
+
+/** Prefill z CZAT KR / innych miejsc — nadpisuje puste pola formularza nowej pozycji. */
+function formularzZPrefill(prefill) {
+  const base = pustyFormularzNowej();
+  if (!prefill || typeof prefill !== "object") return base;
+  const hRaw = String(prefill.horyzont ?? "").trim();
+  const hNaLiscie = HORYZONTY.includes(hRaw);
+  return {
+    ...base,
+    kr: prefill.kr != null ? String(prefill.kr).trim() : base.kr,
+    klient: prefill.klient != null ? String(prefill.klient).trim() : base.klient,
+    opis: prefill.opis != null ? String(prefill.opis).trim() : base.opis,
+    horyzont: hRaw ? (hNaLiscie ? hRaw : "__custom__") : base.horyzont,
+    horyzontCustom: hRaw && !hNaLiscie && /^\d{4}-\d{2}$/.test(hRaw) ? hRaw : base.horyzontCustom,
+    kwota_netto:
+      prefill.kwota_netto != null && prefill.kwota_netto !== ""
+        ? String(prefill.kwota_netto).replace(".", ",")
+        : base.kwota_netto,
+    bloker: String(prefill.bloker ?? "").trim() || base.bloker,
+    odpowiedzialny:
+      prefill.odpowiedzialny != null ? String(prefill.odpowiedzialny).trim() : base.odpowiedzialny,
+    mozna_fakturowac: Boolean(prefill.mozna_fakturowac),
   };
 }
 
@@ -268,6 +297,9 @@ export function PlanFakturPanel({
   autorUwagiEmail,
   /** Otwórz pełną Tablicę KR (czat na górze karty projektu). */
   onOtworzCzatKr,
+  /** Prefill „Dodaj fakturę do planu” (np. z CZAT KR). */
+  poczatkowaNowaPozycja = null,
+  onPoczatkowaNowaPozycjaZuzyta,
 }) {
   const [rows, setRows] = useState([]);
   const [komentarzeByPlan, setKomentarzeByPlan] = useState({});
@@ -357,6 +389,24 @@ export function PlanFakturPanel({
   useEffect(() => {
     void fetchRows();
   }, [fetchRows]);
+
+  /** Prefill z CZAT KR → od razu etap „Dodaj fakturę do planu”. */
+  useEffect(() => {
+    if (!poczatkowaNowaPozycja || !czyMozeEdytowac) return;
+    setEdycjaId(null);
+    setFormNowa(formularzZPrefill(poczatkowaNowaPozycja));
+    setPokazFormularzNowej(true);
+    setMsg(null);
+    window.requestAnimationFrame(() => {
+      document.getElementById("plan-faktur-formularz")?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    onPoczatkowaNowaPozycjaZuzyta?.();
+    // celowo bez callbacka w deps — unikamy pętli przy inline setterze w App
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poczatkowaNowaPozycja, czyMozeEdytowac]);
 
   /** Pierwsze uruchomienie w przeglądarce: istniejące wpisy = przeczytane; pogrubienie tylko dla nowych. */
   useEffect(() => {
@@ -490,11 +540,17 @@ export function PlanFakturPanel({
     setFormNowa(pustyFormularzNowej());
   }
 
-  function otworzNowaPozycje() {
+  function otworzNowaPozycje(prefill = null) {
     setEdycjaId(null);
-    setFormNowa(pustyFormularzNowej());
+    setFormNowa(prefill ? formularzZPrefill(prefill) : pustyFormularzNowej());
     setPokazFormularzNowej(true);
     setMsg(null);
+    window.requestAnimationFrame(() => {
+      document.getElementById("plan-faktur-formularz")?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
   }
 
   function otworzEdycjePozycji(row) {

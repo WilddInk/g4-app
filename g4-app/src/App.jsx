@@ -2087,6 +2087,7 @@ export default function App() {
   const [fakturySekcja, setFakturySekcja] = useState("wszystkie");
   /** Sekcja menu FAKTUROWANIE: etapy | protokoly | faktury. */
   const [fakturowanieSekcja, setFakturowanieSekcja] = useState("biezace_kr");
+  const [planFakturPrefill, setPlanFakturPrefill] = useState(null);
   const [fakturowanieBiezaceKrMsg, setFakturowanieBiezaceKrMsg] = useState(null);
   const [fakturyPodwykonawcaFiltrNazwa, setFakturyPodwykonawcaFiltrNazwa] = useState("");
   const [fakturyKosztoweFetchError, setFakturyKosztoweFetchError] = useState(null);
@@ -14026,6 +14027,14 @@ export default function App() {
                     const k = String(krKod ?? "").trim();
                     if (k) otworzKrPoKodzie(k);
                   }}
+                  onDodajFaktureDoPlanu={
+                    czyMozeWidziecFakturowanie
+                      ? (prefill) => {
+                          setPlanFakturPrefill(prefill && typeof prefill === "object" ? { ...prefill } : null);
+                          przejdzDoFakturowania("plan_faktur");
+                        }
+                      : undefined
+                  }
                 />
               ) : null}
 
@@ -14042,6 +14051,8 @@ export default function App() {
                     ""
                   }
                   autorUwagiEmail={session?.user?.email || ""}
+                  poczatkowaNowaPozycja={planFakturPrefill}
+                  onPoczatkowaNowaPozycjaZuzyta={() => setPlanFakturPrefill(null)}
                   onOtworzCzatKr={(krKod) => {
                     const k = String(krKod ?? "").trim();
                     if (!k) return;

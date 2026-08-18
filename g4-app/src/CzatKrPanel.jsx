@@ -147,6 +147,8 @@ export function CzatKrPanel({
   krList = [],
   pracownicy = [],
   onOtworzKr,
+  /** Przejście do Plan faktur FS z prefill (KR / klient / opis). */
+  onDodajFaktureDoPlanu,
 }) {
   const [wpisy, setWpisy] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -777,6 +779,46 @@ export function CzatKrPanel({
                     }}
                   >
                     {pokazZadanie ? "Ukryj zadanie" : "＋ Dodaj zadanie"}
+                  </button>
+                ) : null}
+                {typeof onDodajFaktureDoPlanu === "function" && wybranyKr ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const krRec =
+                        (krList ?? []).find(
+                          (r) => String(r.kr ?? "").trim() === String(wybranyKr).trim(),
+                        ) ?? null;
+                      const klient = String(krRec?.nazwa_obiektu ?? "").trim();
+                      const nrOp =
+                        krRec?.osoba_prowadzaca != null
+                          ? String(krRec.osoba_prowadzaca).trim()
+                          : "";
+                      const prowadzacy = nrOp
+                        ? (pracownicy ?? []).find((p) => String(p.nr ?? "").trim() === nrOp)
+                        : null;
+                      const odpowiedzialny = prowadzacy?.imie_nazwisko
+                        ? String(prowadzacy.imie_nazwisko).trim()
+                        : nrOp;
+                      onDodajFaktureDoPlanu({
+                        kr: String(wybranyKr).trim(),
+                        klient,
+                        opis: draft.trim().slice(0, 400),
+                        odpowiedzialny,
+                      });
+                    }}
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${LIGHT.accent}`,
+                      color: LIGHT.accent,
+                      borderRadius: 8,
+                      padding: "0.4rem 0.75rem",
+                      fontWeight: 700,
+                      fontSize: "0.82rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ＋ Dodaj fakt
                   </button>
                 ) : null}
                 <span style={{ fontSize: "0.7rem", color: LIGHT.soft }}>Ctrl+Enter</span>
