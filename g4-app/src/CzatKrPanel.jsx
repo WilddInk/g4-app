@@ -49,9 +49,13 @@ function formatData(iso) {
   }
 }
 
+function czasMs(iso) {
+  const t = new Date(iso || 0).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
 /**
- * CZAT KR — wspólny widok wpisów do projektów (tabela kr_notatka).
- * Wszyscy zalogowani mogą pisać; zadania z czatu tylko wybrani kierownicy.
+ * CZAT KR — lista KR po lewej, wątek po prawej.
  */
 export function CzatKrPanel({
   supabase,
@@ -71,12 +75,11 @@ export function CzatKrPanel({
   const [draft, setDraft] = useState("");
   const [wysylanie, setWysylanie] = useState(false);
   const [rozwiniete, setRozwiniete] = useState(false);
-  const [filtrKr, setFiltrKr] = useState("wszystkie");
+  const [szukajKr, setSzukajKr] = useState("");
 
   const [pokazZadanie, setPokazZadanie] = useState(false);
   const [zadanieTytul, setZadanieTytul] = useState("");
   const [zadanieDla, setZadanieDla] = useState(CZAT_KR_ZADANIA_OSOBY[0].label);
-  const [zadanieKr, setZadanieKr] = useState("");
   const [zadanieDeadline, setZadanieDeadline] = useState("");
   const [zapisZadania, setZapisZadania] = useState(false);
 
@@ -89,15 +92,11 @@ export function CzatKrPanel({
   const fetchWpisy = useCallback(async () => {
     setLoading(true);
     setErr(null);
-    let q = supabase
+    const { data, error } = await supabase
       .from("kr_notatka")
       .select("id, kr, tresc, autor, autor_email, created_at")
       .order("created_at", { ascending: false })
-      .limit(100);
-    if (filtrKr && filtrKr !== "wszystkie") {
-      q = q.eq("kr", filtrKr);
-    }
-    const { data, error } = await q;
+      .limit(500);
     setLoading(false);
     if (error) {
       const m = String(error.message ?? "");
@@ -112,16 +111,11 @@ export function CzatKrPanel({
     }
     setBrakTabeli(false);
     setWpisy(data ?? []);
-  }, [supabase, filtrKr]);
+  }, [supabase]);
 
   useEffect(() => {
     void fetchWpisy();
   }, [fetchWpisy]);
-
-  const widoczne = useMemo(() => {
-    if (rozwiniete) return wpisy;
-    return wpisy.slice(0, 10);
-  }, [wpisy, rozwiniete]);
 
   const krOpcje = useMemo(() => {
     return [...(krList ?? [])]
@@ -129,6 +123,62 @@ export function CzatKrPanel({
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
   }, [krList]);
+
+  /** Lista KR po lewej: najpierw te z wpisami (po dacie), potem pozostałe z listy KR. */
+  const listaKrLewa = useMemo(() => {
+    const meta = new Map();
+    for (const w of wpisy) {
+      const k = String(w.kr ?? "").trim();
+      if (!k) continue;
+      const prev = meta.get(k);
+      const ms = czasMs(w.created_at);
+      if (!prev) {
+        meta.set(k, { kr: k, count: 1, lastMs: ms, lastIso: w.created_at });
+      } else {
+        prev.count += 1;
+        if (ms > prev.lastMs) {
+          prev.lastMs = ms;
+          prev.lastIso = w.created_at;
+        }
+      }
+    }
+    for (const k of krOpcje) {
+      if (!meta.has(k)) meta.set(k, { kr: k, count: 0, lastMs: 0, lastIso: null });
+    }
+    const q = String(szukajKr ?? "").trim().toLowerCase();
+    let list = [...meta.values()];
+    if (q) list = list.filter((x) => x.kr.toLowerCase().includes(q));
+    list.sort((a, b) => {
+      if (b.lastMs !== a.lastMs) return b.lastMs - a.lastMs;
+      if (b.count !== a.count) return b.count - a.count;
+      return a.kr.localeCompare(b.kr, "pl", { numeric: true });
+    });
+    return list;
+  }, [wpisy, krOpcje, szukajKr]);
+
+  useEffect(() => {
+    if (wybranyKr) return;
+    if (listaKrLewa.length) setWybranyKr(listaKrLewa[0].kr);
+  }, [listaKrLewa, wybranyKr]);
+
+  const wpisyWybranego = useMemo(() => {
+    const k = String(wybranyKr ?? "").trim();
+    if (!k) return [];
+    return wpisy.filter((w) => String(w.kr ?? "").trim() === k);
+  }, [wpisy, wybranyKr]);
+
+  const widoczne = useMemo(() => {
+    if (rozwiniete) return wpisyWybranego;
+    return wpisyWybranego.slice(0, 12);
+  }, [wpisyWybranego, rozwiniete]);
+
+  function wybierzKr(k) {
+    const kod = String(k ?? "").trim();
+    if (!kod) return;
+    setWybranyKr(kod);
+    setRozwiniete(false);
+    setMsg(null);
+  }
 
   async function wyslij(e) {
     e?.preventDefault?.();
@@ -142,7 +192,7 @@ export function CzatKrPanel({
     }
     const kr = String(wybranyKr ?? "").trim();
     if (!kr) {
-      setMsg("Wybierz KR, do którego dopisujesz wpis.");
+      setMsg("Wybierz KR po lewej stronie.");
       return;
     }
     const tekst = String(draft ?? "").trim();
@@ -178,7 +228,7 @@ export function CzatKrPanel({
     }
     setWpisy((prev) => [data, ...prev.filter((x) => x.id !== data.id)]);
     setDraft("");
-    setMsg(`Dodano wpis do KR ${kr}.`);
+    setMsg("Dodano wpis.");
   }
 
   async function utworzZadanie(e) {
@@ -193,7 +243,7 @@ export function CzatKrPanel({
       return;
     }
     const dla = String(zadanieDla ?? "").trim();
-    const kr = String(zadanieKr || wybranyKr || "").trim() || null;
+    const kr = String(wybranyKr ?? "").trim() || null;
     const zlecajacy =
       String(autorNazwa ?? "").trim() ||
       String(autorEmail ?? "").trim() ||
@@ -218,14 +268,13 @@ export function CzatKrPanel({
     }
     if (kr && czyMozePisac && !brakTabeli) {
       const info = `✅ Zadanie dla ${dla}: ${tytul}`;
-      const autor = zlecajacy;
       const { data } = await supabase
         .from("kr_notatka")
         .insert([
           {
             kr,
             tresc: info,
-            autor,
+            autor: zlecajacy,
             autor_email: String(autorEmail ?? "").trim() || null,
           },
         ])
@@ -268,7 +317,7 @@ export function CzatKrPanel({
         <div>
           <strong style={{ fontSize: "1.05rem", color: LIGHT.accent }}>CZAT KR</strong>
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
-            Wpisy do projektów (KR) — użytkownicy i kierownicy. Ten sam wątek co na Tablicy KR.
+            Po lewej projekt (KR), po prawej wątek — użytkownicy i kierownicy.
           </div>
         </div>
         <button
@@ -317,207 +366,322 @@ export function CzatKrPanel({
       ) : null}
 
       <div
+        className="czat-kr-split"
         style={{
-          marginTop: "0.7rem",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "0.5rem",
-          alignItems: "center",
+          marginTop: "0.75rem",
+          display: "grid",
+          gridTemplateColumns: "minmax(7.5rem, 11rem) minmax(0, 1fr)",
+          gap: "0.75rem",
+          alignItems: "stretch",
+          minHeight: "22rem",
         }}
       >
-        <label style={{ fontSize: "0.8rem", color: LIGHT.muted }}>
-          Filtr{" "}
-          <select
-            value={filtrKr}
-            onChange={(e) => setFiltrKr(e.target.value)}
-            style={{ ...inputSt, width: "auto", minWidth: "8rem", display: "inline-block" }}
+        {/* LEWA: lista KR */}
+        <aside
+          style={{
+            border: LIGHT.cardBorder,
+            borderRadius: 12,
+            background: "#fff",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: "22rem",
+            maxHeight: "min(70vh, 36rem)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "0.55rem 0.6rem",
+              borderBottom: LIGHT.cardBorder,
+              background: LIGHT.accentSoft,
+              fontWeight: 800,
+              fontSize: "0.82rem",
+              color: LIGHT.accent,
+            }}
           >
-            <option value="wszystkie">Wszystkie KR</option>
-            {krOpcje.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.4rem" }}>
-        {loading ? (
-          <p style={{ margin: 0, fontSize: "0.8rem", color: LIGHT.soft }}>Ładowanie…</p>
-        ) : wpisy.length === 0 ? (
-          <p style={{ margin: 0, fontSize: "0.8rem", color: LIGHT.soft }}>
-            Brak wpisów — wybierz KR i napisz pierwszą wiadomość.
-          </p>
-        ) : (
-          <>
-            {widoczne.map((w) => (
-              <div
-                key={w.id}
-                style={{
-                  border: LIGHT.cardBorder,
-                  borderRadius: 10,
-                  background: LIGHT.cardBg,
-                  padding: "0.45rem 0.6rem",
-                }}
-              >
-                <div style={{ fontSize: "0.7rem", color: LIGHT.soft, marginBottom: 4 }}>
+            KR
+          </div>
+          <div style={{ padding: "0.45rem 0.5rem", borderBottom: LIGHT.cardBorder }}>
+            <input
+              style={{ ...inputSt, fontSize: "0.78rem" }}
+              value={szukajKr}
+              onChange={(e) => setSzukajKr(e.target.value)}
+              placeholder="Szukaj KR…"
+            />
+          </div>
+          <div style={{ overflowY: "auto", flex: 1, padding: "0.25rem" }}>
+            {listaKrLewa.length === 0 ? (
+              <p style={{ margin: "0.5rem", fontSize: "0.78rem", color: LIGHT.soft }}>Brak projektów.</p>
+            ) : (
+              listaKrLewa.map((item) => {
+                const aktywny = String(wybranyKr) === item.kr;
+                return (
                   <button
+                    key={item.kr}
                     type="button"
-                    onClick={() => {
-                      setWybranyKr(String(w.kr ?? "").trim());
-                      setFiltrKr(String(w.kr ?? "").trim() || "wszystkie");
-                      if (typeof onOtworzKr === "function" && w.kr) onOtworzKr(w.kr);
-                    }}
+                    onClick={() => wybierzKr(item.kr)}
                     style={{
-                      background: "none",
-                      border: "none",
-                      padding: 0,
-                      color: LIGHT.accent,
-                      fontWeight: 800,
+                      display: "flex",
+                      width: "100%",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "0.35rem",
+                      textAlign: "left",
+                      padding: "0.45rem 0.5rem",
+                      marginBottom: 2,
+                      border: aktywny ? `1px solid ${LIGHT.accent}` : "1px solid transparent",
+                      borderRadius: 8,
+                      background: aktywny ? LIGHT.accentSoft : "transparent",
+                      color: LIGHT.text,
                       cursor: "pointer",
                       font: "inherit",
-                      fontSize: "0.7rem",
                     }}
-                    title="Ustaw ten KR do wpisu"
                   >
-                    KR {w.kr || "—"}
+                    <strong
+                      style={{
+                        fontSize: "0.95rem",
+                        fontWeight: 800,
+                        color: aktywny ? LIGHT.accent : LIGHT.text,
+                      }}
+                    >
+                      {item.kr}
+                    </strong>
+                    {item.count > 0 ? (
+                      <span
+                        style={{
+                          fontSize: "0.68rem",
+                          fontWeight: 700,
+                          color: LIGHT.soft,
+                          background: "#f1f5f9",
+                          borderRadius: 999,
+                          padding: "0.05rem 0.35rem",
+                        }}
+                      >
+                        {item.count}
+                      </span>
+                    ) : null}
                   </button>
-                  {" · "}
-                  <strong style={{ color: LIGHT.text }}>{w.autor || w.autor_email || "—"}</strong>
-                  {" · "}
-                  {formatData(w.created_at) || "—"}
-                </div>
-                <div style={{ whiteSpace: "pre-wrap", fontSize: "0.84rem", lineHeight: 1.4 }}>{w.tresc}</div>
-                {mozeZadania ? (
+                );
+              })
+            )}
+          </div>
+        </aside>
+
+        {/* PRAWA: czat */}
+        <section
+          style={{
+            border: LIGHT.cardBorder,
+            borderRadius: 12,
+            background: "#fff",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: "22rem",
+            maxHeight: "min(70vh, 36rem)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "0.55rem 0.75rem",
+              borderBottom: LIGHT.cardBorder,
+              background: LIGHT.accentSoft,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "0.5rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <strong style={{ fontSize: "0.95rem", color: LIGHT.accent }}>
+              {wybranyKr ? `Czat · KR ${wybranyKr}` : "Czat"}
+            </strong>
+            {wybranyKr && typeof onOtworzKr === "function" ? (
+              <button
+                type="button"
+                onClick={() => onOtworzKr(wybranyKr)}
+                style={{
+                  background: "#fff",
+                  border: LIGHT.cardBorder,
+                  borderRadius: 6,
+                  color: LIGHT.accent,
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  padding: "0.15rem 0.4rem",
+                  cursor: "pointer",
+                }}
+              >
+                Tablica KR
+              </button>
+            ) : null}
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto", padding: "0.65rem 0.75rem", display: "grid", gap: "0.55rem" }}>
+            {!wybranyKr ? (
+              <p style={{ margin: 0, fontSize: "0.85rem", color: LIGHT.soft }}>Wybierz KR po lewej.</p>
+            ) : loading ? (
+              <p style={{ margin: 0, fontSize: "0.85rem", color: LIGHT.soft }}>Ładowanie…</p>
+            ) : wpisyWybranego.length === 0 ? (
+              <p style={{ margin: 0, fontSize: "0.85rem", color: LIGHT.soft }}>
+                Brak wpisów w tym KR — napisz pierwszą wiadomość poniżej.
+              </p>
+            ) : (
+              <>
+                {widoczne.map((w) => (
+                  <div
+                    key={w.id}
+                    style={{
+                      border: LIGHT.cardBorder,
+                      borderRadius: 10,
+                      background: "#f8fafc",
+                      padding: "0.55rem 0.7rem",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "baseline",
+                        gap: "0.35rem 0.65rem",
+                        marginBottom: "0.3rem",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "1.05rem",
+                          fontWeight: 800,
+                          color: LIGHT.accent,
+                          lineHeight: 1.25,
+                        }}
+                      >
+                        {w.autor || w.autor_email || "—"}
+                      </span>
+                      <span style={{ fontSize: "0.78rem", color: LIGHT.soft }}>
+                        {formatData(w.created_at) || "—"}
+                      </span>
+                    </div>
+                    <div style={{ whiteSpace: "pre-wrap", fontSize: "0.92rem", lineHeight: 1.45, color: LIGHT.text }}>
+                      {w.tresc}
+                    </div>
+                    {mozeZadania ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setZadanieTytul(String(w.tresc ?? "").slice(0, 200));
+                          setPokazZadanie(true);
+                        }}
+                        style={{
+                          marginTop: "0.4rem",
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          color: LIGHT.accent,
+                          fontSize: "0.75rem",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                        }}
+                      >
+                        Utwórz zadanie z tej wiadomości
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                {wpisyWybranego.length > 12 ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      setZadanieTytul(String(w.tresc ?? "").slice(0, 200));
-                      setZadanieKr(String(w.kr ?? "").trim());
-                      setPokazZadanie(true);
-                    }}
+                    onClick={() => setRozwiniete((v) => !v)}
                     style={{
-                      marginTop: "0.35rem",
+                      justifySelf: "start",
                       background: "none",
                       border: "none",
-                      padding: 0,
                       color: LIGHT.accent,
-                      fontSize: "0.72rem",
                       fontWeight: 700,
+                      fontSize: "0.8rem",
                       cursor: "pointer",
                       textDecoration: "underline",
                     }}
                   >
-                    Utwórz zadanie z tej wiadomości
+                    {rozwiniete ? "Zwiń" : `Pokaż starsze (${wpisyWybranego.length - 12})`}
                   </button>
                 ) : null}
-              </div>
-            ))}
-            {wpisy.length > 10 ? (
-              <button
-                type="button"
-                onClick={() => setRozwiniete((v) => !v)}
-                style={{
-                  justifySelf: "start",
-                  background: "none",
-                  border: "none",
-                  color: LIGHT.accent,
-                  fontWeight: 700,
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                {rozwiniete ? "Zwiń" : `Pokaż starsze (${wpisy.length - 10})`}
-              </button>
-            ) : null}
-          </>
-        )}
-      </div>
+              </>
+            )}
+          </div>
 
-      {czyMozePisac && !brakTabeli ? (
-        <form onSubmit={(e) => void wyslij(e)} style={{ marginTop: "0.85rem", display: "grid", gap: "0.45rem" }}>
-          <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
-            KR *
-            <select
-              style={inputSt}
-              value={wybranyKr}
-              onChange={(e) => setWybranyKr(e.target.value)}
-              required
-            >
-              <option value="">— wybierz projekt —</option>
-              {krOpcje.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </label>
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={3}
-            disabled={wysylanie}
-            placeholder="Wpis do wybranego KR…"
-            style={{ ...inputSt, resize: "vertical", minHeight: "3.2rem" }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                void wyslij();
-              }
-            }}
-          />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", alignItems: "center" }}>
-            <button
-              type="submit"
-              disabled={wysylanie || !draft.trim() || !wybranyKr}
+          {czyMozePisac && !brakTabeli && wybranyKr ? (
+            <form
+              onSubmit={(e) => void wyslij(e)}
               style={{
-                background: LIGHT.accent,
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                padding: "0.4rem 0.85rem",
-                fontWeight: 700,
-                fontSize: "0.82rem",
-                cursor: wysylanie ? "wait" : "pointer",
-                opacity: wysylanie || !draft.trim() || !wybranyKr ? 0.65 : 1,
+                borderTop: LIGHT.cardBorder,
+                padding: "0.65rem 0.75rem",
+                display: "grid",
+                gap: "0.4rem",
+                background: "#fff",
               }}
             >
-              {wysylanie ? "Wysyłanie…" : "Dodaj wpis do KR"}
-            </button>
-            {mozeZadania ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setPokazZadanie((v) => !v);
-                  if (!pokazZadanie) {
-                    if (draft.trim()) setZadanieTytul(draft.trim().slice(0, 200));
-                    if (wybranyKr) setZadanieKr(wybranyKr);
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={2}
+                disabled={wysylanie}
+                placeholder={`Wpis do KR ${wybranyKr}…`}
+                style={{ ...inputSt, resize: "vertical", minHeight: "2.8rem", fontSize: "0.9rem" }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    void wyslij();
                   }
                 }}
-                style={{
-                  background: "#fff",
-                  border: `1px solid ${LIGHT.accent}`,
-                  color: LIGHT.accent,
-                  borderRadius: 8,
-                  padding: "0.4rem 0.75rem",
-                  fontWeight: 700,
-                  fontSize: "0.82rem",
-                  cursor: "pointer",
-                }}
-              >
-                {pokazZadanie ? "Ukryj zadanie" : "＋ Dodaj zadanie"}
-              </button>
-            ) : null}
-            <span style={{ fontSize: "0.7rem", color: LIGHT.soft }}>Ctrl+Enter = wyślij</span>
-          </div>
-        </form>
-      ) : !brakTabeli ? (
-        <p style={{ marginTop: "0.75rem", fontSize: "0.8rem", color: LIGHT.soft }}>
-          Zaloguj się, aby dodać wpis do CZAT KR.
-        </p>
-      ) : null}
+              />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", alignItems: "center" }}>
+                <button
+                  type="submit"
+                  disabled={wysylanie || !draft.trim()}
+                  style={{
+                    background: LIGHT.accent,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "0.4rem 0.85rem",
+                    fontWeight: 700,
+                    fontSize: "0.84rem",
+                    cursor: wysylanie ? "wait" : "pointer",
+                    opacity: wysylanie || !draft.trim() ? 0.65 : 1,
+                  }}
+                >
+                  {wysylanie ? "Wysyłanie…" : "Dodaj wpis"}
+                </button>
+                {mozeZadania ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPokazZadanie((v) => !v);
+                      if (!pokazZadanie && draft.trim()) setZadanieTytul(draft.trim().slice(0, 200));
+                    }}
+                    style={{
+                      background: "#fff",
+                      border: `1px solid ${LIGHT.accent}`,
+                      color: LIGHT.accent,
+                      borderRadius: 8,
+                      padding: "0.4rem 0.75rem",
+                      fontWeight: 700,
+                      fontSize: "0.82rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {pokazZadanie ? "Ukryj zadanie" : "＋ Dodaj zadanie"}
+                  </button>
+                ) : null}
+                <span style={{ fontSize: "0.7rem", color: LIGHT.soft }}>Ctrl+Enter</span>
+              </div>
+            </form>
+          ) : !brakTabeli && !czyMozePisac ? (
+            <p style={{ margin: "0.65rem 0.75rem", fontSize: "0.8rem", color: LIGHT.soft }}>
+              Zaloguj się, aby dodać wpis.
+            </p>
+          ) : null}
+        </section>
+      </div>
 
       {pokazZadanie && mozeZadania && !brakTabeli ? (
         <form
@@ -533,7 +697,7 @@ export function CzatKrPanel({
           }}
         >
           <strong style={{ fontSize: "0.88rem", color: LIGHT.accent }}>
-            Zadanie z CZAT KR (Damian · Michał · Monika · Ania Homik · Gosia Franczak)
+            Zadanie{wybranyKr ? ` · KR ${wybranyKr}` : ""} (Damian · Michał · Monika · Ania Homik · Gosia Franczak)
           </strong>
           <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
             Zadanie *
@@ -558,17 +722,6 @@ export function CzatKrPanel({
                 {CZAT_KR_ZADANIA_OSOBY.map((o) => (
                   <option key={o.id} value={o.label}>
                     {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
-              KR
-              <select style={inputSt} value={zadanieKr} onChange={(e) => setZadanieKr(e.target.value)}>
-                <option value="">— bez KR —</option>
-                {krOpcje.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
                   </option>
                 ))}
               </select>
@@ -603,6 +756,12 @@ export function CzatKrPanel({
           </button>
         </form>
       ) : null}
+
+      <style>{`
+        @media (max-width: 720px) {
+          .czat-kr-split { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }
