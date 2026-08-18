@@ -4,6 +4,10 @@ import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { PlanFakturPanel } from "./PlanFakturPanel.jsx";
 import { KrNotatkiCzat } from "./KrNotatkiCzat.jsx";
+import {
+  KierownictwoCzatPanel,
+  czyDostepCzatKierownictwa,
+} from "./KierownictwoCzatPanel.jsx";
 import { ProtokolyTerPanel } from "./ProtokolyTerPanel.jsx";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 import { TerenPlanningBoard } from "./TerenPlanningBoard.jsx";
@@ -3612,7 +3616,7 @@ export default function App() {
 
   /** Moduł FAKTUROWANIE (bieżące KR / etapy / protokoły / faktury) — tylko admin i kierownik. */
   function przejdzDoFakturowania(sekcja = "biezace_kr") {
-    const dozwolone = ["biezace_kr", "plan_faktur", "etapy", "protokoly", "faktury"];
+    const dozwolone = ["czat_kierownictwa", "biezace_kr", "plan_faktur", "etapy", "protokoly", "faktury"];
     const s = dozwolone.includes(sekcja) ? sekcja : "biezace_kr";
     setWybranyKrKlucz(null);
     setWidokKmDlaKr(null);
@@ -5431,6 +5435,12 @@ export default function App() {
   const czyMozeObslugiwacAppTickety = czyAdminAktywny || czyKierownikAktywny;
   /** Menu i widoki FAKTUROWANIE — tylko administrator i kierownik. */
   const czyMozeWidziecFakturowanie = czyAdminAktywny || czyKierownikAktywny;
+  /** Czat kierownictwa: Damian, Michał, Monika, Ania Homik, Gosia Franczak (+ admin). */
+  const czyMozeCzatKierownictwa = czyDostepCzatKierownictwa({
+    imieNazwisko: pracownikPowiazanyZSesja?.imie_nazwisko,
+    email: session?.user?.email,
+    czyAdmin: czyAdminAktywny,
+  });
 
   /** Bieżące KR do fakturowania: status projektu „w trakcie” albo flaga fakturowanie_w_trakcie. */
   const fakturowanieBiezaceKrList = useMemo(() => {
@@ -7863,6 +7873,7 @@ export default function App() {
       sprzet: "🛠️",
       samochody: "🚗",
       pracownik: "👥",
+      fakturowanie_czat: "💬",
       fakturowanie_biezace_kr: "📌",
       fakturowanie_plan: "📋",
       fakturowanie_etapy: "📑",
@@ -10603,6 +10614,40 @@ export default function App() {
               <span style={{ color: theme.danger }}>G</span>
               4 Geodezja · Panel przepływu informacji
             </h1>
+            {czyMozeCzatKierownictwa ? (
+              <div
+                style={{
+                  marginTop: "0.65rem",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.5rem",
+                  alignItems: "center",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoFakturowania("czat_kierownictwa"))}
+                  style={{
+                    background: "linear-gradient(135deg, #c2410c 0%, #ea580c 100%)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "0.55rem 1.1rem",
+                    fontWeight: 800,
+                    fontSize: "0.95rem",
+                    cursor: "pointer",
+                    boxShadow: "0 8px 22px -10px rgba(194,65,12,0.75)",
+                    letterSpacing: "0.01em",
+                  }}
+                  title="Wspólny czat Damian · Michał · Monika · Ania Homik · Gosia Franczak"
+                >
+                  💬 Czat kierownictwa
+                </button>
+                <span style={{ fontSize: "0.78rem", color: theme.muted, maxWidth: "28rem", lineHeight: 1.4 }}>
+                  Najważniejsze ustalenia firmy — nad fakturowaniem. Możesz też dodać zadanie dla kolegi z kierownictwa.
+                </span>
+              </div>
+            ) : null}
             {POKAZUJ_ALARMY_BRAKOW_GODZIN && dashboardBrakiGodzin.dni.length > 0 ? (
               <div
                 role="alert"
@@ -13944,7 +13989,9 @@ export default function App() {
             <>
               <div style={op.heroCard}>
                 <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>
-                  {fakturowanieSekcja === "biezace_kr"
+                  {fakturowanieSekcja === "czat_kierownictwa"
+                    ? "Czat kierownictwa"
+                    : fakturowanieSekcja === "biezace_kr"
                     ? "Bieżące KR"
                     : fakturowanieSekcja === "plan_faktur"
                       ? "Plan faktur (kolejka FS)"
@@ -13955,7 +14002,9 @@ export default function App() {
                         : "Faktury"}
                 </h2>
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
-                  {fakturowanieSekcja === "biezace_kr"
+                  {fakturowanieSekcja === "czat_kierownictwa"
+                    ? "Wspólny czat Damian, Michał, Monika, Ania Homik, Gosia Franczak — ustalenia i zadania między kierownikami."
+                    : fakturowanieSekcja === "biezace_kr"
                     ? "Lista KR ze statusem „w trakcie” (projekty bieżące). Kolumna „W trakcie fakturowania” to osobna flaga w bazie — włącz ją dla KR, które aktualnie rozliczacie."
                     : fakturowanieSekcja === "plan_faktur"
                       ? "Planowane faktury. Czat pozycji FS = kolumna „Uwagi / rozmowa”. Czat całego projektu KR = kliknij numer KR lub „Czat KR” (ten sam wątek co na Tablicy KR)."
@@ -13966,6 +14015,20 @@ export default function App() {
                         : "Tu pojawią się faktury sprzedażowe / rozliczeniowe (osobno od faktur kosztowych w OSOBISTE)."}
                 </p>
               </div>
+
+              {fakturowanieSekcja === "czat_kierownictwa" ? (
+                <KierownictwoCzatPanel
+                  supabase={supabase}
+                  autorNazwa={
+                    pracownikPowiazanyZSesja?.imie_nazwisko?.trim() ||
+                    session?.user?.email ||
+                    ""
+                  }
+                  autorEmail={session?.user?.email || ""}
+                  czyAdmin={czyAdminAktywny}
+                  krList={krList}
+                />
+              ) : null}
 
               {fakturowanieSekcja === "plan_faktur" ? (
                 <PlanFakturPanel
@@ -14126,7 +14189,9 @@ export default function App() {
                     </div>
                   )}
                 </div>
-              ) : (
+              ) : fakturowanieSekcja === "czat_kierownictwa" ||
+                fakturowanieSekcja === "plan_faktur" ||
+                fakturowanieSekcja === "protokoly" ? null : (
                 <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
                   <p style={{ ...op.muted, margin: 0, fontSize: "0.9rem" }}>
                     Sekcja w przygotowaniu — struktura menu jest już gotowa. Możemy tu dopisać tabele, formularze i
@@ -20139,6 +20204,16 @@ export default function App() {
               <div style={{ ...op.navSectionLabel }}>💶 FAKTUROWANIE</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
                 {[
+                  ...(czyMozeCzatKierownictwa
+                    ? [
+                        {
+                          id: "fakturowanie_czat",
+                          label: "Czat kierownictwa",
+                          sekcja: "czat_kierownictwa",
+                          help: "Wspólny czat + zadania między Damian, Michał, Monika, Ania Homik, Gosia Franczak.",
+                        },
+                      ]
+                    : []),
                   {
                     id: "fakturowanie_biezace_kr",
                     label: "Bieżące KR",
@@ -20177,6 +20252,13 @@ export default function App() {
                         ...op.navBtn,
                         ...(widok === "fakturowanie" && fakturowanieSekcja === b.sekcja ? op.navBtnActive : {}),
                         marginBottom: 0,
+                        ...(b.sekcja === "czat_kierownictwa"
+                          ? {
+                              fontWeight: 800,
+                              borderColor: "rgba(234,88,12,0.55)",
+                              color: "#c2410c",
+                            }
+                          : {}),
                       }}
                       onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoFakturowania(b.sekcja))}
                     >
