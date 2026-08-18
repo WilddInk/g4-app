@@ -74,6 +74,60 @@ function pustyFormularzNowej() {
   };
 }
 
+function wierszDoFormularza(row) {
+  const h = String(row?.horyzont ?? "").trim();
+  const jestNaLiscie = HORYZONTY.includes(h);
+  return {
+    kr: row?.kr != null ? String(row.kr) : "",
+    klient: row?.klient != null ? String(row.klient) : "",
+    opis: row?.opis != null ? String(row.opis) : "",
+    horyzont: jestNaLiscie ? h : h ? "__custom__" : "2026-07",
+    horyzontCustom: jestNaLiscie || !h ? "" : /^\d{4}-\d{2}$/.test(h) ? h : "",
+    kwota_netto:
+      row?.kwota_netto != null && row.kwota_netto !== ""
+        ? String(row.kwota_netto).replace(".", ",")
+        : "",
+    bloker: String(row?.bloker ?? "").trim() || "brak",
+    odpowiedzialny: row?.odpowiedzialny != null ? String(row.odpowiedzialny) : "",
+    mozna_fakturowac: Boolean(row?.mozna_fakturowac),
+  };
+}
+
+function parsujPayloadZFormu(form) {
+  const opis = String(form.opis ?? "").trim();
+  if (!opis) return { ok: false, message: "Podaj opis faktury." };
+  let horyzont = String(form.horyzont ?? "").trim();
+  if (horyzont === "__custom__") {
+    horyzont = String(form.horyzontCustom ?? "").trim();
+  }
+  if (!horyzont) return { ok: false, message: "Wybierz horyzont (RRRR-MM)." };
+  if (!/^\d{4}-\d{2}$/.test(horyzont) && !HORYZONTY.includes(horyzont) && horyzont !== "inne") {
+    return { ok: false, message: "Horyzont musi być w formacie RRRR-MM (np. 2026-08)." };
+  }
+  const kwotaRaw = String(form.kwota_netto ?? "").trim().replace(/\s/g, "").replace(",", ".");
+  let kwota_netto = null;
+  if (kwotaRaw) {
+    const n = Number(kwotaRaw);
+    if (!Number.isFinite(n)) return { ok: false, message: "Kwota netto jest nieprawidłowa." };
+    kwota_netto = n;
+  }
+  const mozna = Boolean(form.mozna_fakturowac);
+  return {
+    ok: true,
+    payload: {
+      kr: String(form.kr ?? "").trim() || null,
+      klient: String(form.klient ?? "").trim() || null,
+      opis,
+      horyzont,
+      kwota_netto,
+      bloker: String(form.bloker ?? "").trim() || "brak",
+      odpowiedzialny: String(form.odpowiedzialny ?? "").trim() || null,
+      mozna_fakturowac: mozna,
+      status: mozna ? "gotowe_do_fs" : "plan",
+    },
+  };
+}
+
 const inputStyleNowa = {
   width: "100%",
   boxSizing: "border-box",
@@ -233,6 +287,7 @@ export function PlanFakturPanel({
   const [rozwinOstatnieWpisy, setRozwinOstatnieWpisy] = useState(false);
   const [pokazFormularzNowej, setPokazFormularzNowej] = useState(false);
   const [formNowa, setFormNowa] = useState(() => pustyFormularzNowej());
+  const [edycjaId, setEdycjaId] = useState(null);
   const [zapisNowej, setZapisNowej] = useState(false);
   const [czatKrKod, setCzatKrKod] = useState(null);
   const czatKrRef = useRef(null);
@@ -429,54 +484,75 @@ export function PlanFakturPanel({
     setMsg(`Usunięto z planu: KR ${kr}.`);
   }
 
-  async function dodajNowaFakture(e) {
+  function zamknijFormularzPlanu() {
+    setPokazFormularzNowej(false);
+    setEdycjaId(null);
+    setFormNowa(pustyFormularzNowej());
+  }
+
+  function otworzNowaPozycje() {
+    setEdycjaId(null);
+    setFormNowa(pustyFormularzNowej());
+    setPokazFormularzNowej(true);
+    setMsg(null);
+  }
+
+  function otworzEdycjePozycji(row) {
+    if (!czyMozeEdytowac) {
+      alert("Edytować plan mogą kierownik lub administrator.");
+      return;
+    }
+    setEdycjaId(row.id);
+    setFormNowa(wierszDoFormularza(row));
+    setPokazFormularzNowej(true);
+    setMsg(null);
+    window.requestAnimationFrame(() => {
+      document.getElementById("plan-faktur-formularz")?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+
+  async function zapiszPozycjePlanu(e) {
     e?.preventDefault?.();
     if (!czyMozeEdytowac) {
-      alert("Dodawać pozycje do planu mogą kierownik lub administrator.");
+      alert("Dodawać i edytować pozycje planu mogą kierownik lub administrator.");
       return;
     }
-    const opis = String(formNowa.opis ?? "").trim();
-    if (!opis) {
-      setMsg("Podaj opis faktury.");
+    const parsed = parsujPayloadZFormu(formNowa);
+    if (!parsed.ok) {
+      setMsg(parsed.message);
       return;
     }
-    let horyzont = String(formNowa.horyzont ?? "").trim();
-    if (horyzont === "__custom__") {
-      horyzont = String(formNowa.horyzontCustom ?? "").trim();
-    }
-    if (!horyzont) {
-      setMsg("Wybierz horyzont (RRRR-MM).");
-      return;
-    }
-    if (!/^\d{4}-\d{2}$/.test(horyzont) && !HORYZONTY.includes(horyzont) && horyzont !== "inne") {
-      setMsg("Horyzont musi być w formacie RRRR-MM (np. 2026-08).");
-      return;
-    }
-    const kwotaRaw = String(formNowa.kwota_netto ?? "").trim().replace(/\s/g, "").replace(",", ".");
-    let kwota_netto = null;
-    if (kwotaRaw) {
-      const n = Number(kwotaRaw);
-      if (!Number.isFinite(n)) {
-        setMsg("Kwota netto jest nieprawidłowa.");
-        return;
-      }
-      kwota_netto = n;
-    }
-    const mozna = Boolean(formNowa.mozna_fakturowac);
-    const payload = {
-      kr: String(formNowa.kr ?? "").trim() || null,
-      klient: String(formNowa.klient ?? "").trim() || null,
-      opis,
-      horyzont,
-      kwota_netto,
-      bloker: String(formNowa.bloker ?? "").trim() || "brak",
-      odpowiedzialny: String(formNowa.odpowiedzialny ?? "").trim() || null,
-      mozna_fakturowac: mozna,
-      status: mozna ? "gotowe_do_fs" : "plan",
-      zrodlo: "reczne",
-    };
+    const payload =
+      edycjaId != null
+        ? parsed.payload
+        : { ...parsed.payload, zrodlo: "reczne" };
     setMsg(null);
     setZapisNowej(true);
+    if (edycjaId != null) {
+      const { data, error } = await supabase
+        .from("kr_plan_faktury")
+        .update(payload)
+        .eq("id", edycjaId)
+        .select("*")
+        .single();
+      setZapisNowej(false);
+      if (error) {
+        setMsg(`Nie udało się zapisać zmian: ${error.message}`);
+        return;
+      }
+      setRows((prev) => prev.map((r) => (r.id === edycjaId ? { ...r, ...data } : r)));
+      setPodswietlonyPlanId(edycjaId);
+      if (podswietlenieTimer.current) clearTimeout(podswietlenieTimer.current);
+      podswietlenieTimer.current = window.setTimeout(() => {
+        setPodswietlonyPlanId((cur) => (cur === edycjaId ? null : cur));
+      }, 2600);
+      zamknijFormularzPlanu();
+      setMsg(`Zapisano zmiany (KR ${payload.kr || "—"}).`);
+      return;
+    }
     const { data, error } = await supabase.from("kr_plan_faktury").insert([payload]).select("*").single();
     setZapisNowej(false);
     if (error) {
@@ -484,15 +560,14 @@ export function PlanFakturPanel({
       return;
     }
     setRows((prev) => [...prev, data]);
-    setFormNowa(pustyFormularzNowej());
-    setPokazFormularzNowej(false);
     setPodswietlonyPlanId(data.id);
     if (podswietlenieTimer.current) clearTimeout(podswietlenieTimer.current);
     podswietlenieTimer.current = window.setTimeout(() => {
       setPodswietlonyPlanId((cur) => (cur === data.id ? null : cur));
     }, 2600);
+    zamknijFormularzPlanu();
     setMsg(
-      mozna
+      payload.mozna_fakturowac
         ? `Dodano fakturę (KR ${payload.kr || "—"}) — oznaczono: można wystawić.`
         : `Dodano fakturę do planu (KR ${payload.kr || "—"}).`,
     );
@@ -862,9 +937,10 @@ export function PlanFakturPanel({
         Plan faktur sprzedażowych ({filtered.length})
       </h3>
       <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem", color: LIGHT.muted }}>
-        Lista planowanych faktur. Kolumna <strong style={{ color: LIGHT.text }}>Uwagi / rozmowa</strong> = czat przy pozycji
-        FS. <strong style={{ color: LIGHT.text }}>Czat projektu (KR)</strong> otwierasz przyciskiem przy numerze KR —
-        ten sam wątek co na Tablicy KR.
+        Lista planowanych faktur. Kierownik/admin: <strong style={{ color: LIGHT.text }}>dodaje</strong> i{" "}
+        <strong style={{ color: LIGHT.text }}>edytuje</strong> pozycje. Kolumna{" "}
+        <strong style={{ color: LIGHT.text }}>Uwagi / rozmowa</strong> = czat przy pozycji FS.{" "}
+        <strong style={{ color: LIGHT.text }}>Czat KR</strong> = wątek całego projektu.
       </p>
 
       {czatKrKod ? (
@@ -945,11 +1021,11 @@ export function PlanFakturPanel({
       ) : null}
 
       {czyMozeEdytowac ? (
-        <div style={{ marginBottom: "0.85rem" }}>
+        <div style={{ marginBottom: "0.85rem" }} id="plan-faktur-formularz">
           {!pokazFormularzNowej ? (
             <button
               type="button"
-              onClick={() => setPokazFormularzNowej(true)}
+              onClick={() => otworzNowaPozycje()}
               style={{
                 background: LIGHT.accent,
                 color: "#fff",
@@ -965,7 +1041,7 @@ export function PlanFakturPanel({
             </button>
           ) : (
             <form
-              onSubmit={(e) => void dodajNowaFakture(e)}
+              onSubmit={(e) => void zapiszPozycjePlanu(e)}
               style={{
                 border: LIGHT.panelBorder,
                 borderRadius: 12,
@@ -976,13 +1052,12 @@ export function PlanFakturPanel({
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-                <strong style={{ color: LIGHT.title, fontSize: "0.9rem" }}>Nowa faktura w planie</strong>
+                <strong style={{ color: LIGHT.title, fontSize: "0.9rem" }}>
+                  {edycjaId != null ? "Edycja pozycji w planie" : "Nowa faktura w planie"}
+                </strong>
                 <button
                   type="button"
-                  onClick={() => {
-                    setPokazFormularzNowej(false);
-                    setFormNowa(pustyFormularzNowej());
-                  }}
+                  onClick={() => zamknijFormularzPlanu()}
                   style={{
                     background: "#fff",
                     border: LIGHT.cardBorder,
@@ -1147,7 +1222,7 @@ export function PlanFakturPanel({
                     opacity: zapisNowej ? 0.7 : 1,
                   }}
                 >
-                  {zapisNowej ? "Zapisywanie…" : "Zapisz w planie"}
+                  {zapisNowej ? "Zapisywanie…" : edycjaId != null ? "Zapisz zmiany" : "Zapisz w planie"}
                 </button>
               </div>
             </form>
@@ -1460,22 +1535,41 @@ export function PlanFakturPanel({
                           {krKod ? `Czat KR ${krKod}` : "Czat KR"}
                         </button>
                         {czyMozeEdytowac ? (
-                          <button
-                            type="button"
-                            style={{
-                              background: "#fff",
-                              padding: "0.15rem 0.45rem",
-                              fontSize: "0.75rem",
-                              color: LIGHT.danger,
-                              border: "1px solid #fca5a5",
-                              borderRadius: 6,
-                              cursor: "pointer",
-                            }}
-                            title="Usuń z planu (np. FS już wystawiona)"
-                            onClick={() => void usunPlan(r)}
-                          >
-                            Usuń
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              style={{
+                                background: "#fff",
+                                padding: "0.2rem 0.5rem",
+                                fontSize: "0.75rem",
+                                color: LIGHT.accent,
+                                border: "1px solid #7dd3fc",
+                                borderRadius: 6,
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                              title="Edytuj pozycję planu"
+                              onClick={() => otworzEdycjePozycji(r)}
+                            >
+                              Edytuj
+                            </button>
+                            <button
+                              type="button"
+                              style={{
+                                background: "#fff",
+                                padding: "0.15rem 0.45rem",
+                                fontSize: "0.75rem",
+                                color: LIGHT.danger,
+                                border: "1px solid #fca5a5",
+                                borderRadius: 6,
+                                cursor: "pointer",
+                              }}
+                              title="Usuń z planu (np. FS już wystawiona)"
+                              onClick={() => void usunPlan(r)}
+                            >
+                              Usuń
+                            </button>
+                          </>
                         ) : null}
                       </div>
                     </td>
