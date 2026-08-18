@@ -1,18 +1,98 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-/** Osoby, które mogą tworzyć zadania z CZAT KR (dopasowanie po imię_nazwisko / e-mail). */
-export const CZAT_KR_ZADANIA_OSOBY = [
-  { id: "damian", label: "Damian", match: /damian/i },
-  { id: "michal", label: "Michał", match: /micha[łl]/i },
-  { id: "monika", label: "Monika", match: /monika/i },
-  { id: "ania", label: "Ania Homik", match: /homik/i },
-  { id: "gosia", label: "Gosia Franczak", match: /franczak/i },
+/**
+ * Zespół CZAT KR (nieformalne imiona → konkretne nr w `pracownik` z Supabase).
+ * 023 Damian Markiewicz, 000 Michał Jakubowski, 001 Monika Jakubowska,
+ * 011 Anna Homik, 003 Małgorzata Franczak.
+ */
+export const CZAT_KR_TEAM_NR = ["023", "000", "001", "011", "003"];
+
+const CZAT_KR_TEAM_MATCH = [
+  { nr: "023", match: /damian.*markiewicz|markiewicz.*damian|^damian$/i },
+  { nr: "000", match: /micha[łl].*jakubowski|jakubowski.*micha[łl]/i },
+  { nr: "001", match: /monika.*jakubowska|jakubowska.*monika/i },
+  { nr: "011", match: /anna.*homik|homik.*anna|ania.*homik/i },
+  { nr: "003", match: /ma[łl]gorzata.*franczak|franczak.*ma[łl]gorzata|gosia.*franczak/i },
 ];
 
-export function czyMozeDodawacZadaniaZCzatKr({ imieNazwisko, email, czyAdmin }) {
+function normalizujNr(nr) {
+  return String(nr ?? "").trim();
+}
+
+/** Aktywni pracownicy z dostępem do aplikacji (powiązane konto auth). */
+export function pracownicyZDostepemDoAplikacji(pracownicy = []) {
+  return (pracownicy ?? []).filter((p) => {
+    if (p?.is_active === false) return false;
+    return p?.auth_user_id != null && String(p.auth_user_id).trim() !== "";
+  });
+}
+
+/** Zespół do wyboru w zadaniach — realne rekordy z bazy (nr + imię_nazwisko). */
+export function zbudujZespolCzatKr(pracownicy = []) {
+  const zDostepem = pracownicyZDostepemDoAplikacji(pracownicy);
+  const mapa = new Map(
+    (pracownicy ?? []).map((p) => [normalizujNr(p.nr), p]),
+  );
+  const out = [];
+  const used = new Set();
+
+  for (const nr of CZAT_KR_TEAM_NR) {
+    const p = mapa.get(nr);
+    if (p && p.is_active !== false) {
+      out.push(p);
+      used.add(nr);
+    }
+  }
+
+  // Uzupełnij po nazwisku, gdy nr się nie zgrał (np. inny format)
+  for (const rule of CZAT_KR_TEAM_MATCH) {
+    if (used.has(rule.nr)) continue;
+    const found = zDostepem.find((p) => rule.match.test(String(p.imie_nazwisko ?? "")));
+    if (found) {
+      out.push(found);
+      used.add(normalizujNr(found.nr));
+    }
+  }
+
+  // Reszta osób z dostępem do apki (auth) — żeby lista była kompletna
+  for (const p of zDostepem) {
+    const nr = normalizujNr(p.nr);
+    if (!nr || used.has(nr)) continue;
+    out.push(p);
+    used.add(nr);
+  }
+
+  return out.sort((a, b) =>
+    String(a.imie_nazwisko ?? "").localeCompare(String(b.imie_nazwisko ?? ""), "pl", {
+      sensitivity: "base",
+    }),
+  );
+}
+
+export function czyMozeDodawacZadaniaZCzatKr({
+  imieNazwisko,
+  email,
+  nr,
+  czyAdmin,
+  pracownicy = [],
+}) {
   if (czyAdmin) return true;
-  const blob = `${imieNazwisko ?? ""} ${email ?? ""}`;
-  return CZAT_KR_ZADANIA_OSOBY.some((o) => o.match.test(blob));
+  const zespol = zbudujZespolCzatKr(pracownicy);
+  const n = normalizujNr(nr);
+  if (n && zespol.some((p) => normalizujNr(p.nr) === n)) return true;
+  const blob = `${imieNazwisko ?? ""} ${email ?? ""}`.toLowerCase();
+  return zespol.some((p) => {
+    const nazwa = String(p.imie_nazwisko ?? "").toLowerCase();
+    const mail = String(p.email ?? "").toLowerCase();
+    if (mail && email && mail === String(email).trim().toLowerCase()) return true;
+    return nazwa && blob.includes(nazwa);
+  });
+}
+
+function etykietaPracownika(p) {
+  const nr = normalizujNr(p?.nr);
+  const nazwa = String(p?.imie_nazwisko ?? "").trim() || "—";
+  return nr ? `${nr} — ${nazwa}` : nazwa;
 }
 
 const LIGHT = {
@@ -61,9 +141,11 @@ export function CzatKrPanel({
   supabase,
   autorNazwa,
   autorEmail,
+  autorNr,
   czyAdmin,
   czyMozePisac,
   krList = [],
+  pracownicy = [],
   onOtworzKr,
 }) {
   const [wpisy, setWpisy] = useState([]);
@@ -79,15 +161,34 @@ export function CzatKrPanel({
 
   const [pokazZadanie, setPokazZadanie] = useState(false);
   const [zadanieTytul, setZadanieTytul] = useState("");
-  const [zadanieDla, setZadanieDla] = useState(CZAT_KR_ZADANIA_OSOBY[0].label);
+  const [zadanieDlaNr, setZadanieDlaNr] = useState("");
   const [zadanieDeadline, setZadanieDeadline] = useState("");
   const [zapisZadania, setZapisZadania] = useState(false);
+
+  const zespolDoZadan = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
+
+  useEffect(() => {
+    if (zadanieDlaNr) return;
+    if (zespolDoZadan.length) setZadanieDlaNr(normalizujNr(zespolDoZadan[0].nr));
+  }, [zespolDoZadan, zadanieDlaNr]);
 
   const mozeZadania = czyMozeDodawacZadaniaZCzatKr({
     imieNazwisko: autorNazwa,
     email: autorEmail,
+    nr: autorNr,
     czyAdmin,
+    pracownicy,
   });
+
+  const etykietaZespolu = useMemo(
+    () =>
+      zespolDoZadan
+        .filter((p) => CZAT_KR_TEAM_NR.includes(normalizujNr(p.nr)))
+        .map((p) => String(p.imie_nazwisko ?? "").trim())
+        .filter(Boolean)
+        .join(" · ") || "zespół z dostępem do aplikacji",
+    [zespolDoZadan],
+  );
 
   const fetchWpisy = useCallback(async () => {
     setLoading(true);
@@ -234,7 +335,7 @@ export function CzatKrPanel({
   async function utworzZadanie(e) {
     e?.preventDefault?.();
     if (!mozeZadania) {
-      alert("Zadania z CZAT KR mogą dodawać: Damian, Michał, Monika, Ania Homik, Gosia Franczak.");
+      alert(`Zadania z CZAT KR mogą dodawać: ${etykietaZespolu}.`);
       return;
     }
     const tytul = String(zadanieTytul ?? "").trim();
@@ -242,7 +343,13 @@ export function CzatKrPanel({
       setMsg("Podaj treść zadania.");
       return;
     }
-    const dla = String(zadanieDla ?? "").trim();
+    const nrOdp = normalizujNr(zadanieDlaNr);
+    if (!nrOdp) {
+      setMsg("Wybierz osobę odpowiedzialną.");
+      return;
+    }
+    const osoba = zespolDoZadan.find((p) => normalizujNr(p.nr) === nrOdp);
+    const nazwaOsoby = String(osoba?.imie_nazwisko ?? "").trim() || nrOdp;
     const kr = String(wybranyKr ?? "").trim() || null;
     const zlecajacy =
       String(autorNazwa ?? "").trim() ||
@@ -250,8 +357,8 @@ export function CzatKrPanel({
       "Kierownik";
     const payload = {
       zadanie: tytul,
-      osoba_odpowiedzialna: dla,
-      osoba_zlecajaca: zlecajacy,
+      osoba_odpowiedzialna: nrOdp,
+      osoba_zlecajaca: normalizujNr(autorNr) || zlecajacy,
       status: "oczekuje",
       kr,
       deadline: String(zadanieDeadline ?? "").trim() || null,
@@ -267,7 +374,7 @@ export function CzatKrPanel({
       return;
     }
     if (kr && czyMozePisac && !brakTabeli) {
-      const info = `✅ Zadanie dla ${dla}: ${tytul}`;
+      const info = `✅ Zadanie dla ${etykietaPracownika(osoba || { nr: nrOdp, imie_nazwisko: nazwaOsoby })}: ${tytul}`;
       const { data } = await supabase
         .from("kr_notatka")
         .insert([
@@ -285,7 +392,7 @@ export function CzatKrPanel({
     setZadanieTytul("");
     setZadanieDeadline("");
     setPokazZadanie(false);
-    setMsg(`Utworzono zadanie dla ${dla}${kr ? ` (KR ${kr})` : ""}.`);
+    setMsg(`Utworzono zadanie dla ${nazwaOsoby}${kr ? ` (KR ${kr})` : ""}.`);
   }
 
   const inputSt = {
@@ -697,8 +804,11 @@ export function CzatKrPanel({
           }}
         >
           <strong style={{ fontSize: "0.88rem", color: LIGHT.accent }}>
-            Zadanie{wybranyKr ? ` · KR ${wybranyKr}` : ""} (Damian · Michał · Monika · Ania Homik · Gosia Franczak)
+            Zadanie{wybranyKr ? ` · KR ${wybranyKr}` : ""} — osoby z dostępem do aplikacji
           </strong>
+          <p style={{ margin: 0, fontSize: "0.75rem", color: LIGHT.soft }}>
+            Zespół: {etykietaZespolu}. Lista = realne rekordy z tabeli pracownik (nr).
+          </p>
           <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
             Zadanie *
             <input
@@ -712,16 +822,23 @@ export function CzatKrPanel({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(10rem, 1fr))",
+              gridTemplateColumns: "repeat(auto-fill, minmax(12rem, 1fr))",
               gap: "0.45rem",
             }}
           >
             <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
-              Dla kogo *
-              <select style={inputSt} value={zadanieDla} onChange={(e) => setZadanieDla(e.target.value)}>
-                {CZAT_KR_ZADANIA_OSOBY.map((o) => (
-                  <option key={o.id} value={o.label}>
-                    {o.label}
+              Dla kogo * (pracownik.nr)
+              <select
+                style={inputSt}
+                value={zadanieDlaNr}
+                onChange={(e) => setZadanieDlaNr(e.target.value)}
+                required
+              >
+                <option value="">— wybierz osobę —</option>
+                {zespolDoZadan.map((p) => (
+                  <option key={normalizujNr(p.nr)} value={normalizujNr(p.nr)}>
+                    {etykietaPracownika(p)}
+                    {p.auth_user_id ? "" : " (bez logowania)"}
                   </option>
                 ))}
               </select>
@@ -766,7 +883,8 @@ export function CzatKrPanel({
   );
 }
 
-/** @deprecated użyj CzatKrPanel */
+/** @deprecated */
 export const KierownictwoCzatPanel = CzatKrPanel;
-export const KIEROWNICTWO_CZAT_OSOBY = CZAT_KR_ZADANIA_OSOBY;
+export const CZAT_KR_ZADANIA_OSOBY = CZAT_KR_TEAM_NR;
+export const KIEROWNICTWO_CZAT_OSOBY = CZAT_KR_TEAM_NR;
 export const czyDostepCzatKierownictwa = czyMozeDodawacZadaniaZCzatKr;

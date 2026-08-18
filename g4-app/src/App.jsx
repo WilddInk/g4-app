@@ -3636,6 +3636,7 @@ export default function App() {
     setFakturowanieSekcja(s);
     setWidok("fakturowanie");
     setFakturowanieBiezaceKrMsg(null);
+    if (s === "czat_kr") void fetchPracownicy();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -14016,9 +14017,11 @@ export default function App() {
                     ""
                   }
                   autorEmail={session?.user?.email || ""}
+                  autorNr={pracownikPowiazanyZSesja?.nr}
                   czyAdmin={czyAdminAktywny}
                   czyMozePisac={Boolean(session?.user)}
                   krList={krList}
+                  pracownicy={pracownicy}
                   onOtworzKr={(krKod) => {
                     const k = String(krKod ?? "").trim();
                     if (k) otworzKrPoKodzie(k);
@@ -20204,7 +20207,7 @@ export default function App() {
                     id: "fakturowanie_czat",
                     label: "CZAT KR",
                     sekcja: "czat_kr",
-                    help: "Wpisy do projektów KR — użytkownicy i kierownicy. Zadania z czatu: Damian, Michał, Monika, Ania Homik, Gosia Franczak.",
+                    help: "Wpisy do KR. Zadania: wybór realnych osób z pracownik (dostęp do aplikacji).",
                   },
                   {
                     id: "fakturowanie_biezace_kr",
