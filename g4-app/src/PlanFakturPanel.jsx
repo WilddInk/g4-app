@@ -1,15 +1,52 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { KrNotatkiCzat } from "./KrNotatkiCzat.jsx";
 
 const HORYZONTY = ["2026-07", "2026-08", "2026-09", "2026-Q4", "2027", "inne"];
 
-const HORYZONT_LABEL = {
-  "2026-07": "Lipiec 2026",
-  "2026-08": "Sierpień 2026",
-  "2026-09": "Wrzesień 2026",
-  "2026-Q4": "Koniec roku 2026",
-  "2027": "Rok 2027",
-  inne: "Inne",
-};
+/** Klucz localStorage: plan_id → ISO ostatniego odczytu rozmowy. */
+const STORAGE_CZAT_SEEN = "g4-plan-faktury-czat-seen";
+
+/** Normalizacja horyzontu do RRRR-MM (sortowalne leksykograficznie). */
+function horyzontNaRRRRMM(h) {
+  const raw = String(h ?? "").trim();
+  if (!raw || raw === "inne") return "9999-12";
+  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+  const q = raw.match(/^(\d{4})-Q([1-4])$/i);
+  if (q) {
+    // Q4 (= „koniec roku”) → MM-12; pozostałe kwartały → pierwszy miesiąc
+    const qq = Number(q[2]);
+    const mm = qq === 4 ? "12" : String((qq - 1) * 3 + 1).padStart(2, "0");
+    return `${q[1]}-${mm}`;
+  }
+  if (/^\d{4}$/.test(raw)) return `${raw}-01`;
+  return raw;
+}
+
+/** Wyświetlanie horyzontu: zawsze RRRR-MM (albo „—” dla „inne”). */
+function formatHoryzont(h) {
+  const raw = String(h ?? "").trim();
+  if (!raw || raw === "inne") return "—";
+  return horyzontNaRRRRMM(raw);
+}
+
+function wczytajCzatSeen() {
+  try {
+    const raw = localStorage.getItem(STORAGE_CZAT_SEEN);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function zapiszCzatSeen(map) {
+  try {
+    localStorage.setItem(STORAGE_CZAT_SEEN, JSON.stringify(map));
+  } catch {
+    /* ignore quota */
+  }
+}
 
 const BLOKER_LABEL = {
   czeka_protokol: "Czeka na protokół",
@@ -19,6 +56,34 @@ const BLOKER_LABEL = {
   waloryzacja: "Waloryzacja",
   brak: "Brak blokady",
   inne: "Inne",
+};
+
+const BLOKER_OPCJE = Object.keys(BLOKER_LABEL);
+
+function pustyFormularzNowej() {
+  return {
+    kr: "",
+    klient: "",
+    opis: "",
+    horyzont: "2026-07",
+    horyzontCustom: "",
+    kwota_netto: "",
+    bloker: "brak",
+    odpowiedzialny: "",
+    mozna_fakturowac: false,
+  };
+}
+
+const inputStyleNowa = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "0.3rem 0.45rem",
+  borderRadius: 8,
+  border: "1px solid #94a3b8",
+  background: "#fff",
+  color: "#0f172a",
+  font: "inherit",
+  fontSize: "0.8rem",
 };
 
 function formatPln(n) {
@@ -66,7 +131,7 @@ function porownajTekst(a, b) {
 function wartoscSortPlanFaktur(row, key, komentarzeByPlan) {
   switch (key) {
     case "horyzont":
-      return HORYZONT_LABEL[row.horyzont] || row.horyzont || "";
+      return horyzontNaRRRRMM(row.horyzont);
     case "kr":
       return row.kr ?? "";
     case "klient":
@@ -147,6 +212,8 @@ export function PlanFakturPanel({
   czyMozeEdytowacUwagi,
   autorUwagiNazwa,
   autorUwagiEmail,
+  /** Otwórz pełną Tablicę KR (czat na górze karty projektu). */
+  onOtworzCzatKr,
 }) {
   const [rows, setRows] = useState([]);
   const [komentarzeByPlan, setKomentarzeByPlan] = useState({});
@@ -162,6 +229,13 @@ export function PlanFakturPanel({
   const [wysylanieId, setWysylanieId] = useState(null);
   const [brakTabeliCzat, setBrakTabeliCzat] = useState(false);
   const [podswietlonyPlanId, setPodswietlonyPlanId] = useState(null);
+  const [czatSeen, setCzatSeen] = useState(() => wczytajCzatSeen());
+  const [rozwinOstatnieWpisy, setRozwinOstatnieWpisy] = useState(false);
+  const [pokazFormularzNowej, setPokazFormularzNowej] = useState(false);
+  const [formNowa, setFormNowa] = useState(() => pustyFormularzNowej());
+  const [zapisNowej, setZapisNowej] = useState(false);
+  const [czatKrKod, setCzatKrKod] = useState(null);
+  const czatKrRef = useRef(null);
   const rowRefs = useRef({});
   const podswietlenieTimer = useRef(null);
 
@@ -207,8 +281,8 @@ export function PlanFakturPanel({
       .select("*")
       .order("horyzont", { ascending: true })
       .order("kr", { ascending: true });
-    setLoading(false);
     if (error) {
+      setLoading(false);
       const m = String(error.message ?? "");
       setErr(
         /kr_plan_faktury|schema cache|PGRST205|does not exist/i.test(m)
@@ -222,11 +296,34 @@ export function PlanFakturPanel({
     const list = data ?? [];
     setRows(list);
     await fetchKomentarze(list.map((r) => r.id));
+    setLoading(false);
   }, [supabase, fetchKomentarze]);
 
   useEffect(() => {
     void fetchRows();
   }, [fetchRows]);
+
+  /** Pierwsze uruchomienie w przeglądarce: istniejące wpisy = przeczytane; pogrubienie tylko dla nowych. */
+  useEffect(() => {
+    if (loading) return;
+    if (localStorage.getItem(STORAGE_CZAT_SEEN) != null) return;
+    const map = {};
+    for (const row of rows ?? []) {
+      const lista = komentarzeByPlan[row.id] ?? [];
+      let maxIso = "";
+      let maxMs = 0;
+      for (const w of lista) {
+        const ms = czasWpisMs(w.created_at);
+        if (ms > maxMs) {
+          maxMs = ms;
+          maxIso = w.created_at || "";
+        }
+      }
+      if (maxIso) map[String(row.id)] = maxIso;
+    }
+    zapiszCzatSeen(map);
+    setCzatSeen(map);
+  }, [loading, rows, komentarzeByPlan]);
 
   const filtered = useMemo(() => {
     return (rows ?? []).filter((r) => {
@@ -266,6 +363,15 @@ export function PlanFakturPanel({
     }
     return { total, gotowe };
   }, [filtered]);
+
+  const horyzontyFiltr = useMemo(() => {
+    const set = new Set(HORYZONTY);
+    for (const r of rows ?? []) {
+      const h = String(r.horyzont ?? "").trim();
+      if (h) set.add(h);
+    }
+    return [...set].sort((a, b) => porownajTekst(horyzontNaRRRRMM(a), horyzontNaRRRRMM(b)));
+  }, [rows]);
 
   function przestawSort(kolumna) {
     setSort((prev) => {
@@ -321,6 +427,87 @@ export function PlanFakturPanel({
     });
     if (otwartyCzatId === row.id) setOtwartyCzatId(null);
     setMsg(`Usunięto z planu: KR ${kr}.`);
+  }
+
+  async function dodajNowaFakture(e) {
+    e?.preventDefault?.();
+    if (!czyMozeEdytowac) {
+      alert("Dodawać pozycje do planu mogą kierownik lub administrator.");
+      return;
+    }
+    const opis = String(formNowa.opis ?? "").trim();
+    if (!opis) {
+      setMsg("Podaj opis faktury.");
+      return;
+    }
+    let horyzont = String(formNowa.horyzont ?? "").trim();
+    if (horyzont === "__custom__") {
+      horyzont = String(formNowa.horyzontCustom ?? "").trim();
+    }
+    if (!horyzont) {
+      setMsg("Wybierz horyzont (RRRR-MM).");
+      return;
+    }
+    if (!/^\d{4}-\d{2}$/.test(horyzont) && !HORYZONTY.includes(horyzont) && horyzont !== "inne") {
+      setMsg("Horyzont musi być w formacie RRRR-MM (np. 2026-08).");
+      return;
+    }
+    const kwotaRaw = String(formNowa.kwota_netto ?? "").trim().replace(/\s/g, "").replace(",", ".");
+    let kwota_netto = null;
+    if (kwotaRaw) {
+      const n = Number(kwotaRaw);
+      if (!Number.isFinite(n)) {
+        setMsg("Kwota netto jest nieprawidłowa.");
+        return;
+      }
+      kwota_netto = n;
+    }
+    const mozna = Boolean(formNowa.mozna_fakturowac);
+    const payload = {
+      kr: String(formNowa.kr ?? "").trim() || null,
+      klient: String(formNowa.klient ?? "").trim() || null,
+      opis,
+      horyzont,
+      kwota_netto,
+      bloker: String(formNowa.bloker ?? "").trim() || "brak",
+      odpowiedzialny: String(formNowa.odpowiedzialny ?? "").trim() || null,
+      mozna_fakturowac: mozna,
+      status: mozna ? "gotowe_do_fs" : "plan",
+      zrodlo: "reczne",
+    };
+    setMsg(null);
+    setZapisNowej(true);
+    const { data, error } = await supabase.from("kr_plan_faktury").insert([payload]).select("*").single();
+    setZapisNowej(false);
+    if (error) {
+      setMsg(`Nie udało się dodać faktury: ${error.message}`);
+      return;
+    }
+    setRows((prev) => [...prev, data]);
+    setFormNowa(pustyFormularzNowej());
+    setPokazFormularzNowej(false);
+    setPodswietlonyPlanId(data.id);
+    if (podswietlenieTimer.current) clearTimeout(podswietlenieTimer.current);
+    podswietlenieTimer.current = window.setTimeout(() => {
+      setPodswietlonyPlanId((cur) => (cur === data.id ? null : cur));
+    }, 2600);
+    setMsg(
+      mozna
+        ? `Dodano fakturę (KR ${payload.kr || "—"}) — oznaczono: można wystawić.`
+        : `Dodano fakturę do planu (KR ${payload.kr || "—"}).`,
+    );
+  }
+
+  function otworzCzatProjektu(krKod) {
+    const k = String(krKod ?? "").trim();
+    if (!k) {
+      setMsg("Ta pozycja nie ma numeru KR — uzupełnij KR, żeby otworzyć czat projektu.");
+      return;
+    }
+    setCzatKrKod(k);
+    window.requestAnimationFrame(() => {
+      czatKrRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    });
   }
 
   function wiadomosciDlaWiersza(row) {
@@ -390,12 +577,42 @@ export function PlanFakturPanel({
       [planId]: [...(prev[planId] ?? []), data],
     }));
     setDraftByPlan((prev) => ({ ...prev, [planId]: "" }));
+    oznaczCzatPrzeczytany(planId, [...(komentarzeByPlan[planId] ?? []), data]);
     setMsg(`Dodano wpis — ${autorNazwa}.`);
   }
 
   const moznaUwagi = Boolean(czyMozeEdytowacUwagi);
 
-  const ostatnieWpisy = useMemo(() => {
+  function oznaczCzatPrzeczytany(planId, wiadomosci) {
+    const id = Number(planId);
+    if (!Number.isFinite(id)) return;
+    let maxIso = "";
+    let maxMs = 0;
+    for (const w of wiadomosci ?? []) {
+      const ms = czasWpisMs(w.created_at);
+      if (ms > maxMs) {
+        maxMs = ms;
+        maxIso = w.created_at || new Date(ms).toISOString();
+      }
+    }
+    if (!maxIso) maxIso = new Date().toISOString();
+    setCzatSeen((prev) => {
+      const next = { ...prev, [String(id)]: maxIso };
+      zapiszCzatSeen(next);
+      return next;
+    });
+  }
+
+  function czyRozmowaNieprzeczytana(planId, wiadomosci) {
+    if (!wiadomosci?.length) return false;
+    const lastMs = Math.max(...wiadomosci.map((w) => czasWpisMs(w.created_at)));
+    if (!lastMs) return false;
+    const seenIso = czatSeen[String(planId)];
+    if (!seenIso) return true;
+    return lastMs > czasWpisMs(seenIso);
+  }
+
+  const wszystkieOstatnieWpisy = useMemo(() => {
     const lista = [];
     for (const row of rows ?? []) {
       for (const w of wiadomosciDlaWiersza(row)) {
@@ -411,14 +628,26 @@ export function PlanFakturPanel({
       }
     }
     lista.sort((a, b) => czasWpisMs(b.created_at) - czasWpisMs(a.created_at));
-    return lista.slice(0, 8);
+    return lista;
   }, [rows, komentarzeByPlan]);
+
+  const ostatnieWpisy = useMemo(() => {
+    if (rozwinOstatnieWpisy) return wszystkieOstatnieWpisy;
+    return wszystkieOstatnieWpisy.slice(0, 3);
+  }, [wszystkieOstatnieWpisy, rozwinOstatnieWpisy]);
+
+  function otworzRozmowe(planId) {
+    const row = (rows ?? []).find((r) => r.id === planId);
+    const wiadomosci = row ? wiadomosciDlaWiersza(row) : komentarzeByPlan[planId] ?? [];
+    setOtwartyCzatId(planId);
+    oznaczCzatPrzeczytany(planId, wiadomosci);
+  }
 
   function przejdzDoWpis(planId) {
     setFiltrHoryzont("wszystkie");
     setTylkoGotowe(false);
     setTylkoBlokady(false);
-    setOtwartyCzatId(planId);
+    otworzRozmowe(planId);
     setPodswietlonyPlanId(planId);
     if (podswietlenieTimer.current) clearTimeout(podswietlenieTimer.current);
     window.requestAnimationFrame(() => {
@@ -436,13 +665,14 @@ export function PlanFakturPanel({
     const wiadomosci = wiadomosciDlaWiersza(row);
     const otwarty = otwartyCzatId === row.id;
     const ostatnia = wiadomosci.length ? wiadomosci[wiadomosci.length - 1] : null;
+    const nieprzeczytana = !otwarty && czyRozmowaNieprzeczytana(row.id, wiadomosci);
 
     return (
       <div style={{ display: "grid", gap: "0.35rem", minWidth: "14rem", maxWidth: "22rem" }}>
         {!otwarty ? (
           <button
             type="button"
-            onClick={() => setOtwartyCzatId(row.id)}
+            onClick={() => otworzRozmowe(row.id)}
             style={{
               display: "block",
               width: "100%",
@@ -456,6 +686,7 @@ export function PlanFakturPanel({
               font: "inherit",
               fontSize: "0.78rem",
               lineHeight: 1.35,
+              fontWeight: nieprzeczytana ? 700 : 400,
             }}
           >
             {ostatnia ? (
@@ -464,14 +695,23 @@ export function PlanFakturPanel({
                   {String(ostatnia.tresc).slice(0, 120)}
                   {String(ostatnia.tresc).length > 120 ? "…" : ""}
                 </span>
-                <span style={{ display: "block", marginTop: "0.25rem", fontSize: "0.7rem", color: LIGHT.soft }}>
+                <span
+                  style={{
+                    display: "block",
+                    marginTop: "0.25rem",
+                    fontSize: "0.7rem",
+                    color: LIGHT.soft,
+                    fontWeight: nieprzeczytana ? 700 : 400,
+                  }}
+                >
                   {ostatnia.autor || "—"} · {formatDataUwag(ostatnia.created_at) || "—"}
                   {wiadomosci.length > 1 ? ` · ${wiadomosci.length} wpisów` : ""}
+                  {nieprzeczytana ? " · nieprzeczytane" : ""}
                   {" · otwórz rozmowę"}
                 </span>
               </>
             ) : (
-              <span style={{ color: LIGHT.accent }}>＋ Otwórz rozmowę / dodaj wpis…</span>
+              <span style={{ color: LIGHT.accent, fontWeight: 400 }}>＋ Otwórz rozmowę / dodaj wpis…</span>
             )}
           </button>
         ) : (
@@ -622,10 +862,69 @@ export function PlanFakturPanel({
         Plan faktur sprzedażowych ({filtered.length})
       </h3>
       <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem", color: LIGHT.muted }}>
-        To jest lista od prezesa (lipiec → 2027). <strong style={{ color: LIGHT.text }}>Kierownik</strong> zaznacza
-        „Można fakturować”. Kolumna <strong style={{ color: LIGHT.text }}>Uwagi / rozmowa</strong> działa jak czat:
-        każdy dopisuje swoją wiadomość — widać kto, kiedy i co napisał (nie nadpisuje poprzednich).
+        Lista planowanych faktur. Kolumna <strong style={{ color: LIGHT.text }}>Uwagi / rozmowa</strong> = czat przy pozycji
+        FS. <strong style={{ color: LIGHT.text }}>Czat projektu (KR)</strong> otwierasz przyciskiem przy numerze KR —
+        ten sam wątek co na Tablicy KR.
       </p>
+
+      {czatKrKod ? (
+        <div ref={czatKrRef} style={{ marginBottom: "0.85rem" }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "0.45rem",
+              alignItems: "center",
+              marginBottom: "0.45rem",
+            }}
+          >
+            <strong style={{ fontSize: "0.84rem", color: LIGHT.text }}>
+              Czat projektu KR {czatKrKod}
+            </strong>
+            {typeof onOtworzCzatKr === "function" ? (
+              <button
+                type="button"
+                onClick={() => onOtworzCzatKr(czatKrKod)}
+                style={{
+                  background: "#fff",
+                  border: LIGHT.cardBorder,
+                  borderRadius: 6,
+                  color: LIGHT.accent,
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  padding: "0.15rem 0.45rem",
+                  cursor: "pointer",
+                }}
+              >
+                Otwórz Tablicę KR
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setCzatKrKod(null)}
+              style={{
+                marginLeft: "auto",
+                background: "#fff",
+                border: LIGHT.cardBorder,
+                borderRadius: 6,
+                color: LIGHT.text,
+                fontSize: "0.75rem",
+                padding: "0.15rem 0.45rem",
+                cursor: "pointer",
+              }}
+            >
+              Zamknij czat
+            </button>
+          </div>
+          <KrNotatkiCzat
+            supabase={supabase}
+            kr={czatKrKod}
+            czyMozeEdytowac={Boolean(czyMozeEdytowacUwagi)}
+            autorNazwa={autorUwagiNazwa}
+            autorEmail={autorUwagiEmail}
+          />
+        </div>
+      ) : null}
       {brakTabeliCzat ? (
         <div
           style={{
@@ -642,6 +941,217 @@ export function PlanFakturPanel({
           <code style={{ background: "#fee2e2", padding: "0.05rem 0.25rem", borderRadius: 4 }}>
             g4-app/supabase/kr-plan-faktury-komentarz-czat.sql
           </code>
+        </div>
+      ) : null}
+
+      {czyMozeEdytowac ? (
+        <div style={{ marginBottom: "0.85rem" }}>
+          {!pokazFormularzNowej ? (
+            <button
+              type="button"
+              onClick={() => setPokazFormularzNowej(true)}
+              style={{
+                background: LIGHT.accent,
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "0.4rem 0.85rem",
+                fontWeight: 700,
+                fontSize: "0.84rem",
+                cursor: "pointer",
+              }}
+            >
+              ＋ Dodaj fakturę do planu
+            </button>
+          ) : (
+            <form
+              onSubmit={(e) => void dodajNowaFakture(e)}
+              style={{
+                border: LIGHT.panelBorder,
+                borderRadius: 12,
+                background: LIGHT.cardBg,
+                padding: "0.75rem 0.85rem",
+                display: "grid",
+                gap: "0.55rem",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+                <strong style={{ color: LIGHT.title, fontSize: "0.9rem" }}>Nowa faktura w planie</strong>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPokazFormularzNowej(false);
+                    setFormNowa(pustyFormularzNowej());
+                  }}
+                  style={{
+                    background: "#fff",
+                    border: LIGHT.cardBorder,
+                    borderRadius: 6,
+                    color: LIGHT.text,
+                    fontSize: "0.75rem",
+                    padding: "0.15rem 0.45rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  Anuluj
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(9.5rem, 1fr))",
+                  gap: "0.5rem",
+                }}
+              >
+                <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                  KR
+                  <input
+                    style={inputStyleNowa}
+                    value={formNowa.kr}
+                    onChange={(e) => setFormNowa((p) => ({ ...p, kr: e.target.value }))}
+                    placeholder="np. 1073"
+                  />
+                </label>
+                <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                  Klient
+                  <input
+                    style={inputStyleNowa}
+                    value={formNowa.klient}
+                    onChange={(e) => setFormNowa((p) => ({ ...p, klient: e.target.value }))}
+                    placeholder="Nazwa klienta"
+                  />
+                </label>
+                <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                  Horyzont
+                  <select
+                    style={inputStyleNowa}
+                    value={
+                      HORYZONTY.includes(formNowa.horyzont) || formNowa.horyzont === "__custom__"
+                        ? formNowa.horyzont
+                        : "__custom__"
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFormNowa((p) => ({
+                        ...p,
+                        horyzont: v,
+                        horyzontCustom: v === "__custom__" ? p.horyzontCustom : "",
+                      }));
+                    }}
+                  >
+                    {HORYZONTY.map((h) => (
+                      <option key={h} value={h}>
+                        {h === "inne" ? "Inne" : formatHoryzont(h)}
+                      </option>
+                    ))}
+                    <option value="__custom__">Inny miesiąc (RRRR-MM)…</option>
+                  </select>
+                </label>
+                {(formNowa.horyzont === "__custom__" ||
+                  (!HORYZONTY.includes(formNowa.horyzont) && formNowa.horyzont)) && (
+                  <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                    Miesiąc (RRRR-MM)
+                    <input
+                      style={inputStyleNowa}
+                      type="month"
+                      value={
+                        formNowa.horyzont === "__custom__"
+                          ? formNowa.horyzontCustom
+                          : formNowa.horyzont
+                      }
+                      onChange={(e) =>
+                        setFormNowa((p) => ({
+                          ...p,
+                          horyzont: "__custom__",
+                          horyzontCustom: e.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                )}
+                <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                  Kwota netto
+                  <input
+                    style={inputStyleNowa}
+                    value={formNowa.kwota_netto}
+                    onChange={(e) => setFormNowa((p) => ({ ...p, kwota_netto: e.target.value }))}
+                    placeholder="np. 40000"
+                    inputMode="decimal"
+                  />
+                </label>
+                <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                  Bloker
+                  <select
+                    style={inputStyleNowa}
+                    value={formNowa.bloker}
+                    onChange={(e) => setFormNowa((p) => ({ ...p, bloker: e.target.value }))}
+                  >
+                    {BLOKER_OPCJE.map((b) => (
+                      <option key={b} value={b}>
+                        {BLOKER_LABEL[b]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                  Odpowiedzialny
+                  <input
+                    style={inputStyleNowa}
+                    value={formNowa.odpowiedzialny}
+                    onChange={(e) => setFormNowa((p) => ({ ...p, odpowiedzialny: e.target.value }))}
+                    placeholder="np. Damian"
+                  />
+                </label>
+              </div>
+              <label style={{ fontSize: "0.75rem", color: LIGHT.muted, display: "grid", gap: 4 }}>
+                Opis *
+                <input
+                  style={inputStyleNowa}
+                  value={formNowa.opis}
+                  onChange={(e) => setFormNowa((p) => ({ ...p, opis: e.target.value }))}
+                  placeholder="Krótki opis zakresu / pozycji FS"
+                  required
+                />
+              </label>
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.45rem",
+                  fontSize: "0.84rem",
+                  fontWeight: 700,
+                  color: formNowa.mozna_fakturowac ? LIGHT.readyText : LIGHT.text,
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(formNowa.mozna_fakturowac)}
+                  onChange={(e) => setFormNowa((p) => ({ ...p, mozna_fakturowac: e.target.checked }))}
+                />
+                Można wystawić fakturę (możliwość wystawienia FS)
+              </label>
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                <button
+                  type="submit"
+                  disabled={zapisNowej}
+                  style={{
+                    background: LIGHT.accent,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "0.4rem 0.9rem",
+                    fontWeight: 700,
+                    fontSize: "0.84rem",
+                    cursor: zapisNowej ? "wait" : "pointer",
+                    opacity: zapisNowej ? 0.7 : 1,
+                  }}
+                >
+                  {zapisNowej ? "Zapisywanie…" : "Zapisz w planie"}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       ) : null}
 
@@ -670,9 +1180,9 @@ export function PlanFakturPanel({
             }}
           >
             <option value="wszystkie">Wszystkie</option>
-            {HORYZONTY.map((h) => (
+            {horyzontyFiltr.map((h) => (
               <option key={h} value={h}>
-                {HORYZONT_LABEL[h] || h}
+                {h === "inne" ? "Inne" : formatHoryzont(h)}
               </option>
             ))}
           </select>
@@ -735,13 +1245,17 @@ export function PlanFakturPanel({
           <strong style={{ fontSize: "0.86rem", color: LIGHT.accent }}>Ostatnie wpisy</strong>
           <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>kliknij, żeby otworzyć rozmowę</span>
         </div>
-        {ostatnieWpisy.length === 0 ? (
+        {wszystkieOstatnieWpisy.length === 0 ? (
           <p style={{ margin: "0.45rem 0 0", fontSize: "0.8rem", color: LIGHT.soft }}>
             Brak wiadomości w rozmowach.
           </p>
         ) : (
           <div style={{ display: "grid", gap: "0.35rem", marginTop: "0.5rem" }}>
-            {ostatnieWpisy.map((w) => (
+            {ostatnieWpisy.map((w) => {
+              const row = (rows ?? []).find((r) => r.id === w.planId);
+              const wiadomosci = row ? wiadomosciDlaWiersza(row) : [];
+              const nieprzeczytana = czyRozmowaNieprzeczytana(w.planId, wiadomosci);
+              return (
               <button
                 key={w.key}
                 type="button"
@@ -760,6 +1274,7 @@ export function PlanFakturPanel({
                   color: LIGHT.text,
                   padding: "0.4rem 0.55rem",
                   font: "inherit",
+                  fontWeight: nieprzeczytana ? 700 : 400,
                 }}
               >
                 <span style={{ fontSize: "0.72rem", color: LIGHT.soft, whiteSpace: "nowrap" }}>
@@ -775,7 +1290,31 @@ export function PlanFakturPanel({
                   </span>
                 </span>
               </button>
-            ))}
+              );
+            })}
+            {wszystkieOstatnieWpisy.length > 3 ? (
+              <button
+                type="button"
+                onClick={() => setRozwinOstatnieWpisy((v) => !v)}
+                style={{
+                  marginTop: "0.15rem",
+                  justifySelf: "start",
+                  background: "none",
+                  border: "none",
+                  padding: "0.15rem 0",
+                  color: LIGHT.accent,
+                  font: "inherit",
+                  fontSize: "0.78rem",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                }}
+              >
+                {rozwinOstatnieWpisy
+                  ? "Zwiń"
+                  : `Rozwiń starsze (${wszystkieOstatnieWpisy.length - 3})`}
+              </button>
+            ) : null}
           </div>
         )}
       </div>
@@ -843,13 +1382,14 @@ export function PlanFakturPanel({
                     </th>
                   );
                 })}
-                {czyMozeEdytowac ? <th style={thLight}>Akcja</th> : null}
+                {czyMozeEdytowac ? <th style={thLight}>Akcja</th> : <th style={thLight}>Czat</th>}
               </tr>
             </thead>
             <tbody>
               {filteredSorted.map((r) => {
                 const gotowe = Boolean(r.mozna_fakturowac);
                 const podswietlony = podswietlonyPlanId === r.id;
+                const krKod = String(r.kr ?? "").trim();
                 return (
                   <tr
                     key={r.id}
@@ -864,9 +1404,9 @@ export function PlanFakturPanel({
                       transition: "background 0.35s ease",
                     }}
                   >
-                    <td style={tdLight}>{HORYZONT_LABEL[r.horyzont] || r.horyzont}</td>
+                    <td style={tdLight}>{formatHoryzont(r.horyzont)}</td>
                     <td style={tdLight}>
-                      <strong>{r.kr || "—"}</strong>
+                      <strong>{krKod || "—"}</strong>
                     </td>
                     <td style={tdLight}>{r.klient || "—"}</td>
                     <td style={{ ...tdLight, maxWidth: "18rem" }}>{r.opis || "—"}</td>
@@ -894,26 +1434,51 @@ export function PlanFakturPanel({
                         {gotowe ? "TAK" : "nie"}
                       </label>
                     </td>
-                    {czyMozeEdytowac ? (
-                      <td style={tdLight}>
+                    <td style={tdLight}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", alignItems: "flex-start" }}>
                         <button
                           type="button"
+                          disabled={!krKod}
+                          title={
+                            krKod
+                              ? `Otwórz czat notatek projektu KR ${krKod}`
+                              : "Brak numeru KR przy tej pozycji"
+                          }
+                          onClick={() => otworzCzatProjektu(krKod)}
                           style={{
-                            background: "#fff",
-                            padding: "0.15rem 0.45rem",
-                            fontSize: "0.75rem",
-                            color: LIGHT.danger,
-                            border: "1px solid #fca5a5",
+                            background: krKod ? LIGHT.accent : "#e2e8f0",
+                            color: krKod ? "#fff" : "#94a3b8",
+                            border: "none",
                             borderRadius: 6,
-                            cursor: "pointer",
+                            padding: "0.25rem 0.55rem",
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                            cursor: krKod ? "pointer" : "not-allowed",
+                            whiteSpace: "nowrap",
                           }}
-                          title="Usuń z planu (np. FS już wystawiona)"
-                          onClick={() => void usunPlan(r)}
                         >
-                          Usuń
+                          {krKod ? `Czat KR ${krKod}` : "Czat KR"}
                         </button>
-                      </td>
-                    ) : null}
+                        {czyMozeEdytowac ? (
+                          <button
+                            type="button"
+                            style={{
+                              background: "#fff",
+                              padding: "0.15rem 0.45rem",
+                              fontSize: "0.75rem",
+                              color: LIGHT.danger,
+                              border: "1px solid #fca5a5",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                            }}
+                            title="Usuń z planu (np. FS już wystawiona)"
+                            onClick={() => void usunPlan(r)}
+                          >
+                            Usuń
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}

@@ -3,6 +3,7 @@ import { FakturaKosztowaEdycjaModal } from "./FakturaKosztowaEdycjaModal.jsx";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { PlanFakturPanel } from "./PlanFakturPanel.jsx";
+import { KrNotatkiCzat } from "./KrNotatkiCzat.jsx";
 import { ProtokolyTerPanel } from "./ProtokolyTerPanel.jsx";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 import { TerenPlanningBoard } from "./TerenPlanningBoard.jsx";
@@ -1838,7 +1839,7 @@ const KR_PROJEKT_MENU = [
   {
     id: "przeglad",
     label: "Tablica KR",
-    help: "Pierwszy ekran projektu: skrót etapów, co pilne, ostatnie zgłoszenia i szybkie przejścia.",
+    help: "Pierwszy ekran projektu: czat notatek, skrót etapów, co pilne i szybkie przejścia.",
   },
   {
     id: "faktury",
@@ -8039,6 +8040,15 @@ export default function App() {
             </p>
           ) : null}
         </div>
+        <KrNotatkiCzat
+          supabase={supabase}
+          kr={kr}
+          czyMozeEdytowac={Boolean(session?.user)}
+          autorNazwa={
+            pracownikPowiazanyZSesja?.imie_nazwisko?.trim() || session?.user?.email || ""
+          }
+          autorEmail={session?.user?.email || ""}
+        />
         <div style={op.kpiGrid}>
           <OpKpiCard
             label="Alerty (ten projekt)"
@@ -8559,6 +8569,15 @@ export default function App() {
       );
       return (
         <>
+          <KrNotatkiCzat
+            supabase={supabase}
+            kr={krK}
+            czyMozeEdytowac={Boolean(session?.user)}
+            autorNazwa={
+              pracownikPowiazanyZSesja?.imie_nazwisko?.trim() || session?.user?.email || ""
+            }
+            autorEmail={session?.user?.email || ""}
+          />
           <div
             style={{
               marginBottom: "1rem",
@@ -13939,7 +13958,7 @@ export default function App() {
                   {fakturowanieSekcja === "biezace_kr"
                     ? "Lista KR ze statusem „w trakcie” (projekty bieżące). Kolumna „W trakcie fakturowania” to osobna flaga w bazie — włącz ją dla KR, które aktualnie rozliczacie."
                     : fakturowanieSekcja === "plan_faktur"
-                      ? "Planowane faktury sprzedażowe z listy prezesa. Kierownik zaznacza „można fakturować” — wtedy księgowość wie, że wolno wystawić FS."
+                      ? "Planowane faktury. Czat pozycji FS = kolumna „Uwagi / rozmowa”. Czat całego projektu KR = kliknij numer KR lub „Czat KR” (ten sam wątek co na Tablicy KR)."
                     : fakturowanieSekcja === "etapy"
                       ? "Tu pojawią się etapy procesu fakturowania projektów (statusy, kolejność, powiązanie z KR)."
                       : fakturowanieSekcja === "protokoly"
@@ -13961,6 +13980,17 @@ export default function App() {
                     ""
                   }
                   autorUwagiEmail={session?.user?.email || ""}
+                  onOtworzCzatKr={(krKod) => {
+                    const k = String(krKod ?? "").trim();
+                    if (!k) return;
+                    otworzKrPoKodzie(k);
+                    window.setTimeout(() => {
+                      document.getElementById("kr-notatki-czat")?.scrollIntoView?.({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                    }, 350);
+                  }}
                 />
               ) : null}
 
@@ -20119,7 +20149,7 @@ export default function App() {
                     id: "fakturowanie_plan",
                     label: "Plan faktur FS",
                     sekcja: "plan_faktur",
-                    help: "Kolejka planowanych faktur — kierownik zaznacza „można fakturować”.",
+                    help: "Kolejka planowanych faktur — dodawanie pozycji i zaznaczanie „można fakturować”.",
                   },
                   {
                     id: "fakturowanie_etapy",

@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  buildProtokolHtml,
+  buildTerHtml,
+  computeTerRows,
+  openHtmlInNewWindow,
+} from "./terDokumentyHtml.js";
 
 function formatPln(n) {
   if (n == null || n === "") return "—";
@@ -529,6 +535,75 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
     await fetchRows();
   }
 
+  function naglowekDto() {
+    if (!wybrane) return {};
+    return {
+      kr: wybrane.kr,
+      nazwa_kontraktu: naglowekDraft.nazwa || wybrane.nazwa_kontraktu,
+      klient: naglowekDraft.firma || wybrane.klient,
+      nr_umowy: wybrane.nr_umowy,
+      suma_kontraktu: wybrane.suma_kontraktu,
+    };
+  }
+
+  function wszystkieLinie() {
+    const out = [];
+    for (const pr of protokoly) {
+      const lista = linieByProt[pr.id] || [];
+      for (const lin of lista) out.push(lin);
+    }
+    return out;
+  }
+
+  function uzupelnijLinieOpisem(linie) {
+    return (linie || []).map((lin) => {
+      const poz = pozycje.find((p) => Number(p.pozycja_id) === Number(lin.pozycja_id));
+      if (!poz) return lin;
+      return {
+        ...lin,
+        lp: lin.lp || poz.lp,
+        opis: lin.opis || poz.opis,
+      };
+    });
+  }
+
+  function generujProtokolDokument(pr) {
+    if (!wybrane || !pr) return;
+    try {
+      const linie = uzupelnijLinieOpisem(linieByProt[pr.id] || []);
+      const htmlDoc = buildProtokolHtml({
+        naglowek: naglowekDto(),
+        protokol: pr,
+        linie,
+      });
+      openHtmlInNewWindow(htmlDoc);
+      setMsg(`Otwarto protokół ${pr.numer || wybrane.kr} — Drukuj / Zapisz jako PDF.`);
+    } catch (e) {
+      setMsg(`Generowanie protokołu: ${e?.message || e}`);
+    }
+  }
+
+  function generujTerDokument(pr = null) {
+    if (!wybrane) return;
+    try {
+      const pid = pr?.id != null ? Number(pr.id) : null;
+      const terRows = computeTerRows(pozycje, wszystkieLinie(), protokoly, pid);
+      const htmlDoc = buildTerHtml({
+        naglowek: naglowekDto(),
+        protokol: pr,
+        terRows,
+      });
+      openHtmlInNewWindow(htmlDoc);
+      setMsg(
+        pr
+          ? `Otwarto tabelę TER dla protokołu ${pr.numer || pr.id}.`
+          : "Otwarto tabelę TER (bez wybranego protokołu — L=0).",
+      );
+    } catch (e) {
+      setMsg(`Generowanie TER: ${e?.message || e}`);
+    }
+  }
+
   const sumy = useMemo(() => {
     let kontrakt = 0;
     let wyk = 0;
@@ -546,6 +621,32 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
       pozostaloKontrakt: kontrakt - fs,
     };
   }, [rows]);
+
+  /** Przy wyborze KR z listy — pokazuj tylko ten wiersz w tabeli. */
+  const rowsWidoczne = useMemo(() => {
+    const filtr = String(wyborKrSelect ?? "").trim();
+    if (!filtr) return rows ?? [];
+    const n = normKr(filtr);
+    return (rows ?? []).filter((r) => normKr(r.kr) === n);
+  }, [rows, wyborKrSelect]);
+
+  const sumyWidoczne = useMemo(() => {
+    let kontrakt = 0;
+    let wyk = 0;
+    let fs = 0;
+    for (const r of rowsWidoczne) {
+      kontrakt += Number(r.suma_kontraktu) || 0;
+      wyk += Number(r.wykonano ?? r.suma_protokolow) || 0;
+      fs += Number(r.suma_faktur_fs) || 0;
+    }
+    return {
+      kontrakt,
+      wyk,
+      fs,
+      pozostaloProtokoly: kontrakt - wyk,
+      pozostaloKontrakt: kontrakt - fs,
+    };
+  }, [rowsWidoczne]);
 
   return (
     <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
@@ -603,9 +704,9 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
           </button>
         ) : null}
         <span style={{ ...op.muted, fontSize: "0.84rem" }}>
-          KR: {rows.length} · kontrakty {formatPln(sumy.kontrakt)} · FS {formatPln(sumy.fs)} · pozostało handlowo{" "}
-          {formatPln(sumy.pozostaloKontrakt)} · protokołami {formatPln(sumy.wyk)} / pozostało{" "}
-          {formatPln(sumy.pozostaloProtokoly)}
+          {wyborKrSelect
+            ? `Wybrane KR: ${wyborKrSelect} · kontrakt ${formatPln(sumyWidoczne.kontrakt)} · FS ${formatPln(sumyWidoczne.fs)} · pozostało handlowo ${formatPln(sumyWidoczne.pozostaloKontrakt)}`
+            : `Wszystkie KR: ${rows.length} · kontrakty ${formatPln(sumy.kontrakt)} · FS ${formatPln(sumy.fs)} · pozostało handlowo ${formatPln(sumy.pozostaloKontrakt)} · protokołami ${formatPln(sumy.wyk)} / pozostało ${formatPln(sumy.pozostaloProtokoly)}`}
         </span>
       </div>
 
@@ -663,6 +764,11 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
         <p style={s.muted}>Ładowanie…</p>
       ) : rows.length === 0 ? (
         <p style={s.muted}>Brak rozliczeń TER — dodaj KR albo uruchom seed szablonu w Supabase.</p>
+      ) : rowsWidoczne.length === 0 ? (
+        <p style={s.muted}>
+          Brak wiersza TER dla wybranego KR {wyborKrSelect}.{" "}
+          {czyMozeEdytowac ? "Rozliczenie powinno utworzyć się przy wyborze z listy — odśwież." : ""}
+        </p>
       ) : (
         <div style={{ ...s.tableWrap, borderRadius: "12px", overflow: "auto", marginBottom: "1rem" }}>
           <table style={{ ...s.table, fontSize: "0.84rem" }}>
@@ -681,7 +787,7 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {rowsWidoczne.map((r) => {
                 const active = Number(r.rozliczenie_id) === Number(wybraneId);
                 const pozostaloKontrakt =
                   r.pozostalo_kontrakt != null
@@ -701,7 +807,7 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
                           ...s.btnGhost,
                           padding: "0.1rem 0.35rem",
                           fontWeight: 700,
-                          color: "#fdba74",
+                          color: "#c2410c",
                         }}
                         onClick={() => setWybraneId(r.rozliczenie_id)}
                       >
@@ -742,7 +848,18 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
           </h4>
           <p style={{ ...op.muted, marginTop: 0, marginBottom: "0.55rem", fontSize: "0.82rem" }}>
             Edytowalna tabela szczegółów: nazwa obiektu, firma, suma — poniżej etapy TER i protokoły.
+            Generowanie dokumentów: HTML → Drukuj / Zapisz jako PDF.
           </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginBottom: "0.75rem" }}>
+            <button
+              type="button"
+              style={s.btnGhost}
+              onClick={() => generujTerDokument(null)}
+              title="Tabela TER dla całego KR (L=0, K=narastająco)"
+            >
+              Generuj tabelę TER
+            </button>
+          </div>
 
           <div style={{ ...s.tableWrap, borderRadius: "10px", overflow: "auto", marginBottom: "0.65rem" }}>
             <table style={{ ...s.table, fontSize: "0.82rem", maxWidth: "42rem" }}>
@@ -1075,6 +1192,7 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
                       <th style={s.th}>Status</th>
                       <th style={s.th}>Uwagi</th>
                       <th style={s.th}>Wartość L</th>
+                      <th style={s.th}>Dokumenty</th>
                       {czyMozeEdytowac ? <th style={s.th} /> : null}
                     </tr>
                   </thead>
@@ -1147,6 +1265,24 @@ export function ProtokolyTerPanel({ supabase, styles: s, op, czyMozeEdytowac, kr
                             </>
                           )}
                           <td style={{ ...s.td, textAlign: "right" }}>{formatPln(sumaL)}</td>
+                          <td style={s.td}>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                                onClick={() => generujProtokolDokument(pr)}
+                              >
+                                Protokół
+                              </button>
+                              <button
+                                type="button"
+                                style={{ ...s.btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                                onClick={() => generujTerDokument(pr)}
+                              >
+                                TER
+                              </button>
+                            </div>
+                          </td>
                           {czyMozeEdytowac ? (
                             <td style={s.td}>
                               <button
