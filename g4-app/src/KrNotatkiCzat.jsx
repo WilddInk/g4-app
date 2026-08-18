@@ -153,13 +153,13 @@ export function KrNotatkiCzat({
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", alignItems: "baseline" }}>
-        <strong style={{ fontSize: "0.9rem", color: LIGHT.accent }}>Notatki / czat projektu</strong>
+        <strong style={{ fontSize: "0.9rem", color: LIGHT.accent }}>CZAT KR</strong>
         <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>
           KR {krKod} · najnowsze na górze
         </span>
       </div>
       <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.78rem", color: LIGHT.muted, lineHeight: 1.45 }}>
-        Główny wątek przy projekcie — dopisuj ustalenia, pytania i decyzje. Widać kto i kiedy napisał.
+        Wątki projektu — dopisują użytkownicy i kierownicy. Ten sam CZAT KR co w Fakturowaniu.
       </p>
 
       {brakTabeli ? (
