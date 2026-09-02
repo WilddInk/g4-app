@@ -11,6 +11,7 @@ import {
   polaDatyGodzinyZIso,
   przepiszMojeWpisyNaNotatkiSpotkania,
   trescKoniecSpotkania,
+  trescPoczatekSpotkania,
   upsertZnacznikPoczatek,
   useSpotkanieKierownikow,
   zapiszSpotkanie,
@@ -198,6 +199,8 @@ export function CzatKrPanel({
   const [przepisBusy, setPrzepisBusy] = useState(false);
   const [edycjaData, setEdycjaData] = useState("");
   const [edycjaGodzina, setEdycjaGodzina] = useState("");
+  const [godzinaDraft, setGodzinaDraft] = useState({});
+  const [zapisGodzinyId, setZapisGodzinyId] = useState(null);
 
   useEffect(() => {
     if (!spotkanie.startIso) return;
@@ -271,7 +274,7 @@ export function CzatKrPanel({
     const meta = new Map();
     for (const w of wpisy) {
       const k = String(w.kr ?? "").trim();
-      if (!k || czyKrPlaceholder(k)) continue;
+      if (!k) continue;
       const prev = meta.get(k);
       const ms = czasMs(w.created_at);
       if (!prev) {
@@ -292,6 +295,9 @@ export function CzatKrPanel({
     let list = [...meta.values()];
     if (q) list = list.filter((x) => x.kr.toLowerCase().includes(q));
     list.sort((a, b) => {
+      const pa = czyKrPlaceholder(a.kr) ? 1 : 0;
+      const pb = czyKrPlaceholder(b.kr) ? 1 : 0;
+      if (pa !== pb) return pa - pb;
       if (b.lastMs !== a.lastMs) return b.lastMs - a.lastMs;
       if (b.count !== a.count) return b.count - a.count;
       return a.kr.localeCompare(b.kr, "pl", { numeric: true });
@@ -547,6 +553,57 @@ export function CzatKrPanel({
   function anulujEdycje() {
     setEdycjaId(null);
     setEdycjaTresc("");
+  }
+
+  function polaGodzinyWpisu(w) {
+    return godzinaDraft[w.id] || polaDatyGodzinyZIso(w.created_at);
+  }
+
+  function ustawGodzineDraft(w, patch) {
+    setGodzinaDraft((prev) => ({
+      ...prev,
+      [w.id]: { ...polaDatyGodzinyZIso(w.created_at), ...(prev[w.id] || {}), ...patch },
+    }));
+  }
+
+  async function zapiszGodzineWpisu(w) {
+    if (!czyMozePisac || !w?.id) return;
+    const pola = polaGodzinyWpisu(w);
+    const iso = isoZDatyIGodziny(pola.data, pola.godzina);
+    if (Number.isNaN(new Date(iso).getTime())) {
+      setMsg("Podaj poprawną datę i godzinę wpisu.");
+      return;
+    }
+    const patch = { created_at: iso };
+    if (czyZnacznikPoczatek(w)) patch.tresc = trescPoczatekSpotkania(iso);
+    if (czyZnacznikKoniec(w)) patch.tresc = trescKoniecSpotkania(spotkanie.startIso, iso);
+    setZapisGodzinyId(w.id);
+    setMsg(null);
+    const { data, error } = await supabase
+      .from("kr_notatka")
+      .update(patch)
+      .eq("id", w.id)
+      .select("id, kr, tresc, autor, autor_email, created_at")
+      .single();
+    setZapisGodzinyId(null);
+    if (error) {
+      setMsg(`Nie udało się zapisać godziny: ${error.message}`);
+      return;
+    }
+    setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
+    setGodzinaDraft((prev) => {
+      const next = { ...prev };
+      delete next[w.id];
+      return next;
+    });
+    if (czyZnacznikPoczatek(w) && spotkanie.aktywne) {
+      zapiszSpotkanie({
+        aktywne: true,
+        startIso: iso,
+        startKr: String(w.kr ?? wybranyKr ?? "").trim(),
+      });
+    }
+    setMsg(`Zapisano godzinę wpisu: ${formatData(iso)}.`);
   }
 
   async function zapiszEdycje(e) {
@@ -1046,10 +1103,78 @@ export function CzatKrPanel({
                             cursor: "pointer",
                           }}
                         >
-                          Edytuj wpis
+                          Edytuj treść
                         </button>
                       ) : null}
                     </div>
+                    {czyMozePisac && edycjaId !== w.id ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          alignItems: "flex-end",
+                          gap: "0.4rem",
+                          marginBottom: "0.45rem",
+                          padding: "0.4rem 0.45rem",
+                          borderRadius: 8,
+                          background: "#fff7ed",
+                          border: "1px solid #fdba74",
+                        }}
+                      >
+                        <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#9a3412", width: "100%" }}>
+                          Zmień datę i godzinę tego wpisu
+                        </span>
+                        <label style={{ display: "grid", gap: 2, fontSize: "0.7rem", fontWeight: 700, color: "#9a3412" }}>
+                          Data
+                          <input
+                            type="date"
+                            value={polaGodzinyWpisu(w).data}
+                            onChange={(e) => ustawGodzineDraft(w, { data: e.target.value })}
+                            style={{
+                              ...inputSt,
+                              width: "11rem",
+                              fontSize: "0.95rem",
+                              fontWeight: 700,
+                              padding: "0.35rem 0.4rem",
+                              border: "1px solid #fb923c",
+                            }}
+                          />
+                        </label>
+                        <label style={{ display: "grid", gap: 2, fontSize: "0.7rem", fontWeight: 700, color: "#9a3412" }}>
+                          Godzina
+                          <input
+                            type="time"
+                            value={polaGodzinyWpisu(w).godzina}
+                            onChange={(e) => ustawGodzineDraft(w, { godzina: e.target.value })}
+                            style={{
+                              ...inputSt,
+                              width: "8rem",
+                              fontSize: "0.95rem",
+                              fontWeight: 700,
+                              padding: "0.35rem 0.4rem",
+                              border: "1px solid #fb923c",
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={zapisGodzinyId === w.id}
+                          onClick={() => void zapiszGodzineWpisu(w)}
+                          style={{
+                            background: "#c2410c",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: 8,
+                            fontSize: "0.8rem",
+                            fontWeight: 800,
+                            padding: "0.4rem 0.7rem",
+                            cursor: zapisGodzinyId === w.id ? "wait" : "pointer",
+                          }}
+                        >
+                          {zapisGodzinyId === w.id ? "Zapisuję godzinę…" : "Zapisz godzinę"}
+                        </button>
+                      </div>
+                    ) : null}
                     {edycjaId === w.id ? (
                       <div style={{ display: "grid", gap: "0.4rem" }}>
                         <textarea
