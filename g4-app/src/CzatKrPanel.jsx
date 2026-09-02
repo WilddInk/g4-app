@@ -192,9 +192,14 @@ export function CzatKrPanel({
   const [zadanieDeadline, setZadanieDeadline] = useState("");
   const [zapisZadania, setZapisZadania] = useState(false);
   const spotkanie = useSpotkanieKierownikow();
-  const polaStart = polaDatyGodzinyZIso(spotkanie.startIso || new Date().toISOString());
-  const [spotkanieData, setSpotkanieData] = useState(polaStart.data);
-  const [spotkanieGodzina, setSpotkanieGodzina] = useState(polaStart.godzina);
+  const polaOdInit = polaDatyGodzinyZIso(
+    spotkanie.startIso || new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+  );
+  const polaDoInit = polaDatyGodzinyZIso(new Date().toISOString());
+  const [spotkanieData, setSpotkanieData] = useState(polaOdInit.data);
+  const [spotkanieGodzina, setSpotkanieGodzina] = useState(polaOdInit.godzina);
+  const [spotkanieDataDo, setSpotkanieDataDo] = useState(polaDoInit.data);
+  const [spotkanieGodzinaDo, setSpotkanieGodzinaDo] = useState(polaDoInit.godzina);
   const [notatkaGodzina, setNotatkaGodzina] = useState(() => polaDatyGodzinyZIso().godzina);
   const [przepisBusy, setPrzepisBusy] = useState(false);
   const [edycjaData, setEdycjaData] = useState("");
@@ -455,7 +460,7 @@ export function CzatKrPanel({
         return [data, ...bez];
       });
     }
-    const doIso = new Date().toISOString();
+    const doIso = isoZDatyIGodziny(spotkanieDataDo, spotkanieGodzinaDo);
     const wynik = await przepiszMojeWpisyNaNotatkiSpotkania(supabase, {
       odIso: startIso,
       doIso,
@@ -520,6 +525,46 @@ export function CzatKrPanel({
       ),
     });
     setPrzepisBusy(false);
+  }
+
+  async function zamienMojeWpisyOdDo() {
+    if (!czyMozePisac) return;
+    const odIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
+    const doIso = isoZDatyIGodziny(spotkanieDataDo, spotkanieGodzinaDo);
+    if (new Date(doIso).getTime() < new Date(odIso).getTime()) {
+      setMsg("Godzina „do” musi być późniejsza niż „od”.");
+      return;
+    }
+    const ok = window.confirm(
+      `Zamienić Twoje wpisy od ${formatData(odIso)} do ${formatData(doIso)} na „Notatka ze spotkania kierowników” (zamiast nazwiska)?`,
+    );
+    if (!ok) return;
+    setMsg(null);
+    setPrzepisBusy(true);
+    const wynik = await przepiszMojeWpisyNaNotatkiSpotkania(supabase, {
+      odIso,
+      doIso,
+      nazwa: autorNazwa,
+      email: autorEmail,
+    });
+    setPrzepisBusy(false);
+    if (wynik.error) {
+      setMsg(`Nie udało się przepisać wpisów: ${wynik.error.message}`);
+      return;
+    }
+    scalPrzepisaneWpisy(wynik.ids);
+    zapiszSpotkanie({
+      aktywne: true,
+      startIso: odIso,
+      startKr: String(wybranyKr ?? "").trim(),
+    });
+    const ile = wynik.liczba;
+    setMsg(
+      ile
+        ? `Przepisano ${ile} ${ile === 1 ? "wpis" : "wpisów"} z ${formatData(odIso)} – ${formatData(doIso)} na notatki ze spotkania kierowników.`
+        : `W tym zakresie nie znaleziono Twoich wpisów do przepisania (${formatData(odIso)} – ${formatData(doIso)}).`,
+    );
+    await fetchWpisy();
   }
 
   async function zakonczSpotkanie() {
@@ -788,106 +833,132 @@ export function CzatKrPanel({
           aria-label="Spotkanie kierowników"
           style={{
             marginTop: "0.65rem",
-            padding: "0.7rem 0.75rem",
+            padding: "0.75rem 0.8rem",
             borderRadius: 10,
             background: LIGHT.znacznikBg,
             border: LIGHT.spotkanieBorder,
             color: LIGHT.spotkanieText,
           }}
         >
-          <strong style={{ fontSize: "0.95rem" }}>Spotkanie kierowników — data i godzina</strong>
-          <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.8rem", lineHeight: 1.45 }}>
-            Ustaw <strong>datę</strong> i <strong>godzinę początku</strong> (może być wstecz, np. 2 godziny wcześniej).
-            Notatki zapisują się do KR wybranego po lewej — kliknij numer projektu, nie „???”.
-            {wybranyKr && !czyKrPlaceholder(wybranyKr) ? (
-              <> Teraz wybrany KR: <strong>{wybranyKr}</strong>.</>
-            ) : (
-              <> <strong>Wybierz KR po lewej.</strong></>
-            )}
+          <strong style={{ fontSize: "1rem" }}>Spotkanie kierowników — zakres OD / DO</strong>
+          <p style={{ margin: "0.4rem 0 0.65rem", fontSize: "0.82rem", lineHeight: 1.45 }}>
+            Ustaw, od kiedy do kiedy trwało spotkanie (może być kilka godzin albo kilka dni wstecz).
+            Potem kliknij pomarańczowy przycisk — Twoje wpisy z tego czasu (np. „Monika Jakubowska”)
+            zamienią się na <strong>Notatka ze spotkania kierowników</strong>.
           </p>
           <div
             style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "0.55rem",
-              alignItems: "flex-end",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
+              gap: "0.65rem",
+              marginBottom: "0.65rem",
             }}
           >
-            <label style={{ display: "grid", gap: 4, fontSize: "0.78rem", fontWeight: 800 }}>
-              Data
-              <input
-                type="date"
-                value={spotkanieData}
-                onChange={(e) => setSpotkanieData(e.target.value)}
-                style={{
-                  ...inputSt,
-                  width: "11.5rem",
-                  fontSize: "1rem",
-                  fontWeight: 700,
-                  padding: "0.4rem 0.5rem",
-                  border: LIGHT.spotkanieBorder,
-                }}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 4, fontSize: "0.78rem", fontWeight: 800 }}>
-              Godzina początku
-              <input
-                type="time"
-                value={spotkanieGodzina}
-                onChange={(e) => setSpotkanieGodzina(e.target.value)}
-                style={{
-                  ...inputSt,
-                  width: "8.5rem",
-                  fontSize: "1rem",
-                  fontWeight: 700,
-                  padding: "0.4rem 0.5rem",
-                  border: LIGHT.spotkanieBorder,
-                }}
-              />
-            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "flex-end" }}>
+              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
+                OD — data
+                <input
+                  type="date"
+                  value={spotkanieData}
+                  onChange={(e) => setSpotkanieData(e.target.value)}
+                  style={{
+                    ...inputSt,
+                    width: "11.5rem",
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                    padding: "0.4rem 0.5rem",
+                    border: LIGHT.spotkanieBorder,
+                  }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
+                OD — godzina
+                <input
+                  type="time"
+                  value={spotkanieGodzina}
+                  onChange={(e) => setSpotkanieGodzina(e.target.value)}
+                  style={{
+                    ...inputSt,
+                    width: "8.5rem",
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                    padding: "0.4rem 0.5rem",
+                    border: LIGHT.spotkanieBorder,
+                  }}
+                />
+              </label>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "flex-end" }}>
+              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
+                DO — data
+                <input
+                  type="date"
+                  value={spotkanieDataDo}
+                  onChange={(e) => setSpotkanieDataDo(e.target.value)}
+                  style={{
+                    ...inputSt,
+                    width: "11.5rem",
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                    padding: "0.4rem 0.5rem",
+                    border: LIGHT.spotkanieBorder,
+                  }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
+                DO — godzina
+                <input
+                  type="time"
+                  value={spotkanieGodzinaDo}
+                  onChange={(e) => setSpotkanieGodzinaDo(e.target.value)}
+                  style={{
+                    ...inputSt,
+                    width: "8.5rem",
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                    padding: "0.4rem 0.5rem",
+                    border: LIGHT.spotkanieBorder,
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+            <button
+              type="button"
+              disabled={wysylanie || przepisBusy}
+              onClick={() => void zamienMojeWpisyOdDo()}
+              style={{
+                background: "#c2410c",
+                border: "none",
+                borderRadius: 8,
+                color: "#fff",
+                fontSize: "0.92rem",
+                fontWeight: 800,
+                padding: "0.55rem 0.9rem",
+                cursor: przepisBusy ? "wait" : "pointer",
+              }}
+            >
+              {przepisBusy ? "Zamieniam wpisy…" : "Zamień moje wpisy OD–DO na notatki ze spotkania"}
+            </button>
             <button
               type="button"
               disabled={wysylanie || przepisBusy}
               onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
               style={{
-                background: spotkanie.aktywne ? "#b45309" : LIGHT.spotkanieText,
-                border: "none",
-                borderRadius: 8,
-                color: "#fff",
-                fontSize: "0.84rem",
-                fontWeight: 800,
-                padding: "0.45rem 0.75rem",
-                cursor: wysylanie ? "wait" : "pointer",
-              }}
-            >
-              {spotkanie.aktywne ? "Zakończ spotkanie" : "Rozpocznij i przepisz wpisy wstecz"}
-            </button>
-            <button
-              type="button"
-              disabled={wysylanie || przepisBusy}
-              onClick={() => void zastosujDateSpotkaniaWstecz()}
-              style={{
                 background: "#fff",
                 border: LIGHT.spotkanieBorder,
                 borderRadius: 8,
                 color: LIGHT.spotkanieText,
-                fontSize: "0.84rem",
+                fontSize: "0.82rem",
                 fontWeight: 800,
-                padding: "0.45rem 0.75rem",
-                cursor: przepisBusy ? "wait" : "pointer",
+                padding: "0.5rem 0.75rem",
+                cursor: wysylanie ? "wait" : "pointer",
               }}
             >
-              {przepisBusy ? "Przepisuję…" : "Zastosuj godzinę wstecz"}
+              {spotkanie.aktywne ? "Zakończ spotkanie" : "Włącz tryb notowania"}
             </button>
           </div>
-          {spotkanie.aktywne ? (
-            <p style={{ margin: "0.55rem 0 0", fontSize: "0.78rem", lineHeight: 1.4 }}>
-              Trwa spotkanie
-              {spotkanie.startIso ? ` od ${formatData(spotkanie.startIso)}` : ""}.
-              Wpisy jako <strong>Notatka ze spotkania</strong>, bez Twojego nazwiska.
-              Godzinę tej notatki ustawiasz przy polu wiadomości na dole.
-            </p>
-          ) : null}
         </div>
       ) : null}
 

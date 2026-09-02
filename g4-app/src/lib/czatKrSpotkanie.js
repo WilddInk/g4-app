@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 /** Widoczny autor notatek z posiedzenia — bez nazwiska osoby, która pisze. */
-export const SPOTKANIE_AUTOR_NOTATKA = "Notatka ze spotkania";
+export const SPOTKANIE_AUTOR_NOTATKA = "Notatka ze spotkania kierowników";
 /** Autor znaczników początek / koniec. */
 export const SPOTKANIE_AUTOR_ZNACZNIK = "Spotkanie kierowników";
 
@@ -10,6 +10,12 @@ const EVENT = "g4-czat-kr-spotkanie";
 
 const POCZATEK = "Początek spotkania kierowników";
 const KONIEC = "Koniec spotkania kierowników";
+
+const AUTORZY_SPOTKANIA = new Set([
+  SPOTKANIE_AUTOR_NOTATKA,
+  SPOTKANIE_AUTOR_ZNACZNIK,
+  "Notatka ze spotkania",
+]);
 
 export function formatDataSpotkania(iso) {
   if (!iso) return "";
@@ -61,7 +67,7 @@ export function czyZnacznikKoniec(w) {
 
 export function czyWpisSpotkania(w) {
   const a = String(w?.autor ?? "").trim();
-  if (a === SPOTKANIE_AUTOR_NOTATKA || a === SPOTKANIE_AUTOR_ZNACZNIK) return true;
+  if (AUTORZY_SPOTKANIA.has(a)) return true;
   return czyZnacznikPoczatek(w) || czyZnacznikKoniec(w);
 }
 
@@ -70,6 +76,21 @@ export function etykietaAutoraWpisu(w) {
   if (czyZnacznikPoczatek(w) || czyZnacznikKoniec(w)) return SPOTKANIE_AUTOR_ZNACZNIK;
   if (czyWpisSpotkania(w)) return SPOTKANIE_AUTOR_NOTATKA;
   return String(w?.autor ?? "").trim() || String(w?.autor_email ?? "").trim() || "—";
+}
+
+export function datetimeLocalZIso(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return datetimeLocalZIso(new Date().toISOString());
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function isoZDatetimeLocal(value) {
+  const v = String(value ?? "").trim();
+  if (!v) return new Date().toISOString();
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return new Date().toISOString();
+  return d.toISOString();
 }
 
 export function polaDatyGodzinyZIso(iso) {
@@ -91,19 +112,6 @@ export function czyKrPlaceholder(kr) {
   if (!k) return true;
   return /^[?¿*._\-\s/]+$/.test(k);
 }
-  const d = iso ? new Date(iso) : new Date();
-  if (Number.isNaN(d.getTime())) return datetimeLocalZIso(new Date().toISOString());
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-export function isoZDatetimeLocal(value) {
-  const v = String(value ?? "").trim();
-  if (!v) return new Date().toISOString();
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return new Date().toISOString();
-  return d.toISOString();
-}
 
 /** Osobisty wpis zalogowanej osoby — nie znacznik i nie notatka ze spotkania. */
 export function czyMojOsobistyWpis(w, { nazwa, email } = {}) {
@@ -112,8 +120,10 @@ export function czyMojOsobistyWpis(w, { nazwa, email } = {}) {
   const e = String(w?.autor_email ?? "").trim().toLowerCase();
   const n = String(nazwa ?? "").trim().toLowerCase();
   const em = String(email ?? "").trim().toLowerCase();
-  if (em && (e === em || a === em)) return true;
-  if (n && a === n) return true;
+  if (em && e && (e === em || a === em)) return true;
+  if (n && a && (a === n || a.includes(n) || n.includes(a))) return true;
+  const czesci = n.split(/\s+/).filter((p) => p.length > 2);
+  if (czesci.length >= 2 && czesci.every((p) => a.includes(p))) return true;
   return false;
 }
 
@@ -127,8 +137,7 @@ export function znajdzZnacznikPoczatek(wpisy = [], krPrefer) {
   return pool[0] ?? null;
 }
 
-const SELECT_WPIS =
-  "id, kr, tresc, autor, autor_email, created_at";
+const SELECT_WPIS = "id, kr, tresc, autor, autor_email, created_at";
 
 export async function upsertZnacznikPoczatek(supabase, { kr, startIso, znacznikId }) {
   const payload = {
@@ -176,6 +185,8 @@ export async function przepiszMojeWpisyNaNotatkiSpotkania(
   }
   return { liczba: ids.length, ids, error: null };
 }
+
+export function odczytajSpotkanie() {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return { aktywne: false, startIso: null, startKr: "" };
