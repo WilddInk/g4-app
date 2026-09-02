@@ -9,7 +9,9 @@ import {
   etykietaAutoraWpisu,
   isoZDatyIGodziny,
   polaDatyGodzinyZIso,
+  pobierzWpisyZakresu,
   przepiszMojeWpisyNaNotatkiSpotkania,
+  zlozProtokolSpotkania,
   trescKoniecSpotkania,
   trescPoczatekSpotkania,
   upsertZnacznikPoczatek,
@@ -206,6 +208,8 @@ export function CzatKrPanel({
   const [edycjaGodzina, setEdycjaGodzina] = useState("");
   const [godzinaDraft, setGodzinaDraft] = useState({});
   const [zapisGodzinyId, setZapisGodzinyId] = useState(null);
+  const [protokolTekst, setProtokolTekst] = useState("");
+  const [protokolBusy, setProtokolBusy] = useState(false);
 
   useEffect(() => {
     if (!spotkanie.startIso) return;
@@ -565,6 +569,53 @@ export function CzatKrPanel({
         : `W tym zakresie nie znaleziono Twoich wpisów do przepisania (${formatData(odIso)} – ${formatData(doIso)}).`,
     );
     await fetchWpisy();
+  }
+
+  async function zlozNotatkeZeSpotkania() {
+    const odIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
+    const doIso = isoZDatyIGodziny(spotkanieDataDo, spotkanieGodzinaDo);
+    if (new Date(doIso).getTime() < new Date(odIso).getTime()) {
+      setMsg("Godzina „do” musi być późniejsza niż „od”.");
+      return;
+    }
+    setMsg(null);
+    setProtokolBusy(true);
+    const { data, error } = await pobierzWpisyZakresu(supabase, { odIso, doIso });
+    setProtokolBusy(false);
+    if (error) {
+      setMsg(`Nie udało się złożyć notatki: ${error.message}`);
+      return;
+    }
+    const tekst = zlozProtokolSpotkania(data ?? [], { odIso, doIso });
+    setProtokolTekst(tekst);
+    const ile = (data ?? []).filter((w) => !czyZnacznikPoczatek(w) && !czyZnacznikKoniec(w)).length;
+    setMsg(
+      ile
+        ? `Złożono notatkę ze spotkania: ${ile} ${ile === 1 ? "wpis" : "wpisów"} w kolejności godzin, z numerami KR.`
+        : "W tym zakresie OD–DO nie ma wpisów do notatki.",
+    );
+  }
+
+  async function kopiujProtokol() {
+    const tekst = String(protokolTekst ?? "").trim();
+    if (!tekst) return;
+    try {
+      await navigator.clipboard.writeText(tekst);
+      setMsg("Skopiowano notatkę ze spotkania do schowka.");
+    } catch {
+      setMsg("Nie udało się skopiować — zaznacz tekst i skopiuj ręcznie.");
+    }
+  }
+
+  function pobierzProtokolPlik() {
+    const tekst = String(protokolTekst ?? "").trim();
+    if (!tekst) return;
+    const blob = new Blob([tekst], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `notatka-spotkanie-kierownikow-${spotkanieData || "data"}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   async function zakonczSpotkanie() {
@@ -958,7 +1009,75 @@ export function CzatKrPanel({
             >
               {spotkanie.aktywne ? "Zakończ spotkanie" : "Włącz tryb notowania"}
             </button>
+            <button
+              type="button"
+              disabled={protokolBusy}
+              onClick={() => void zlozNotatkeZeSpotkania()}
+              style={{
+                background: LIGHT.spotkanieText,
+                border: "none",
+                borderRadius: 8,
+                color: "#fff",
+                fontSize: "0.88rem",
+                fontWeight: 800,
+                padding: "0.5rem 0.85rem",
+                cursor: protokolBusy ? "wait" : "pointer",
+              }}
+            >
+              {protokolBusy ? "Składam notatkę…" : "Złóż notatkę ze spotkania (wg godzin + KR)"}
+            </button>
           </div>
+          {protokolTekst ? (
+            <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.4rem" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                <button
+                  type="button"
+                  onClick={() => void kopiujProtokol()}
+                  style={{
+                    background: "#fff",
+                    border: LIGHT.spotkanieBorder,
+                    borderRadius: 8,
+                    color: LIGHT.spotkanieText,
+                    fontSize: "0.8rem",
+                    fontWeight: 800,
+                    padding: "0.35rem 0.65rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  Kopiuj notatkę
+                </button>
+                <button
+                  type="button"
+                  onClick={pobierzProtokolPlik}
+                  style={{
+                    background: "#fff",
+                    border: LIGHT.spotkanieBorder,
+                    borderRadius: 8,
+                    color: LIGHT.spotkanieText,
+                    fontSize: "0.8rem",
+                    fontWeight: 800,
+                    padding: "0.35rem 0.65rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  Pobierz plik TXT
+                </button>
+              </div>
+              <textarea
+                readOnly
+                value={protokolTekst}
+                rows={14}
+                style={{
+                  ...inputSt,
+                  minHeight: "12rem",
+                  fontFamily: "ui-monospace, Consolas, monospace",
+                  fontSize: "0.82rem",
+                  lineHeight: 1.45,
+                  background: "#fff",
+                }}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
 

@@ -186,6 +186,62 @@ export async function przepiszMojeWpisyNaNotatkiSpotkania(
   return { liczba: ids.length, ids, error: null };
 }
 
+export async function pobierzWpisyZakresu(supabase, { odIso, doIso }) {
+  return supabase
+    .from("kr_notatka")
+    .select(SELECT_WPIS)
+    .gte("created_at", odIso)
+    .lte("created_at", doIso)
+    .order("created_at", { ascending: true })
+    .limit(2000);
+}
+
+function etykietaKr(kr) {
+  const k = String(kr ?? "").trim();
+  if (!k || czyKrPlaceholder(k)) return "KR (brak numeru)";
+  return `KR ${k}`;
+}
+
+/**
+ * Jedna notatka ze spotkania: chronologicznie po godzinie wpisu, każdy punkt z KR.
+ */
+export function zlozProtokolSpotkania(wpisy, { odIso, doIso } = {}) {
+  const lista = [...(wpisy ?? [])]
+    .filter((w) => !czyZnacznikPoczatek(w) && !czyZnacznikKoniec(w))
+    .filter((w) => String(w?.tresc ?? "").trim())
+    .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
+  const kody = [
+    ...new Set(
+      lista
+        .map((w) => String(w.kr ?? "").trim())
+        .filter((k) => k && !czyKrPlaceholder(k)),
+    ),
+  ];
+  kody.sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
+  const linie = [
+    "NOTATKA ZE SPOTKANIA KIEROWNIKÓW",
+    odIso || doIso
+      ? `Okres: ${formatDataSpotkania(odIso) || "—"} – ${formatDataSpotkania(doIso) || "—"}`
+      : "",
+    kody.length ? `Projekty (KR): ${kody.join(", ")}` : "Projekty (KR): —",
+    `Liczba wpisów: ${lista.length}`,
+    "",
+  ].filter((x, i, arr) => x !== "" || arr[i - 1] !== "");
+
+  if (!lista.length) {
+    linie.push("Brak wpisów w wybranym zakresie.");
+    return linie.join("\n");
+  }
+
+  for (const w of lista) {
+    linie.push("————————————————————————");
+    linie.push(`${formatDataSpotkania(w.created_at) || "—"}  ·  ${etykietaKr(w.kr)}`);
+    linie.push(String(w.tresc ?? "").trim());
+    linie.push("");
+  }
+  return linie.join("\n").trim() + "\n";
+}
+
 export function odczytajSpotkanie() {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
