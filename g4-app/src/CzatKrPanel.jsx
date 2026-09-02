@@ -5,9 +5,10 @@ import {
   czyWpisSpotkania,
   czyZnacznikKoniec,
   czyZnacznikPoczatek,
-  datetimeLocalZIso,
+  czyKrPlaceholder,
   etykietaAutoraWpisu,
-  isoZDatetimeLocal,
+  isoZDatyIGodziny,
+  polaDatyGodzinyZIso,
   przepiszMojeWpisyNaNotatkiSpotkania,
   trescKoniecSpotkania,
   upsertZnacznikPoczatek,
@@ -190,13 +191,19 @@ export function CzatKrPanel({
   const [zadanieDeadline, setZadanieDeadline] = useState("");
   const [zapisZadania, setZapisZadania] = useState(false);
   const spotkanie = useSpotkanieKierownikow();
-  const [poczatekLocal, setPoczatekLocal] = useState(() =>
-    datetimeLocalZIso(spotkanie.startIso || new Date().toISOString()),
-  );
+  const polaStart = polaDatyGodzinyZIso(spotkanie.startIso || new Date().toISOString());
+  const [spotkanieData, setSpotkanieData] = useState(polaStart.data);
+  const [spotkanieGodzina, setSpotkanieGodzina] = useState(polaStart.godzina);
+  const [notatkaGodzina, setNotatkaGodzina] = useState(() => polaDatyGodzinyZIso().godzina);
   const [przepisBusy, setPrzepisBusy] = useState(false);
+  const [edycjaData, setEdycjaData] = useState("");
+  const [edycjaGodzina, setEdycjaGodzina] = useState("");
 
   useEffect(() => {
-    if (spotkanie.startIso) setPoczatekLocal(datetimeLocalZIso(spotkanie.startIso));
+    if (!spotkanie.startIso) return;
+    const p = polaDatyGodzinyZIso(spotkanie.startIso);
+    setSpotkanieData(p.data);
+    setSpotkanieGodzina(p.godzina);
   }, [spotkanie.startIso]);
 
   const zespolDoZadan = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
@@ -255,7 +262,7 @@ export function CzatKrPanel({
   const krOpcje = useMemo(() => {
     return [...(krList ?? [])]
       .map((r) => String(r.kr ?? "").trim())
-      .filter(Boolean)
+      .filter((k) => k && !czyKrPlaceholder(k))
       .sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
   }, [krList]);
 
@@ -264,7 +271,7 @@ export function CzatKrPanel({
     const meta = new Map();
     for (const w of wpisy) {
       const k = String(w.kr ?? "").trim();
-      if (!k) continue;
+      if (!k || czyKrPlaceholder(k)) continue;
       const prev = meta.get(k);
       const ms = czasMs(w.created_at);
       if (!prev) {
@@ -278,6 +285,7 @@ export function CzatKrPanel({
       }
     }
     for (const k of krOpcje) {
+      if (czyKrPlaceholder(k)) continue;
       if (!meta.has(k)) meta.set(k, { kr: k, count: 0, lastMs: 0, lastIso: null });
     }
     const q = String(szukajKr ?? "").trim().toLowerCase();
@@ -292,8 +300,9 @@ export function CzatKrPanel({
   }, [wpisy, krOpcje, szukajKr]);
 
   useEffect(() => {
-    if (wybranyKr) return;
-    if (listaKrLewa.length) setWybranyKr(listaKrLewa[0].kr);
+    const pierwszy = listaKrLewa.find((x) => !czyKrPlaceholder(x.kr));
+    if (!pierwszy) return;
+    if (!wybranyKr || czyKrPlaceholder(wybranyKr)) setWybranyKr(pierwszy.kr);
   }, [listaKrLewa, wybranyKr]);
 
   const wpisyWybranego = useMemo(() => {
@@ -332,6 +341,10 @@ export function CzatKrPanel({
       setMsg("Wybierz KR po lewej stronie.");
       return;
     }
+    if (czyKrPlaceholder(kr)) {
+      setMsg("Wybierz prawdziwy numer KR po lewej — nie zapisuję do „???”.");
+      return;
+    }
     const tekst = String(draft ?? "").trim();
     if (!tekst) return;
     const autor = spotkanie.aktywne
@@ -341,16 +354,18 @@ export function CzatKrPanel({
         "Użytkownik";
     setMsg(null);
     setWysylanie(true);
+    const payload = {
+      kr,
+      tresc: tekst,
+      autor,
+      autor_email: spotkanie.aktywne ? null : String(autorEmail ?? "").trim() || null,
+    };
+    if (spotkanie.aktywne) {
+      payload.created_at = isoZDatyIGodziny(spotkanieData, notatkaGodzina || polaDatyGodzinyZIso().godzina);
+    }
     const { data, error } = await supabase
       .from("kr_notatka")
-      .insert([
-        {
-          kr,
-          tresc: tekst,
-          autor,
-          autor_email: spotkanie.aktywne ? null : String(autorEmail ?? "").trim() || null,
-        },
-      ])
+      .insert([payload])
       .select("id, kr, tresc, autor, autor_email, created_at")
       .single();
     setWysylanie(false);
@@ -371,8 +386,8 @@ export function CzatKrPanel({
 
   async function wstawWpisSpotkania({ tresc, autor, createdAt }) {
     const kr = String(wybranyKr ?? "").trim();
-    if (!kr) {
-      setMsg("Wybierz KR po lewej, żeby zapisać znacznik spotkania.");
+    if (!kr || czyKrPlaceholder(kr)) {
+      setMsg("Wybierz prawdziwy numer KR po lewej (np. 1083) — nie zapisuję do „???”.");
       return null;
     }
     const payload = {
@@ -405,12 +420,20 @@ export function CzatKrPanel({
   }
 
   async function zastosujPoczatekIPrzepisz({ startIso, wstawNowyZnacznik }) {
-    const kr = String(wybranyKr ?? "").trim() || String(spotkanie.startKr ?? "").trim();
+    let kr = String(wybranyKr ?? "").trim();
+    if (czyKrPlaceholder(kr)) kr = "";
     if (!kr) {
-      setMsg("Wybierz KR, w którym zapiszę początek spotkania.");
+      const pierwszy = listaKrLewa.find((x) => !czyKrPlaceholder(x.kr));
+      kr = pierwszy?.kr ? String(pierwszy.kr).trim() : "";
+    }
+    if (!kr || czyKrPlaceholder(kr)) {
+      setMsg("Najpierw kliknij po lewej prawdziwy KR (np. 1083). Nie zapisuję początku do „???”.");
       return false;
     }
-    const znacznik = znajdzZnacznikPoczatek(wpisy, spotkanie.startKr || kr);
+    const znacznik = znajdzZnacznikPoczatek(
+      wpisy.filter((w) => !czyKrPlaceholder(w.kr)),
+      kr,
+    );
     const { data, error } = await upsertZnacznikPoczatek(supabase, {
       kr,
       startIso,
@@ -457,19 +480,22 @@ export function CzatKrPanel({
       return;
     }
     if (spotkanie.aktywne) return;
-    const startIso = isoZDatetimeLocal(poczatekLocal);
+    const startIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
     setMsg(null);
     setWysylanie(true);
     await zastosujPoczatekIPrzepisz({
       startIso,
-      wstawNowyZnacznik: !znajdzZnacznikPoczatek(wpisy, String(wybranyKr ?? "").trim()),
+      wstawNowyZnacznik: !znajdzZnacznikPoczatek(
+        wpisy.filter((w) => !czyKrPlaceholder(w.kr)),
+        String(wybranyKr ?? "").trim(),
+      ),
     });
     setWysylanie(false);
   }
 
   async function zastosujDateSpotkaniaWstecz() {
     if (!czyMozePisac) return;
-    const startIso = isoZDatetimeLocal(poczatekLocal);
+    const startIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
     if (Number.isNaN(new Date(startIso).getTime())) {
       setMsg("Podaj poprawną datę i godzinę początku spotkania.");
       return;
@@ -482,7 +508,10 @@ export function CzatKrPanel({
     setPrzepisBusy(true);
     await zastosujPoczatekIPrzepisz({
       startIso,
-      wstawNowyZnacznik: !znajdzZnacznikPoczatek(wpisy, spotkanie.startKr || wybranyKr),
+      wstawNowyZnacznik: !znajdzZnacznikPoczatek(
+        wpisy.filter((w) => !czyKrPlaceholder(w.kr)),
+        String(wybranyKr ?? "").trim(),
+      ),
     });
     setPrzepisBusy(false);
   }
@@ -509,6 +538,9 @@ export function CzatKrPanel({
     }
     setEdycjaId(w.id);
     setEdycjaTresc(String(w.tresc ?? ""));
+    const pola = polaDatyGodzinyZIso(w.created_at);
+    setEdycjaData(pola.data);
+    setEdycjaGodzina(pola.godzina);
     setMsg(null);
   }
 
@@ -534,7 +566,10 @@ export function CzatKrPanel({
     setMsg(null);
     const { data, error } = await supabase
       .from("kr_notatka")
-      .update({ tresc: tekst })
+      .update({
+        tresc: tekst,
+        created_at: isoZDatyIGodziny(edycjaData, edycjaGodzina),
+      })
       .eq("id", id)
       .select("id, kr, tresc, autor, autor_email, created_at")
       .single();
@@ -642,89 +677,25 @@ export function CzatKrPanel({
         <div>
           <strong style={{ fontSize: "1.05rem", color: LIGHT.accent }}>CZAT KR</strong>
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
-            Po lewej projekt (KR), po prawej wątek. Przy wpisie: <strong style={{ color: LIGHT.accent }}>Edytuj wpis</strong>
-            . Spotkanie: ustaw datę/godzinę początku i przepisz swoje wcześniejsze wpisy na notatki.
+            Po lewej wybierz numer KR, potem notuj. Przy wpisie: Edytuj wpis (treść i godzinę).
           </div>
         </div>
-        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-          {czyMozePisac && !brakTabeli ? (
-            <>
-              <label
-                style={{
-                  display: "grid",
-                  gap: 2,
-                  fontSize: "0.68rem",
-                  fontWeight: 700,
-                  color: LIGHT.spotkanieText,
-                }}
-              >
-                Początek spotkania
-                <input
-                  type="datetime-local"
-                  value={poczatekLocal}
-                  onChange={(e) => setPoczatekLocal(e.target.value)}
-                  style={{
-                    ...inputSt,
-                    width: "auto",
-                    minWidth: "11.5rem",
-                    fontSize: "0.78rem",
-                    padding: "0.22rem 0.4rem",
-                  }}
-                />
-              </label>
-              <button
-                type="button"
-                disabled={wysylanie || przepisBusy}
-                onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
-                style={{
-                  background: spotkanie.aktywne ? "#b45309" : "#fff",
-                  border: spotkanie.aktywne ? "1px solid #b45309" : LIGHT.spotkanieBorder,
-                  borderRadius: 8,
-                  color: spotkanie.aktywne ? "#fff" : LIGHT.spotkanieText,
-                  fontSize: "0.75rem",
-                  fontWeight: 800,
-                  padding: "0.25rem 0.55rem",
-                  cursor: wysylanie ? "wait" : "pointer",
-                }}
-              >
-                {spotkanie.aktywne ? "Zakończ spotkanie" : "Rozpocznij i przepisz wpisy"}
-              </button>
-              <button
-                type="button"
-                disabled={wysylanie || przepisBusy}
-                onClick={() => void zastosujDateSpotkaniaWstecz()}
-                style={{
-                  background: LIGHT.znacznikBg,
-                  border: LIGHT.spotkanieBorder,
-                  borderRadius: 8,
-                  color: LIGHT.spotkanieText,
-                  fontSize: "0.75rem",
-                  fontWeight: 800,
-                  padding: "0.25rem 0.55rem",
-                  cursor: przepisBusy ? "wait" : "pointer",
-                }}
-              >
-                {przepisBusy ? "Przepisuję…" : "Zmień datę / przepisz wstecz"}
-              </button>
-            </>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void fetchWpisy()}
-            style={{
-              background: "#fff",
-              border: LIGHT.cardBorder,
-              borderRadius: 8,
-              color: LIGHT.text,
-              fontSize: "0.75rem",
-              padding: "0.25rem 0.55rem",
-              cursor: "pointer",
-              alignSelf: "flex-start",
-            }}
-          >
-            Odśwież
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => void fetchWpisy()}
+          style={{
+            background: "#fff",
+            border: LIGHT.cardBorder,
+            borderRadius: 8,
+            color: LIGHT.text,
+            fontSize: "0.75rem",
+            padding: "0.25rem 0.55rem",
+            cursor: "pointer",
+            alignSelf: "flex-start",
+          }}
+        >
+          Odśwież
+        </button>
       </div>
 
       {brakTabeli ? (
@@ -754,26 +725,112 @@ export function CzatKrPanel({
         <div style={{ marginTop: "0.5rem", color: LIGHT.ok, fontSize: "0.8rem" }}>{msg}</div>
       ) : null}
 
-      {spotkanie.aktywne ? (
+      {czyMozePisac && !brakTabeli ? (
         <div
-          role="status"
+          role="region"
+          aria-label="Spotkanie kierowników"
           style={{
             marginTop: "0.65rem",
-            padding: "0.5rem 0.65rem",
-            borderRadius: 8,
+            padding: "0.7rem 0.75rem",
+            borderRadius: 10,
             background: LIGHT.znacznikBg,
             border: LIGHT.spotkanieBorder,
             color: LIGHT.spotkanieText,
-            fontSize: "0.8rem",
-            lineHeight: 1.45,
           }}
         >
-          <strong>Trwa spotkanie kierowników</strong>
-          {spotkanie.startIso ? ` · od ${formatData(spotkanie.startIso)}` : ""}
-          {spotkanie.startKr ? ` · początek w KR ${spotkanie.startKr}` : ""}.
-          Wpisy zapisują się jako <strong>Notatka ze spotkania</strong> — bez Twojego nazwiska.
-          Datę i godzinę początku możesz zmienić powyżej — wtedy Twoje wcześniejsze wpisy z tego czasu też zostaną przepisane.
-          Możesz przełączać KR. Na koniec kliknij „Zakończ spotkanie”.
+          <strong style={{ fontSize: "0.95rem" }}>Spotkanie kierowników — data i godzina</strong>
+          <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.8rem", lineHeight: 1.45 }}>
+            Ustaw <strong>datę</strong> i <strong>godzinę początku</strong> (może być wstecz, np. 2 godziny wcześniej).
+            Notatki zapisują się do KR wybranego po lewej — kliknij numer projektu, nie „???”.
+            {wybranyKr && !czyKrPlaceholder(wybranyKr) ? (
+              <> Teraz wybrany KR: <strong>{wybranyKr}</strong>.</>
+            ) : (
+              <> <strong>Wybierz KR po lewej.</strong></>
+            )}
+          </p>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "0.55rem",
+              alignItems: "flex-end",
+            }}
+          >
+            <label style={{ display: "grid", gap: 4, fontSize: "0.78rem", fontWeight: 800 }}>
+              Data
+              <input
+                type="date"
+                value={spotkanieData}
+                onChange={(e) => setSpotkanieData(e.target.value)}
+                style={{
+                  ...inputSt,
+                  width: "11.5rem",
+                  fontSize: "1rem",
+                  fontWeight: 700,
+                  padding: "0.4rem 0.5rem",
+                  border: LIGHT.spotkanieBorder,
+                }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4, fontSize: "0.78rem", fontWeight: 800 }}>
+              Godzina początku
+              <input
+                type="time"
+                value={spotkanieGodzina}
+                onChange={(e) => setSpotkanieGodzina(e.target.value)}
+                style={{
+                  ...inputSt,
+                  width: "8.5rem",
+                  fontSize: "1rem",
+                  fontWeight: 700,
+                  padding: "0.4rem 0.5rem",
+                  border: LIGHT.spotkanieBorder,
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              disabled={wysylanie || przepisBusy}
+              onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
+              style={{
+                background: spotkanie.aktywne ? "#b45309" : LIGHT.spotkanieText,
+                border: "none",
+                borderRadius: 8,
+                color: "#fff",
+                fontSize: "0.84rem",
+                fontWeight: 800,
+                padding: "0.45rem 0.75rem",
+                cursor: wysylanie ? "wait" : "pointer",
+              }}
+            >
+              {spotkanie.aktywne ? "Zakończ spotkanie" : "Rozpocznij i przepisz wpisy wstecz"}
+            </button>
+            <button
+              type="button"
+              disabled={wysylanie || przepisBusy}
+              onClick={() => void zastosujDateSpotkaniaWstecz()}
+              style={{
+                background: "#fff",
+                border: LIGHT.spotkanieBorder,
+                borderRadius: 8,
+                color: LIGHT.spotkanieText,
+                fontSize: "0.84rem",
+                fontWeight: 800,
+                padding: "0.45rem 0.75rem",
+                cursor: przepisBusy ? "wait" : "pointer",
+              }}
+            >
+              {przepisBusy ? "Przepisuję…" : "Zastosuj godzinę wstecz"}
+            </button>
+          </div>
+          {spotkanie.aktywne ? (
+            <p style={{ margin: "0.55rem 0 0", fontSize: "0.78rem", lineHeight: 1.4 }}>
+              Trwa spotkanie
+              {spotkanie.startIso ? ` od ${formatData(spotkanie.startIso)}` : ""}.
+              Wpisy jako <strong>Notatka ze spotkania</strong>, bez Twojego nazwiska.
+              Godzinę tej notatki ustawiasz przy polu wiadomości na dole.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -1002,6 +1059,26 @@ export function CzatKrPanel({
                           disabled={zapisywanieEdycji}
                           style={{ ...inputSt, resize: "vertical", minHeight: "3.2rem", fontSize: "0.9rem" }}
                         />
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                          <label style={{ display: "grid", gap: 2, fontSize: "0.72rem", fontWeight: 700, color: LIGHT.muted }}>
+                            Data wpisu
+                            <input
+                              type="date"
+                              value={edycjaData}
+                              onChange={(e) => setEdycjaData(e.target.value)}
+                              style={{ ...inputSt, width: "11rem" }}
+                            />
+                          </label>
+                          <label style={{ display: "grid", gap: 2, fontSize: "0.72rem", fontWeight: 700, color: LIGHT.muted }}>
+                            Godzina wpisu
+                            <input
+                              type="time"
+                              value={edycjaGodzina}
+                              onChange={(e) => setEdycjaGodzina(e.target.value)}
+                              style={{ ...inputSt, width: "8rem" }}
+                            />
+                          </label>
+                        </div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
                           <button
                             type="button"
@@ -1094,7 +1171,7 @@ export function CzatKrPanel({
             )}
           </div>
 
-          {czyMozePisac && !brakTabeli && wybranyKr ? (
+          {czyMozePisac && !brakTabeli && wybranyKr && !czyKrPlaceholder(wybranyKr) ? (
             <form
               onSubmit={(e) => void wyslij(e)}
               style={{
@@ -1102,9 +1179,27 @@ export function CzatKrPanel({
                 padding: "0.65rem 0.75rem",
                 display: "grid",
                 gap: "0.4rem",
-                background: "#fff",
+                background: spotkanie.aktywne ? LIGHT.spotkanieBg : "#fff",
               }}
             >
+              {spotkanie.aktywne ? (
+                <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800, color: LIGHT.spotkanieText, justifySelf: "start" }}>
+                  Godzina tej notatki
+                  <input
+                    type="time"
+                    value={notatkaGodzina}
+                    onChange={(e) => setNotatkaGodzina(e.target.value)}
+                    style={{
+                      ...inputSt,
+                      width: "8.5rem",
+                      fontSize: "1rem",
+                      fontWeight: 700,
+                      padding: "0.4rem 0.5rem",
+                      border: LIGHT.spotkanieBorder,
+                    }}
+                  />
+                </label>
+              ) : null}
               <textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}

@@ -72,7 +72,25 @@ export function etykietaAutoraWpisu(w) {
   return String(w?.autor ?? "").trim() || String(w?.autor_email ?? "").trim() || "—";
 }
 
-export function datetimeLocalZIso(iso) {
+export function polaDatyGodzinyZIso(iso) {
+  const local = datetimeLocalZIso(iso);
+  const [data, godzina] = String(local).split("T");
+  return { data: data || "", godzina: String(godzina || "").slice(0, 5) };
+}
+
+export function isoZDatyIGodziny(data, godzina) {
+  const d = String(data ?? "").trim();
+  const g = String(godzina ?? "").trim() || "00:00";
+  if (!d) return new Date().toISOString();
+  return isoZDatetimeLocal(`${d}T${g}`);
+}
+
+/** Śmieciowe kody KR w stylu ??? — nie nadają się na wątek spotkania. */
+export function czyKrPlaceholder(kr) {
+  const k = String(kr ?? "").trim();
+  if (!k) return true;
+  return /^[?¿*._\-\s/]+$/.test(k);
+}
   const d = iso ? new Date(iso) : new Date();
   if (Number.isNaN(d.getTime())) return datetimeLocalZIso(new Date().toISOString());
   const pad = (n) => String(n).padStart(2, "0");
