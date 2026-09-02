@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  SPOTKANIE_AUTOR_NOTATKA,
+  SPOTKANIE_AUTOR_ZNACZNIK,
+  czyWpisSpotkania,
+  czyZnacznikKoniec,
+  czyZnacznikPoczatek,
+  etykietaAutoraWpisu,
+  trescKoniecSpotkania,
+  trescPoczatekSpotkania,
+  useSpotkanieKierownikow,
+  zapiszSpotkanie,
+} from "./lib/czatKrSpotkanie.js";
 
 const LIGHT = {
   panelBg: "linear-gradient(180deg, #e0f2fe 0%, #f8fafc 100%)",
@@ -16,6 +28,10 @@ const LIGHT = {
   dangerBorder: "1px solid #fecaca",
   dangerText: "#991b1b",
   ok: "#166534",
+  spotkanieBg: "#fffbeb",
+  spotkanieBorder: "1px solid #f59e0b",
+  spotkanieText: "#92400e",
+  znacznikBg: "#fef3c7",
 };
 
 function formatData(iso) {
@@ -57,6 +73,7 @@ export function KrNotatkiCzat({
   const [edycjaId, setEdycjaId] = useState(null);
   const [edycjaTresc, setEdycjaTresc] = useState("");
   const [zapisywanieEdycji, setZapisywanieEdycji] = useState(false);
+  const spotkanie = useSpotkanieKierownikow();
 
   const fetchWpisy = useCallback(async () => {
     if (!krKod) {
@@ -110,15 +127,16 @@ export function KrNotatkiCzat({
     }
     const tekst = String(draft ?? "").trim();
     if (!tekst || !krKod) return;
-    const autor =
-      String(autorNazwa ?? "").trim() ||
-      String(autorEmail ?? "").trim() ||
-      "Zalogowany użytkownik";
+    const autor = spotkanie.aktywne
+      ? SPOTKANIE_AUTOR_NOTATKA
+      : String(autorNazwa ?? "").trim() ||
+        String(autorEmail ?? "").trim() ||
+        "Zalogowany użytkownik";
     const payload = {
       kr: krKod,
       tresc: tekst,
       autor,
-      autor_email: String(autorEmail ?? "").trim() || null,
+      autor_email: spotkanie.aktywne ? null : String(autorEmail ?? "").trim() || null,
     };
     setMsg(null);
     setWysylanie(true);
@@ -140,7 +158,62 @@ export function KrNotatkiCzat({
     }
     setWpisy((prev) => [data, ...prev]);
     setDraft("");
-    setMsg("Dodano notatkę.");
+    setMsg(spotkanie.aktywne ? "Dodano notatkę ze spotkania." : "Dodano notatkę.");
+  }
+
+  async function wstawWpisSpotkania({ tresc, autor }) {
+    const { data, error } = await supabase
+      .from("kr_notatka")
+      .insert([
+        {
+          kr: krKod,
+          tresc,
+          autor,
+          autor_email: null,
+        },
+      ])
+      .select("id, kr, tresc, autor, autor_email, created_at")
+      .single();
+    if (error) {
+      setMsg(`Nie udało się zapisać znacznika spotkania: ${error.message}`);
+      return null;
+    }
+    setWpisy((prev) => [data, ...prev]);
+    return data;
+  }
+
+  async function rozpocznijSpotkanie() {
+    if (!czyMozeEdytowac) {
+      alert("Zaloguj się, aby notować ze spotkania.");
+      return;
+    }
+    if (spotkanie.aktywne || !krKod) return;
+    const startIso = new Date().toISOString();
+    setMsg(null);
+    setWysylanie(true);
+    const wstawiony = await wstawWpisSpotkania({
+      tresc: trescPoczatekSpotkania(startIso),
+      autor: SPOTKANIE_AUTOR_ZNACZNIK,
+    });
+    setWysylanie(false);
+    if (!wstawiony) return;
+    zapiszSpotkanie({ aktywne: true, startIso, startKr: krKod });
+    setMsg("Spotkanie kierowników rozpoczęte — wpisy jako notatka ze spotkania, bez Twojego nazwiska.");
+  }
+
+  async function zakonczSpotkanie() {
+    if (!spotkanie.aktywne || !krKod) return;
+    const endIso = new Date().toISOString();
+    setMsg(null);
+    setWysylanie(true);
+    const wstawiony = await wstawWpisSpotkania({
+      tresc: trescKoniecSpotkania(spotkanie.startIso, endIso),
+      autor: SPOTKANIE_AUTOR_ZNACZNIK,
+    });
+    setWysylanie(false);
+    if (!wstawiony) return;
+    zapiszSpotkanie({ aktywne: false, startIso: null, startKr: "" });
+    setMsg("Zapisano koniec spotkania kierowników.");
   }
 
   function rozpocznijEdycje(w) {
@@ -204,11 +277,33 @@ export function KrNotatkiCzat({
         color: LIGHT.text,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", alignItems: "baseline" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
         <strong style={{ fontSize: "0.9rem", color: LIGHT.accent }}>CZAT KR</strong>
-        <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>
-          KR {krKod} · najnowsze na górze
-        </span>
+        <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", flexWrap: "wrap" }}>
+          {czyMozeEdytowac && !brakTabeli ? (
+            <button
+              type="button"
+              disabled={wysylanie}
+              onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
+              style={{
+                background: spotkanie.aktywne ? "#b45309" : "#fff",
+                border: spotkanie.aktywne ? "1px solid #b45309" : LIGHT.spotkanieBorder,
+                borderRadius: 6,
+                color: spotkanie.aktywne ? "#fff" : LIGHT.spotkanieText,
+                font: "inherit",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+                padding: "0.15rem 0.45rem",
+                cursor: wysylanie ? "wait" : "pointer",
+              }}
+            >
+              {spotkanie.aktywne ? "Zakończ spotkanie" : "Spotkanie kierowników"}
+            </button>
+          ) : null}
+          <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>
+            KR {krKod} · najnowsze na górze
+          </span>
+        </div>
       </div>
       <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.78rem", color: LIGHT.muted, lineHeight: 1.45 }}>
         Wątki projektu — ten sam CZAT KR co w Fakturowaniu. Przy wpisie:{" "}
@@ -244,6 +339,24 @@ export function KrNotatkiCzat({
         <div style={{ marginBottom: "0.5rem", fontSize: "0.8rem", color: LIGHT.ok }}>{msg}</div>
       ) : null}
 
+      {spotkanie.aktywne ? (
+        <div
+          role="status"
+          style={{
+            marginBottom: "0.55rem",
+            padding: "0.4rem 0.55rem",
+            borderRadius: 8,
+            background: LIGHT.znacznikBg,
+            border: LIGHT.spotkanieBorder,
+            color: LIGHT.spotkanieText,
+            fontSize: "0.75rem",
+            lineHeight: 1.4,
+          }}
+        >
+          <strong>Trwa spotkanie kierowników</strong> — wpisy jako notatka ze spotkania, bez Twojego nazwiska.
+        </div>
+      ) : null}
+
       {loading ? (
         <p style={{ margin: 0, fontSize: "0.8rem", color: LIGHT.soft }}>Ładowanie notatek…</p>
       ) : wpisy.length === 0 ? (
@@ -252,13 +365,16 @@ export function KrNotatkiCzat({
         </p>
       ) : (
         <div style={{ display: "grid", gap: "0.4rem", marginBottom: "0.55rem" }}>
-          {widoczne.map((w) => (
+          {widoczne.map((w) => {
+            const zeSpotkania = czyWpisSpotkania(w);
+            const znacznik = czyZnacznikPoczatek(w) || czyZnacznikKoniec(w);
+            return (
             <div
               key={w.id}
               style={{
-                border: LIGHT.cardBorder,
+                border: zeSpotkania ? LIGHT.spotkanieBorder : LIGHT.cardBorder,
                 borderRadius: 9,
-                background: LIGHT.bubbleBg,
+                background: znacznik ? LIGHT.znacznikBg : zeSpotkania ? LIGHT.spotkanieBg : LIGHT.bubbleBg,
                 padding: "0.4rem 0.55rem",
               }}
             >
@@ -273,7 +389,9 @@ export function KrNotatkiCzat({
                   marginBottom: "0.15rem",
                 }}
               >
-                <strong style={{ color: LIGHT.accent }}>{w.autor || w.autor_email || "—"}</strong>
+                <strong style={{ color: zeSpotkania ? LIGHT.spotkanieText : LIGHT.accent }}>
+                  {etykietaAutoraWpisu(w)}
+                </strong>
                 <span>{" · "}{formatData(w.created_at) || "—"}</span>
                 {czyMozeEdytowac && edycjaId !== w.id ? (
                   <button
@@ -361,7 +479,8 @@ export function KrNotatkiCzat({
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
           {wpisy.length > 3 ? (
             <button
               type="button"
@@ -392,7 +511,7 @@ export function KrNotatkiCzat({
             onChange={(e) => setDraft(e.target.value)}
             rows={2}
             disabled={wysylanie}
-            placeholder="Dodaj notatkę do projektu…"
+            placeholder={spotkanie.aktywne ? "Notatka ze spotkania kierowników…" : "Dodaj notatkę do projektu…"}
             style={{
               width: "100%",
               resize: "vertical",
@@ -429,7 +548,7 @@ export function KrNotatkiCzat({
                 opacity: wysylanie || !draft.trim() ? 0.65 : 1,
               }}
             >
-              {wysylanie ? "Wysyłanie…" : "Dodaj notatkę"}
+              {wysylanie ? "Wysyłanie…" : spotkanie.aktywne ? "Dodaj notatkę ze spotkania" : "Dodaj notatkę"}
             </button>
             <span style={{ fontSize: "0.7rem", color: LIGHT.soft }}>Ctrl+Enter = wyślij</span>
             <button

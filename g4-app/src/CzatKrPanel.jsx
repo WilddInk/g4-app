@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  SPOTKANIE_AUTOR_NOTATKA,
+  SPOTKANIE_AUTOR_ZNACZNIK,
+  czyWpisSpotkania,
+  czyZnacznikKoniec,
+  czyZnacznikPoczatek,
+  etykietaAutoraWpisu,
+  trescKoniecSpotkania,
+  trescPoczatekSpotkania,
+  useSpotkanieKierownikow,
+  zapiszSpotkanie,
+} from "./lib/czatKrSpotkanie.js";
 
 /**
  * Zespół CZAT KR (nieformalne imiona → konkretne nr w `pracownik` z Supabase).
@@ -110,6 +122,10 @@ const LIGHT = {
   dangerBorder: "1px solid #fecaca",
   dangerText: "#991b1b",
   ok: "#166534",
+  spotkanieBg: "#fffbeb",
+  spotkanieBorder: "1px solid #f59e0b",
+  spotkanieText: "#92400e",
+  znacznikBg: "#fef3c7",
 };
 
 function formatData(iso) {
@@ -169,6 +185,7 @@ export function CzatKrPanel({
   const [zadanieDlaNr, setZadanieDlaNr] = useState("");
   const [zadanieDeadline, setZadanieDeadline] = useState("");
   const [zapisZadania, setZapisZadania] = useState(false);
+  const spotkanie = useSpotkanieKierownikow();
 
   const zespolDoZadan = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
 
@@ -305,10 +322,11 @@ export function CzatKrPanel({
     }
     const tekst = String(draft ?? "").trim();
     if (!tekst) return;
-    const autor =
-      String(autorNazwa ?? "").trim() ||
-      String(autorEmail ?? "").trim() ||
-      "Użytkownik";
+    const autor = spotkanie.aktywne
+      ? SPOTKANIE_AUTOR_NOTATKA
+      : String(autorNazwa ?? "").trim() ||
+        String(autorEmail ?? "").trim() ||
+        "Użytkownik";
     setMsg(null);
     setWysylanie(true);
     const { data, error } = await supabase
@@ -318,7 +336,7 @@ export function CzatKrPanel({
           kr,
           tresc: tekst,
           autor,
-          autor_email: String(autorEmail ?? "").trim() || null,
+          autor_email: spotkanie.aktywne ? null : String(autorEmail ?? "").trim() || null,
         },
       ])
       .select("id, kr, tresc, autor, autor_email, created_at")
@@ -336,7 +354,72 @@ export function CzatKrPanel({
     }
     setWpisy((prev) => [data, ...prev.filter((x) => x.id !== data.id)]);
     setDraft("");
-    setMsg("Dodano wpis.");
+    setMsg(spotkanie.aktywne ? "Dodano notatkę ze spotkania." : "Dodano wpis.");
+  }
+
+  async function wstawWpisSpotkania({ tresc, autor }) {
+    const kr = String(wybranyKr ?? "").trim();
+    if (!kr) {
+      setMsg("Wybierz KR po lewej, żeby zapisać znacznik spotkania.");
+      return null;
+    }
+    const { data, error } = await supabase
+      .from("kr_notatka")
+      .insert([
+        {
+          kr,
+          tresc,
+          autor,
+          autor_email: null,
+        },
+      ])
+      .select("id, kr, tresc, autor, autor_email, created_at")
+      .single();
+    if (error) {
+      setMsg(`Nie udało się zapisać znacznika spotkania: ${error.message}`);
+      return null;
+    }
+    setWpisy((prev) => [data, ...prev.filter((x) => x.id !== data.id)]);
+    return data;
+  }
+
+  async function rozpocznijSpotkanie() {
+    if (!czyMozePisac) {
+      alert("Zaloguj się, aby notować ze spotkania.");
+      return;
+    }
+    if (spotkanie.aktywne) return;
+    const kr = String(wybranyKr ?? "").trim();
+    if (!kr) {
+      setMsg("Wybierz KR, w którym zapiszę początek spotkania.");
+      return;
+    }
+    const startIso = new Date().toISOString();
+    setMsg(null);
+    setWysylanie(true);
+    const wstawiony = await wstawWpisSpotkania({
+      tresc: trescPoczatekSpotkania(startIso),
+      autor: SPOTKANIE_AUTOR_ZNACZNIK,
+    });
+    setWysylanie(false);
+    if (!wstawiony) return;
+    zapiszSpotkanie({ aktywne: true, startIso, startKr: kr });
+    setMsg("Spotkanie kierowników rozpoczęte — kolejne wpisy jako notatka ze spotkania, bez Twojego nazwiska.");
+  }
+
+  async function zakonczSpotkanie() {
+    if (!spotkanie.aktywne) return;
+    const endIso = new Date().toISOString();
+    setMsg(null);
+    setWysylanie(true);
+    const wstawiony = await wstawWpisSpotkania({
+      tresc: trescKoniecSpotkania(spotkanie.startIso, endIso),
+      autor: SPOTKANIE_AUTOR_ZNACZNIK,
+    });
+    setWysylanie(false);
+    if (!wstawiony) return;
+    zapiszSpotkanie({ aktywne: false, startIso: null, startKr: "" });
+    setMsg("Zapisano koniec spotkania kierowników.");
   }
 
   function rozpocznijEdycje(w) {
@@ -483,22 +566,44 @@ export function CzatKrPanel({
             <strong style={{ color: LIGHT.accent }}>Edytuj wpis</strong>.
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void fetchWpisy()}
-          style={{
-            background: "#fff",
-            border: LIGHT.cardBorder,
-            borderRadius: 8,
-            color: LIGHT.text,
-            fontSize: "0.75rem",
-            padding: "0.25rem 0.55rem",
-            cursor: "pointer",
-            alignSelf: "flex-start",
-          }}
-        >
-          Odśwież
-        </button>
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "flex-start" }}>
+          {czyMozePisac && !brakTabeli ? (
+            <button
+              type="button"
+              disabled={wysylanie}
+              onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
+              style={{
+                background: spotkanie.aktywne ? "#b45309" : "#fff",
+                border: spotkanie.aktywne ? "1px solid #b45309" : LIGHT.spotkanieBorder,
+                borderRadius: 8,
+                color: spotkanie.aktywne ? "#fff" : LIGHT.spotkanieText,
+                fontSize: "0.75rem",
+                fontWeight: 800,
+                padding: "0.25rem 0.55rem",
+                cursor: wysylanie ? "wait" : "pointer",
+                alignSelf: "flex-start",
+              }}
+            >
+              {spotkanie.aktywne ? "Zakończ spotkanie" : "Spotkanie kierowników"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void fetchWpisy()}
+            style={{
+              background: "#fff",
+              border: LIGHT.cardBorder,
+              borderRadius: 8,
+              color: LIGHT.text,
+              fontSize: "0.75rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+              alignSelf: "flex-start",
+            }}
+          >
+            Odśwież
+          </button>
+        </div>
       </div>
 
       {brakTabeli ? (
@@ -526,6 +631,28 @@ export function CzatKrPanel({
       ) : null}
       {msg ? (
         <div style={{ marginTop: "0.5rem", color: LIGHT.ok, fontSize: "0.8rem" }}>{msg}</div>
+      ) : null}
+
+      {spotkanie.aktywne ? (
+        <div
+          role="status"
+          style={{
+            marginTop: "0.65rem",
+            padding: "0.5rem 0.65rem",
+            borderRadius: 8,
+            background: LIGHT.znacznikBg,
+            border: LIGHT.spotkanieBorder,
+            color: LIGHT.spotkanieText,
+            fontSize: "0.8rem",
+            lineHeight: 1.45,
+          }}
+        >
+          <strong>Trwa spotkanie kierowników</strong>
+          {spotkanie.startIso ? ` · od ${formatData(spotkanie.startIso)}` : ""}
+          {spotkanie.startKr ? ` · początek w KR ${spotkanie.startKr}` : ""}.
+          Wpisy zapisują się jako <strong>Notatka ze spotkania</strong> — bez Twojego nazwiska.
+          Możesz przełączać KR. Na koniec kliknij „Zakończ spotkanie”.
+        </div>
       ) : null}
 
       <div
@@ -689,13 +816,16 @@ export function CzatKrPanel({
               </p>
             ) : (
               <>
-                {widoczne.map((w) => (
+                {widoczne.map((w) => {
+                  const zeSpotkania = czyWpisSpotkania(w);
+                  const znacznik = czyZnacznikPoczatek(w) || czyZnacznikKoniec(w);
+                  return (
                   <div
                     key={w.id}
                     style={{
-                      border: LIGHT.cardBorder,
+                      border: zeSpotkania ? LIGHT.spotkanieBorder : LIGHT.cardBorder,
                       borderRadius: 10,
-                      background: "#f8fafc",
+                      background: znacznik ? LIGHT.znacznikBg : zeSpotkania ? LIGHT.spotkanieBg : "#f8fafc",
                       padding: "0.55rem 0.7rem",
                     }}
                   >
@@ -712,11 +842,11 @@ export function CzatKrPanel({
                         style={{
                           fontSize: "1.05rem",
                           fontWeight: 800,
-                          color: LIGHT.accent,
+                          color: zeSpotkania ? LIGHT.spotkanieText : LIGHT.accent,
                           lineHeight: 1.25,
                         }}
                       >
-                        {w.autor || w.autor_email || "—"}
+                        {etykietaAutoraWpisu(w)}
                       </span>
                       <span style={{ fontSize: "0.78rem", color: LIGHT.soft }}>
                         {formatData(w.created_at) || "—"}
@@ -818,7 +948,8 @@ export function CzatKrPanel({
                       </>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 {wpisyWybranego.length > 12 ? (
                   <button
                     type="button"
@@ -857,7 +988,11 @@ export function CzatKrPanel({
                 onChange={(e) => setDraft(e.target.value)}
                 rows={2}
                 disabled={wysylanie}
-                placeholder={`Wpis do KR ${wybranyKr}…`}
+                placeholder={
+                  spotkanie.aktywne
+                    ? `Notatka ze spotkania · KR ${wybranyKr}…`
+                    : `Wpis do KR ${wybranyKr}…`
+                }
                 style={{ ...inputSt, resize: "vertical", minHeight: "2.8rem", fontSize: "0.9rem" }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -882,7 +1017,7 @@ export function CzatKrPanel({
                     opacity: wysylanie || !draft.trim() ? 0.65 : 1,
                   }}
                 >
-                  {wysylanie ? "Wysyłanie…" : "Dodaj wpis"}
+                  {wysylanie ? "Wysyłanie…" : spotkanie.aktywne ? "Dodaj notatkę ze spotkania" : "Dodaj wpis"}
                 </button>
                 {mozeZadania ? (
                   <button
