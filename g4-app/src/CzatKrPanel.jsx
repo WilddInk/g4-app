@@ -651,6 +651,24 @@ export function CzatKrPanel({
     setEdycjaTresc("");
   }
 
+  async function usunWpis(w) {
+    if (!czyMozePisac || !w?.id) return;
+    const skrot = String(w.tresc ?? "").trim().slice(0, 80);
+    const ok = window.confirm(
+      `Usunąć tę notatkę${skrot ? `?\n\n„${skrot}${String(w.tresc ?? "").trim().length > 80 ? "…" : ""}”` : "?"}`,
+    );
+    if (!ok) return;
+    setMsg(null);
+    const { error } = await supabase.from("kr_notatka").delete().eq("id", w.id);
+    if (error) {
+      setMsg(`Nie udało się usunąć notatki: ${error.message}`);
+      return;
+    }
+    setWpisy((prev) => prev.filter((x) => x.id !== w.id));
+    if (edycjaId === w.id) anulujEdycje();
+    setMsg("Usunięto notatkę.");
+  }
+
   function polaGodzinyWpisu(w) {
     return godzinaDraft[w.id] || polaDatyGodzinyZIso(w.created_at);
   }
@@ -1278,23 +1296,40 @@ export function CzatKrPanel({
                         {formatData(w.created_at) || "—"}
                       </span>
                       {czyMozePisac && edycjaId !== w.id ? (
-                        <button
-                          type="button"
-                          onClick={() => rozpocznijEdycje(w)}
-                          style={{
-                            marginLeft: "auto",
-                            background: "#fff",
-                            border: `1px solid ${LIGHT.accent}`,
-                            borderRadius: 8,
-                            color: LIGHT.accent,
-                            fontSize: "0.78rem",
-                            fontWeight: 800,
-                            padding: "0.2rem 0.55rem",
-                            cursor: "pointer",
-                          }}
-                        >
-                          Edytuj treść
-                        </button>
+                        <span style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                          <button
+                            type="button"
+                            onClick={() => rozpocznijEdycje(w)}
+                            style={{
+                              background: "#fff",
+                              border: `1px solid ${LIGHT.accent}`,
+                              borderRadius: 8,
+                              color: LIGHT.accent,
+                              fontSize: "0.78rem",
+                              fontWeight: 800,
+                              padding: "0.2rem 0.55rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Edytuj treść
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void usunWpis(w)}
+                            style={{
+                              background: "#fff",
+                              border: "1px solid #dc2626",
+                              borderRadius: 8,
+                              color: "#b91c1c",
+                              fontSize: "0.78rem",
+                              fontWeight: 800,
+                              padding: "0.2rem 0.55rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Usuń
+                          </button>
+                        </span>
                       ) : null}
                     </div>
                     {czyMozePisac && edycjaId !== w.id ? (

@@ -294,6 +294,24 @@ export function KrNotatkiCzat({
     setEdycjaTresc("");
   }
 
+  async function usunWpis(w) {
+    if (!czyMozeEdytowac || !w?.id) return;
+    const skrot = String(w.tresc ?? "").trim().slice(0, 80);
+    const ok = window.confirm(
+      `Usunąć tę notatkę${skrot ? `?\n\n„${skrot}${String(w.tresc ?? "").trim().length > 80 ? "…" : ""}”` : "?"}`,
+    );
+    if (!ok) return;
+    setMsg(null);
+    const { error } = await supabase.from("kr_notatka").delete().eq("id", w.id);
+    if (error) {
+      setMsg(`Nie udało się usunąć notatki: ${error.message}`);
+      return;
+    }
+    setWpisy((prev) => prev.filter((x) => x.id !== w.id));
+    if (edycjaId === w.id) anulujEdycje();
+    setMsg("Usunięto notatkę.");
+  }
+
   async function zapiszEdycje(e) {
     e?.preventDefault?.();
     if (!czyMozeEdytowac) {
@@ -491,24 +509,42 @@ export function KrNotatkiCzat({
                 </strong>
                 <span>{" · "}{formatData(w.created_at) || "—"}</span>
                 {czyMozeEdytowac && edycjaId !== w.id ? (
-                  <button
-                    type="button"
-                    onClick={() => rozpocznijEdycje(w)}
-                    style={{
-                      marginLeft: "auto",
-                      background: "#fff",
-                      border: `1px solid ${LIGHT.accent}`,
-                      borderRadius: 6,
-                      color: LIGHT.accent,
-                      font: "inherit",
-                      fontSize: "0.7rem",
-                      fontWeight: 800,
-                      padding: "0.12rem 0.4rem",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Edytuj wpis
-                  </button>
+                  <span style={{ marginLeft: "auto", display: "flex", gap: "0.3rem" }}>
+                    <button
+                      type="button"
+                      onClick={() => rozpocznijEdycje(w)}
+                      style={{
+                        background: "#fff",
+                        border: `1px solid ${LIGHT.accent}`,
+                        borderRadius: 6,
+                        color: LIGHT.accent,
+                        font: "inherit",
+                        fontSize: "0.7rem",
+                        fontWeight: 800,
+                        padding: "0.12rem 0.4rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Edytuj wpis
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void usunWpis(w)}
+                      style={{
+                        background: "#fff",
+                        border: "1px solid #dc2626",
+                        borderRadius: 6,
+                        color: "#b91c1c",
+                        font: "inherit",
+                        fontSize: "0.7rem",
+                        fontWeight: 800,
+                        padding: "0.12rem 0.4rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Usuń
+                    </button>
+                  </span>
                 ) : null}
               </div>
               {edycjaId === w.id ? (
