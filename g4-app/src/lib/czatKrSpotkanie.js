@@ -72,7 +72,92 @@ export function etykietaAutoraWpisu(w) {
   return String(w?.autor ?? "").trim() || String(w?.autor_email ?? "").trim() || "—";
 }
 
-export function odczytajSpotkanie() {
+export function datetimeLocalZIso(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return datetimeLocalZIso(new Date().toISOString());
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function isoZDatetimeLocal(value) {
+  const v = String(value ?? "").trim();
+  if (!v) return new Date().toISOString();
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return new Date().toISOString();
+  return d.toISOString();
+}
+
+/** Osobisty wpis zalogowanej osoby — nie znacznik i nie notatka ze spotkania. */
+export function czyMojOsobistyWpis(w, { nazwa, email } = {}) {
+  if (czyWpisSpotkania(w)) return false;
+  const a = String(w?.autor ?? "").trim().toLowerCase();
+  const e = String(w?.autor_email ?? "").trim().toLowerCase();
+  const n = String(nazwa ?? "").trim().toLowerCase();
+  const em = String(email ?? "").trim().toLowerCase();
+  if (em && (e === em || a === em)) return true;
+  if (n && a === n) return true;
+  return false;
+}
+
+export function znajdzZnacznikPoczatek(wpisy = [], krPrefer) {
+  const list = (wpisy ?? []).filter(czyZnacznikPoczatek);
+  if (!list.length) return null;
+  const kr = String(krPrefer ?? "").trim();
+  const wKr = kr ? list.filter((w) => String(w.kr ?? "").trim() === kr) : [];
+  const pool = wKr.length ? wKr : list;
+  pool.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+  return pool[0] ?? null;
+}
+
+const SELECT_WPIS =
+  "id, kr, tresc, autor, autor_email, created_at";
+
+export async function upsertZnacznikPoczatek(supabase, { kr, startIso, znacznikId }) {
+  const payload = {
+    tresc: trescPoczatekSpotkania(startIso),
+    autor: SPOTKANIE_AUTOR_ZNACZNIK,
+    autor_email: null,
+    created_at: startIso,
+  };
+  if (znacznikId) {
+    return supabase
+      .from("kr_notatka")
+      .update(payload)
+      .eq("id", znacznikId)
+      .select(SELECT_WPIS)
+      .single();
+  }
+  return supabase
+    .from("kr_notatka")
+    .insert([{ ...payload, kr }])
+    .select(SELECT_WPIS)
+    .single();
+}
+
+export async function przepiszMojeWpisyNaNotatkiSpotkania(
+  supabase,
+  { odIso, doIso, nazwa, email },
+) {
+  const { data, error } = await supabase
+    .from("kr_notatka")
+    .select(SELECT_WPIS)
+    .gte("created_at", odIso)
+    .lte("created_at", doIso)
+    .order("created_at", { ascending: true })
+    .limit(2000);
+  if (error) return { liczba: 0, ids: [], error };
+  const moje = (data ?? []).filter((w) => czyMojOsobistyWpis(w, { nazwa, email }));
+  const ids = moje.map((w) => w.id).filter((id) => id != null);
+  for (let i = 0; i < ids.length; i += 80) {
+    const chunk = ids.slice(i, i + 80);
+    const { error: e2 } = await supabase
+      .from("kr_notatka")
+      .update({ autor: SPOTKANIE_AUTOR_NOTATKA, autor_email: null })
+      .in("id", chunk);
+    if (e2) return { liczba: 0, ids: [], error: e2 };
+  }
+  return { liczba: ids.length, ids, error: null };
+}
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return { aktywne: false, startIso: null, startKr: "" };

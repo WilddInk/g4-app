@@ -5,11 +5,15 @@ import {
   czyWpisSpotkania,
   czyZnacznikKoniec,
   czyZnacznikPoczatek,
+  datetimeLocalZIso,
   etykietaAutoraWpisu,
+  isoZDatetimeLocal,
+  przepiszMojeWpisyNaNotatkiSpotkania,
   trescKoniecSpotkania,
-  trescPoczatekSpotkania,
+  upsertZnacznikPoczatek,
   useSpotkanieKierownikow,
   zapiszSpotkanie,
+  znajdzZnacznikPoczatek,
 } from "./lib/czatKrSpotkanie.js";
 
 /**
@@ -186,6 +190,14 @@ export function CzatKrPanel({
   const [zadanieDeadline, setZadanieDeadline] = useState("");
   const [zapisZadania, setZapisZadania] = useState(false);
   const spotkanie = useSpotkanieKierownikow();
+  const [poczatekLocal, setPoczatekLocal] = useState(() =>
+    datetimeLocalZIso(spotkanie.startIso || new Date().toISOString()),
+  );
+  const [przepisBusy, setPrzepisBusy] = useState(false);
+
+  useEffect(() => {
+    if (spotkanie.startIso) setPoczatekLocal(datetimeLocalZIso(spotkanie.startIso));
+  }, [spotkanie.startIso]);
 
   const zespolDoZadan = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
 
@@ -357,22 +369,22 @@ export function CzatKrPanel({
     setMsg(spotkanie.aktywne ? "Dodano notatkę ze spotkania." : "Dodano wpis.");
   }
 
-  async function wstawWpisSpotkania({ tresc, autor }) {
+  async function wstawWpisSpotkania({ tresc, autor, createdAt }) {
     const kr = String(wybranyKr ?? "").trim();
     if (!kr) {
       setMsg("Wybierz KR po lewej, żeby zapisać znacznik spotkania.");
       return null;
     }
+    const payload = {
+      kr,
+      tresc,
+      autor,
+      autor_email: null,
+    };
+    if (createdAt) payload.created_at = createdAt;
     const { data, error } = await supabase
       .from("kr_notatka")
-      .insert([
-        {
-          kr,
-          tresc,
-          autor,
-          autor_email: null,
-        },
-      ])
+      .insert([payload])
       .select("id, kr, tresc, autor, autor_email, created_at")
       .single();
     if (error) {
@@ -383,28 +395,96 @@ export function CzatKrPanel({
     return data;
   }
 
+  function scalPrzepisaneWpisy(ids) {
+    const set = new Set(ids);
+    setWpisy((prev) =>
+      prev.map((x) =>
+        set.has(x.id) ? { ...x, autor: SPOTKANIE_AUTOR_NOTATKA, autor_email: null } : x,
+      ),
+    );
+  }
+
+  async function zastosujPoczatekIPrzepisz({ startIso, wstawNowyZnacznik }) {
+    const kr = String(wybranyKr ?? "").trim() || String(spotkanie.startKr ?? "").trim();
+    if (!kr) {
+      setMsg("Wybierz KR, w którym zapiszę początek spotkania.");
+      return false;
+    }
+    const znacznik = znajdzZnacznikPoczatek(wpisy, spotkanie.startKr || kr);
+    const { data, error } = await upsertZnacznikPoczatek(supabase, {
+      kr,
+      startIso,
+      znacznikId: wstawNowyZnacznik ? null : znacznik?.id,
+    });
+    if (error) {
+      setMsg(`Nie udało się zapisać początku spotkania: ${error.message}`);
+      return false;
+    }
+    if (data) {
+      setWpisy((prev) => {
+        const bez = prev.filter((x) => x.id !== data.id && !(znacznik?.id && x.id === znacznik.id));
+        return [data, ...bez];
+      });
+    }
+    const doIso = new Date().toISOString();
+    const wynik = await przepiszMojeWpisyNaNotatkiSpotkania(supabase, {
+      odIso: startIso,
+      doIso,
+      nazwa: autorNazwa,
+      email: autorEmail,
+    });
+    if (wynik.error) {
+      setMsg(`Początek zapisany, ale nie udało się przepisać wpisów: ${wynik.error.message}`);
+      zapiszSpotkanie({ aktywne: true, startIso, startKr: kr });
+      return true;
+    }
+    scalPrzepisaneWpisy(wynik.ids);
+    zapiszSpotkanie({ aktywne: true, startIso, startKr: kr });
+    const ile = wynik.liczba;
+    setMsg(
+      ile
+        ? `Początek spotkania: ${formatData(startIso)}. Przepisano ${ile} ${
+            ile === 1 ? "Twój wpis" : "Twoich wpisów"
+          } na notatki ze spotkania (bez nazwiska).`
+        : `Początek spotkania: ${formatData(startIso)}. Brak Twoich wcześniejszych wpisów do przepisania.`,
+    );
+    return true;
+  }
+
   async function rozpocznijSpotkanie() {
     if (!czyMozePisac) {
       alert("Zaloguj się, aby notować ze spotkania.");
       return;
     }
     if (spotkanie.aktywne) return;
-    const kr = String(wybranyKr ?? "").trim();
-    if (!kr) {
-      setMsg("Wybierz KR, w którym zapiszę początek spotkania.");
-      return;
-    }
-    const startIso = new Date().toISOString();
+    const startIso = isoZDatetimeLocal(poczatekLocal);
     setMsg(null);
     setWysylanie(true);
-    const wstawiony = await wstawWpisSpotkania({
-      tresc: trescPoczatekSpotkania(startIso),
-      autor: SPOTKANIE_AUTOR_ZNACZNIK,
+    await zastosujPoczatekIPrzepisz({
+      startIso,
+      wstawNowyZnacznik: !znajdzZnacznikPoczatek(wpisy, String(wybranyKr ?? "").trim()),
     });
     setWysylanie(false);
-    if (!wstawiony) return;
-    zapiszSpotkanie({ aktywne: true, startIso, startKr: kr });
-    setMsg("Spotkanie kierowników rozpoczęte — kolejne wpisy jako notatka ze spotkania, bez Twojego nazwiska.");
+  }
+
+  async function zastosujDateSpotkaniaWstecz() {
+    if (!czyMozePisac) return;
+    const startIso = isoZDatetimeLocal(poczatekLocal);
+    if (Number.isNaN(new Date(startIso).getTime())) {
+      setMsg("Podaj poprawną datę i godzinę początku spotkania.");
+      return;
+    }
+    const ok = window.confirm(
+      `Ustawić początek spotkania na ${formatData(startIso)} i przepisać Twoje wpisy od tej godziny do teraz na „Notatka ze spotkania” (bez nazwiska)?`,
+    );
+    if (!ok) return;
+    setMsg(null);
+    setPrzepisBusy(true);
+    await zastosujPoczatekIPrzepisz({
+      startIso,
+      wstawNowyZnacznik: !znajdzZnacznikPoczatek(wpisy, spotkanie.startKr || wybranyKr),
+    });
+    setPrzepisBusy(false);
   }
 
   async function zakonczSpotkanie() {
@@ -562,30 +642,71 @@ export function CzatKrPanel({
         <div>
           <strong style={{ fontSize: "1.05rem", color: LIGHT.accent }}>CZAT KR</strong>
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
-            Po lewej projekt (KR), po prawej wątek. Przy każdym wpisie jest przycisk{" "}
-            <strong style={{ color: LIGHT.accent }}>Edytuj wpis</strong>.
+            Po lewej projekt (KR), po prawej wątek. Przy wpisie: <strong style={{ color: LIGHT.accent }}>Edytuj wpis</strong>
+            . Spotkanie: ustaw datę/godzinę początku i przepisz swoje wcześniejsze wpisy na notatki.
           </div>
         </div>
-        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "flex-end" }}>
           {czyMozePisac && !brakTabeli ? (
-            <button
-              type="button"
-              disabled={wysylanie}
-              onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
-              style={{
-                background: spotkanie.aktywne ? "#b45309" : "#fff",
-                border: spotkanie.aktywne ? "1px solid #b45309" : LIGHT.spotkanieBorder,
-                borderRadius: 8,
-                color: spotkanie.aktywne ? "#fff" : LIGHT.spotkanieText,
-                fontSize: "0.75rem",
-                fontWeight: 800,
-                padding: "0.25rem 0.55rem",
-                cursor: wysylanie ? "wait" : "pointer",
-                alignSelf: "flex-start",
-              }}
-            >
-              {spotkanie.aktywne ? "Zakończ spotkanie" : "Spotkanie kierowników"}
-            </button>
+            <>
+              <label
+                style={{
+                  display: "grid",
+                  gap: 2,
+                  fontSize: "0.68rem",
+                  fontWeight: 700,
+                  color: LIGHT.spotkanieText,
+                }}
+              >
+                Początek spotkania
+                <input
+                  type="datetime-local"
+                  value={poczatekLocal}
+                  onChange={(e) => setPoczatekLocal(e.target.value)}
+                  style={{
+                    ...inputSt,
+                    width: "auto",
+                    minWidth: "11.5rem",
+                    fontSize: "0.78rem",
+                    padding: "0.22rem 0.4rem",
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={wysylanie || przepisBusy}
+                onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
+                style={{
+                  background: spotkanie.aktywne ? "#b45309" : "#fff",
+                  border: spotkanie.aktywne ? "1px solid #b45309" : LIGHT.spotkanieBorder,
+                  borderRadius: 8,
+                  color: spotkanie.aktywne ? "#fff" : LIGHT.spotkanieText,
+                  fontSize: "0.75rem",
+                  fontWeight: 800,
+                  padding: "0.25rem 0.55rem",
+                  cursor: wysylanie ? "wait" : "pointer",
+                }}
+              >
+                {spotkanie.aktywne ? "Zakończ spotkanie" : "Rozpocznij i przepisz wpisy"}
+              </button>
+              <button
+                type="button"
+                disabled={wysylanie || przepisBusy}
+                onClick={() => void zastosujDateSpotkaniaWstecz()}
+                style={{
+                  background: LIGHT.znacznikBg,
+                  border: LIGHT.spotkanieBorder,
+                  borderRadius: 8,
+                  color: LIGHT.spotkanieText,
+                  fontSize: "0.75rem",
+                  fontWeight: 800,
+                  padding: "0.25rem 0.55rem",
+                  cursor: przepisBusy ? "wait" : "pointer",
+                }}
+              >
+                {przepisBusy ? "Przepisuję…" : "Zmień datę / przepisz wstecz"}
+              </button>
+            </>
           ) : null}
           <button
             type="button"
@@ -651,6 +772,7 @@ export function CzatKrPanel({
           {spotkanie.startIso ? ` · od ${formatData(spotkanie.startIso)}` : ""}
           {spotkanie.startKr ? ` · początek w KR ${spotkanie.startKr}` : ""}.
           Wpisy zapisują się jako <strong>Notatka ze spotkania</strong> — bez Twojego nazwiska.
+          Datę i godzinę początku możesz zmienić powyżej — wtedy Twoje wcześniejsze wpisy z tego czasu też zostaną przepisane.
           Możesz przełączać KR. Na koniec kliknij „Zakończ spotkanie”.
         </div>
       ) : null}
