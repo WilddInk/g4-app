@@ -211,7 +211,8 @@ export function KrNotatkiCzat({
         </span>
       </div>
       <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.78rem", color: LIGHT.muted, lineHeight: 1.45 }}>
-        Wątki projektu — dopisują użytkownicy i kierownicy. Ten sam CZAT KR co w Fakturowaniu.
+        Wątki projektu — ten sam CZAT KR co w Fakturowaniu. Przy wpisie:{" "}
+        <strong style={{ color: LIGHT.accent }}>Edytuj wpis</strong>.
       </p>
 
       {brakTabeli ? (
@@ -261,10 +262,39 @@ export function KrNotatkiCzat({
                 padding: "0.4rem 0.55rem",
               }}
             >
-              <div style={{ fontSize: "0.7rem", color: LIGHT.soft, marginBottom: "0.15rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: "0.35rem",
+                  fontSize: "0.7rem",
+                  color: LIGHT.soft,
+                  marginBottom: "0.15rem",
+                }}
+              >
                 <strong style={{ color: LIGHT.accent }}>{w.autor || w.autor_email || "—"}</strong>
-                {" · "}
-                {formatData(w.created_at) || "—"}
+                <span>{" · "}{formatData(w.created_at) || "—"}</span>
+                {czyMozeEdytowac && edycjaId !== w.id ? (
+                  <button
+                    type="button"
+                    onClick={() => rozpocznijEdycje(w)}
+                    style={{
+                      marginLeft: "auto",
+                      background: "#fff",
+                      border: `1px solid ${LIGHT.accent}`,
+                      borderRadius: 6,
+                      color: LIGHT.accent,
+                      font: "inherit",
+                      fontSize: "0.7rem",
+                      fontWeight: 800,
+                      padding: "0.12rem 0.4rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Edytuj wpis
+                  </button>
+                ) : null}
               </div>
               {edycjaId === w.id ? (
                 <div style={{ display: "grid", gap: "0.35rem" }}>
@@ -326,31 +356,9 @@ export function KrNotatkiCzat({
                   </div>
                 </div>
               ) : (
-                <>
-                  <div style={{ whiteSpace: "pre-wrap", fontSize: "0.82rem", lineHeight: 1.4, color: LIGHT.text }}>
-                    {w.tresc}
-                  </div>
-                  {czyMozeEdytowac ? (
-                    <button
-                      type="button"
-                      onClick={() => rozpocznijEdycje(w)}
-                      style={{
-                        marginTop: "0.25rem",
-                        background: "none",
-                        border: "none",
-                        padding: 0,
-                        color: LIGHT.accent,
-                        font: "inherit",
-                        fontSize: "0.72rem",
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        textDecoration: "underline",
-                      }}
-                    >
-                      Edytuj
-                    </button>
-                  ) : null}
-                </>
+                <div style={{ whiteSpace: "pre-wrap", fontSize: "0.82rem", lineHeight: 1.4, color: LIGHT.text }}>
+                  {w.tresc}
+                </div>
               )}
             </div>
           ))}

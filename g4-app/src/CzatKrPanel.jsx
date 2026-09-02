@@ -479,7 +479,8 @@ export function CzatKrPanel({
         <div>
           <strong style={{ fontSize: "1.05rem", color: LIGHT.accent }}>CZAT KR</strong>
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
-            Po lewej projekt (KR), po prawej wątek — użytkownicy i kierownicy.
+            Po lewej projekt (KR), po prawej wątek. Przy każdym wpisie jest przycisk{" "}
+            <strong style={{ color: LIGHT.accent }}>Edytuj wpis</strong>.
           </div>
         </div>
         <button
@@ -702,7 +703,7 @@ export function CzatKrPanel({
                       style={{
                         display: "flex",
                         flexWrap: "wrap",
-                        alignItems: "baseline",
+                        alignItems: "center",
                         gap: "0.35rem 0.65rem",
                         marginBottom: "0.3rem",
                       }}
@@ -720,6 +721,25 @@ export function CzatKrPanel({
                       <span style={{ fontSize: "0.78rem", color: LIGHT.soft }}>
                         {formatData(w.created_at) || "—"}
                       </span>
+                      {czyMozePisac && edycjaId !== w.id ? (
+                        <button
+                          type="button"
+                          onClick={() => rozpocznijEdycje(w)}
+                          style={{
+                            marginLeft: "auto",
+                            background: "#fff",
+                            border: `1px solid ${LIGHT.accent}`,
+                            borderRadius: 8,
+                            color: LIGHT.accent,
+                            fontSize: "0.78rem",
+                            fontWeight: 800,
+                            padding: "0.2rem 0.55rem",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Edytuj wpis
+                        </button>
+                      ) : null}
                     </div>
                     {edycjaId === w.id ? (
                       <div style={{ display: "grid", gap: "0.4rem" }}>
@@ -773,47 +793,28 @@ export function CzatKrPanel({
                         <div style={{ whiteSpace: "pre-wrap", fontSize: "0.92rem", lineHeight: 1.45, color: LIGHT.text }}>
                           {w.tresc}
                         </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.4rem" }}>
-                          {czyMozePisac ? (
-                            <button
-                              type="button"
-                              onClick={() => rozpocznijEdycje(w)}
-                              style={{
-                                background: "none",
-                                border: "none",
-                                padding: 0,
-                                color: LIGHT.accent,
-                                fontSize: "0.75rem",
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                textDecoration: "underline",
-                              }}
-                            >
-                              Edytuj
-                            </button>
-                          ) : null}
-                          {mozeZadania ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setZadanieTytul(String(w.tresc ?? "").slice(0, 200));
-                                setPokazZadanie(true);
-                              }}
-                              style={{
-                                background: "none",
-                                border: "none",
-                                padding: 0,
-                                color: LIGHT.accent,
-                                fontSize: "0.75rem",
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                textDecoration: "underline",
-                              }}
-                            >
-                              Utwórz zadanie z tej wiadomości
-                            </button>
-                          ) : null}
-                        </div>
+                        {mozeZadania ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setZadanieTytul(String(w.tresc ?? "").slice(0, 200));
+                              setPokazZadanie(true);
+                            }}
+                            style={{
+                              marginTop: "0.4rem",
+                              background: "none",
+                              border: "none",
+                              padding: 0,
+                              color: LIGHT.accent,
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              textDecoration: "underline",
+                            }}
+                          >
+                            Utwórz zadanie z tej wiadomości
+                          </button>
+                        ) : null}
                       </>
                     )}
                   </div>

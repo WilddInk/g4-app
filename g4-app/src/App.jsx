@@ -13996,7 +13996,7 @@ export default function App() {
                 </h2>
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
                   {fakturowanieSekcja === "czat_kr"
-                    ? "Wpisy do projektów KR — użytkownicy i kierownicy. Ten sam wątek co na Tablicy KR / przycisk Czat KR w planie faktur."
+                    ? "Wpisy do projektów KR. Przy każdym wpisie po prawej jest przycisk „Edytuj wpis”."
                     : fakturowanieSekcja === "biezace_kr"
                     ? "Lista KR ze statusem „w trakcie” (projekty bieżące). Kolumna „W trakcie fakturowania” to osobna flaga w bazie — włącz ją dla KR, które aktualnie rozliczacie."
                     : fakturowanieSekcja === "plan_faktur"
