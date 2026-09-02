@@ -54,6 +54,9 @@ export function KrNotatkiCzat({
   const [draft, setDraft] = useState("");
   const [wysylanie, setWysylanie] = useState(false);
   const [rozwiniete, setRozwiniete] = useState(false);
+  const [edycjaId, setEdycjaId] = useState(null);
+  const [edycjaTresc, setEdycjaTresc] = useState("");
+  const [zapisywanieEdycji, setZapisywanieEdycji] = useState(false);
 
   const fetchWpisy = useCallback(async () => {
     if (!krKod) {
@@ -86,6 +89,8 @@ export function KrNotatkiCzat({
 
   useEffect(() => {
     void fetchWpisy();
+    setEdycjaId(null);
+    setEdycjaTresc("");
   }, [fetchWpisy]);
 
   const widoczne = useMemo(() => {
@@ -136,6 +141,53 @@ export function KrNotatkiCzat({
     setWpisy((prev) => [data, ...prev]);
     setDraft("");
     setMsg("Dodano notatkę.");
+  }
+
+  function rozpocznijEdycje(w) {
+    if (!czyMozeEdytowac) {
+      alert("Notatki mogą edytować zalogowane osoby.");
+      return;
+    }
+    setEdycjaId(w.id);
+    setEdycjaTresc(String(w.tresc ?? ""));
+    setMsg(null);
+  }
+
+  function anulujEdycje() {
+    setEdycjaId(null);
+    setEdycjaTresc("");
+  }
+
+  async function zapiszEdycje(e) {
+    e?.preventDefault?.();
+    if (!czyMozeEdytowac) {
+      alert("Notatki mogą edytować zalogowane osoby.");
+      return;
+    }
+    const id = edycjaId;
+    const tekst = String(edycjaTresc ?? "").trim();
+    if (!id) return;
+    if (!tekst) {
+      setMsg("Treść notatki nie może być pusta.");
+      return;
+    }
+    setZapisywanieEdycji(true);
+    setMsg(null);
+    const { data, error } = await supabase
+      .from("kr_notatka")
+      .update({ tresc: tekst })
+      .eq("id", id)
+      .select("id, kr, tresc, autor, autor_email, created_at")
+      .single();
+    setZapisywanieEdycji(false);
+    if (error) {
+      setMsg(`Nie udało się zapisać zmian: ${error.message}`);
+      return;
+    }
+    setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
+    setEdycjaId(null);
+    setEdycjaTresc("");
+    setMsg("Zapisano zmiany w notatce.");
   }
 
   if (!krKod) return null;
@@ -214,9 +266,92 @@ export function KrNotatkiCzat({
                 {" · "}
                 {formatData(w.created_at) || "—"}
               </div>
-              <div style={{ whiteSpace: "pre-wrap", fontSize: "0.82rem", lineHeight: 1.4, color: LIGHT.text }}>
-                {w.tresc}
-              </div>
+              {edycjaId === w.id ? (
+                <div style={{ display: "grid", gap: "0.35rem" }}>
+                  <textarea
+                    value={edycjaTresc}
+                    onChange={(e) => setEdycjaTresc(e.target.value)}
+                    rows={3}
+                    disabled={zapisywanieEdycji}
+                    style={{
+                      width: "100%",
+                      resize: "vertical",
+                      minHeight: "2.8rem",
+                      padding: "0.4rem 0.5rem",
+                      borderRadius: 8,
+                      border: LIGHT.inputBorder,
+                      background: "#fff",
+                      color: LIGHT.text,
+                      font: "inherit",
+                      fontSize: "0.82rem",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                    <button
+                      type="button"
+                      disabled={zapisywanieEdycji || !edycjaTresc.trim()}
+                      onClick={() => void zapiszEdycje()}
+                      style={{
+                        background: LIGHT.accent,
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: 8,
+                        fontSize: "0.75rem",
+                        padding: "0.25rem 0.6rem",
+                        cursor: zapisywanieEdycji ? "wait" : "pointer",
+                        fontWeight: 700,
+                        opacity: zapisywanieEdycji || !edycjaTresc.trim() ? 0.65 : 1,
+                      }}
+                    >
+                      {zapisywanieEdycji ? "Zapisywanie…" : "Zapisz"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={zapisywanieEdycji}
+                      onClick={anulujEdycje}
+                      style={{
+                        background: "#fff",
+                        border: LIGHT.cardBorder,
+                        borderRadius: 8,
+                        fontSize: "0.75rem",
+                        padding: "0.25rem 0.6rem",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        color: LIGHT.text,
+                      }}
+                    >
+                      Anuluj
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ whiteSpace: "pre-wrap", fontSize: "0.82rem", lineHeight: 1.4, color: LIGHT.text }}>
+                    {w.tresc}
+                  </div>
+                  {czyMozeEdytowac ? (
+                    <button
+                      type="button"
+                      onClick={() => rozpocznijEdycje(w)}
+                      style={{
+                        marginTop: "0.25rem",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        color: LIGHT.accent,
+                        font: "inherit",
+                        fontSize: "0.72rem",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Edytuj
+                    </button>
+                  ) : null}
+                </>
+              )}
             </div>
           ))}
           {wpisy.length > 3 ? (

@@ -20,20 +20,28 @@ COMMENT ON TABLE public.kr_notatka IS
 
 ALTER TABLE public.kr_notatka ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE public.kr_notatka ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+
 DROP POLICY IF EXISTS "anon_select_kr_notatka" ON public.kr_notatka;
 DROP POLICY IF EXISTS "anon_insert_kr_notatka" ON public.kr_notatka;
+DROP POLICY IF EXISTS "anon_update_kr_notatka" ON public.kr_notatka;
 DROP POLICY IF EXISTS "auth_select_kr_notatka" ON public.kr_notatka;
 DROP POLICY IF EXISTS "auth_insert_kr_notatka" ON public.kr_notatka;
+DROP POLICY IF EXISTS "auth_update_kr_notatka" ON public.kr_notatka;
 
 CREATE POLICY "anon_select_kr_notatka"
   ON public.kr_notatka FOR SELECT TO anon USING (true);
 CREATE POLICY "anon_insert_kr_notatka"
   ON public.kr_notatka FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon_update_kr_notatka"
+  ON public.kr_notatka FOR UPDATE TO anon USING (true) WITH CHECK (true);
 
 CREATE POLICY "auth_select_kr_notatka"
   ON public.kr_notatka FOR SELECT TO authenticated USING (true);
 CREATE POLICY "auth_insert_kr_notatka"
   ON public.kr_notatka FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_kr_notatka"
+  ON public.kr_notatka FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 
-GRANT SELECT, INSERT ON public.kr_notatka TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.kr_notatka TO anon, authenticated;
 GRANT USAGE, SELECT ON SEQUENCE public.kr_notatka_id_seq TO anon, authenticated;

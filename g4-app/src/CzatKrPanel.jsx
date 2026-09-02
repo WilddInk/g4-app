@@ -160,6 +160,9 @@ export function CzatKrPanel({
   const [wysylanie, setWysylanie] = useState(false);
   const [rozwiniete, setRozwiniete] = useState(false);
   const [szukajKr, setSzukajKr] = useState("");
+  const [edycjaId, setEdycjaId] = useState(null);
+  const [edycjaTresc, setEdycjaTresc] = useState("");
+  const [zapisywanieEdycji, setZapisywanieEdycji] = useState(false);
 
   const [pokazZadanie, setPokazZadanie] = useState(false);
   const [zadanieTytul, setZadanieTytul] = useState("");
@@ -281,6 +284,8 @@ export function CzatKrPanel({
     setWybranyKr(kod);
     setRozwiniete(false);
     setMsg(null);
+    setEdycjaId(null);
+    setEdycjaTresc("");
   }
 
   async function wyslij(e) {
@@ -332,6 +337,54 @@ export function CzatKrPanel({
     setWpisy((prev) => [data, ...prev.filter((x) => x.id !== data.id)]);
     setDraft("");
     setMsg("Dodano wpis.");
+  }
+
+  function rozpocznijEdycje(w) {
+    if (!czyMozePisac) {
+      alert("Zaloguj się, aby edytować wpis w CZAT KR.");
+      return;
+    }
+    setEdycjaId(w.id);
+    setEdycjaTresc(String(w.tresc ?? ""));
+    setMsg(null);
+  }
+
+  function anulujEdycje() {
+    setEdycjaId(null);
+    setEdycjaTresc("");
+  }
+
+  async function zapiszEdycje(e) {
+    e?.preventDefault?.();
+    if (!czyMozePisac) {
+      alert("Zaloguj się, aby edytować wpis w CZAT KR.");
+      return;
+    }
+    const id = edycjaId;
+    const tekst = String(edycjaTresc ?? "").trim();
+    if (!id) return;
+    if (!tekst) {
+      setMsg("Treść wpisu nie może być pusta.");
+      return;
+    }
+    setZapisywanieEdycji(true);
+    setMsg(null);
+    const { data, error } = await supabase
+      .from("kr_notatka")
+      .update({ tresc: tekst })
+      .eq("id", id)
+      .select("id, kr, tresc, autor, autor_email, created_at")
+      .single();
+    setZapisywanieEdycji(false);
+    if (error) {
+      const m = String(error.message ?? "");
+      setMsg(`Nie udało się zapisać zmian: ${m}`);
+      return;
+    }
+    setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
+    setEdycjaId(null);
+    setEdycjaTresc("");
+    setMsg("Zapisano zmiany we wpisie.");
   }
 
   async function utworzZadanie(e) {
@@ -668,31 +721,101 @@ export function CzatKrPanel({
                         {formatData(w.created_at) || "—"}
                       </span>
                     </div>
-                    <div style={{ whiteSpace: "pre-wrap", fontSize: "0.92rem", lineHeight: 1.45, color: LIGHT.text }}>
-                      {w.tresc}
-                    </div>
-                    {mozeZadania ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setZadanieTytul(String(w.tresc ?? "").slice(0, 200));
-                          setPokazZadanie(true);
-                        }}
-                        style={{
-                          marginTop: "0.4rem",
-                          background: "none",
-                          border: "none",
-                          padding: 0,
-                          color: LIGHT.accent,
-                          fontSize: "0.75rem",
-                          fontWeight: 700,
-                          cursor: "pointer",
-                          textDecoration: "underline",
-                        }}
-                      >
-                        Utwórz zadanie z tej wiadomości
-                      </button>
-                    ) : null}
+                    {edycjaId === w.id ? (
+                      <div style={{ display: "grid", gap: "0.4rem" }}>
+                        <textarea
+                          value={edycjaTresc}
+                          onChange={(e) => setEdycjaTresc(e.target.value)}
+                          rows={3}
+                          disabled={zapisywanieEdycji}
+                          style={{ ...inputSt, resize: "vertical", minHeight: "3.2rem", fontSize: "0.9rem" }}
+                        />
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                          <button
+                            type="button"
+                            disabled={zapisywanieEdycji || !edycjaTresc.trim()}
+                            onClick={() => void zapiszEdycje()}
+                            style={{
+                              background: LIGHT.accent,
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 8,
+                              padding: "0.3rem 0.7rem",
+                              fontWeight: 700,
+                              fontSize: "0.78rem",
+                              cursor: zapisywanieEdycji ? "wait" : "pointer",
+                              opacity: zapisywanieEdycji || !edycjaTresc.trim() ? 0.65 : 1,
+                            }}
+                          >
+                            {zapisywanieEdycji ? "Zapisywanie…" : "Zapisz"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={zapisywanieEdycji}
+                            onClick={anulujEdycje}
+                            style={{
+                              background: "#fff",
+                              border: LIGHT.cardBorder,
+                              borderRadius: 8,
+                              padding: "0.3rem 0.7rem",
+                              fontWeight: 700,
+                              fontSize: "0.78rem",
+                              cursor: "pointer",
+                              color: LIGHT.text,
+                            }}
+                          >
+                            Anuluj
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ whiteSpace: "pre-wrap", fontSize: "0.92rem", lineHeight: 1.45, color: LIGHT.text }}>
+                          {w.tresc}
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.4rem" }}>
+                          {czyMozePisac ? (
+                            <button
+                              type="button"
+                              onClick={() => rozpocznijEdycje(w)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                padding: 0,
+                                color: LIGHT.accent,
+                                fontSize: "0.75rem",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                textDecoration: "underline",
+                              }}
+                            >
+                              Edytuj
+                            </button>
+                          ) : null}
+                          {mozeZadania ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setZadanieTytul(String(w.tresc ?? "").slice(0, 200));
+                                setPokazZadanie(true);
+                              }}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                padding: 0,
+                                color: LIGHT.accent,
+                                fontSize: "0.75rem",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                textDecoration: "underline",
+                              }}
+                            >
+                              Utwórz zadanie z tej wiadomości
+                            </button>
+                          ) : null}
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
                 {wpisyWybranego.length > 12 ? (
