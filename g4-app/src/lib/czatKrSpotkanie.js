@@ -242,6 +242,37 @@ export function zlozProtokolSpotkania(wpisy, { odIso, doIso } = {}) {
   return linie.join("\n").trim() + "\n";
 }
 
+/** Wpisy CZAT KR → tematy protokołu (bez znaczników początek/koniec). */
+export function wpisyNaTematy(wpisy = []) {
+  return [...(wpisy ?? [])]
+    .filter((w) => !czyZnacznikPoczatek(w) && !czyZnacznikKoniec(w))
+    .filter((w) => String(w?.tresc ?? "").trim())
+    .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+    .map((w, i) => ({
+      kr: String(w.kr ?? "").trim(),
+      tresc: String(w.tresc ?? "").trim(),
+      godzina: w.created_at || null,
+      kolejnosc: i,
+    }));
+}
+
+/** Grupuje tematy po numerze KR — do zestawienia na wydruku. */
+export function zestawienieTematowPoKr(tematy = []) {
+  const map = new Map();
+  for (const t of tematy ?? []) {
+    const kr = String(t?.kr ?? "").trim();
+    const klucz = !kr || czyKrPlaceholder(kr) ? "—" : kr;
+    if (!map.has(klucz)) map.set(klucz, []);
+    map.get(klucz).push(t);
+  }
+  const kody = [...map.keys()].sort((a, b) => {
+    if (a === "—") return 1;
+    if (b === "—") return -1;
+    return a.localeCompare(b, "pl", { numeric: true });
+  });
+  return kody.map((kr) => ({ kr, tematy: map.get(kr) ?? [] }));
+}
+
 export function odczytajSpotkanie() {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);

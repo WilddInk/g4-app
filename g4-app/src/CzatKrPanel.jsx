@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   SPOTKANIE_AUTOR_NOTATKA,
-  SPOTKANIE_AUTOR_ZNACZNIK,
   czyWpisSpotkania,
   czyZnacznikKoniec,
   czyZnacznikPoczatek,
@@ -9,15 +8,10 @@ import {
   etykietaAutoraWpisu,
   isoZDatyIGodziny,
   polaDatyGodzinyZIso,
-  pobierzWpisyZakresu,
-  przepiszMojeWpisyNaNotatkiSpotkania,
-  zlozProtokolSpotkania,
   trescKoniecSpotkania,
   trescPoczatekSpotkania,
-  upsertZnacznikPoczatek,
   useSpotkanieKierownikow,
   zapiszSpotkanie,
-  znajdzZnacznikPoczatek,
 } from "./lib/czatKrSpotkanie.js";
 
 /**
@@ -173,6 +167,8 @@ export function CzatKrPanel({
   onOtworzKr,
   /** Przejście do Plan faktur FS z prefill (KR / klient / opis). */
   onDodajFaktureDoPlanu,
+  /** Osobny moduł protokołów spotkań kierowników. */
+  onOtworzSpotkaniaKierownikow,
 }) {
   const [wpisy, setWpisy] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -197,19 +193,13 @@ export function CzatKrPanel({
   const polaOdInit = polaDatyGodzinyZIso(
     spotkanie.startIso || new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
   );
-  const polaDoInit = polaDatyGodzinyZIso(new Date().toISOString());
   const [spotkanieData, setSpotkanieData] = useState(polaOdInit.data);
   const [spotkanieGodzina, setSpotkanieGodzina] = useState(polaOdInit.godzina);
-  const [spotkanieDataDo, setSpotkanieDataDo] = useState(polaDoInit.data);
-  const [spotkanieGodzinaDo, setSpotkanieGodzinaDo] = useState(polaDoInit.godzina);
   const [notatkaGodzina, setNotatkaGodzina] = useState(() => polaDatyGodzinyZIso().godzina);
-  const [przepisBusy, setPrzepisBusy] = useState(false);
   const [edycjaData, setEdycjaData] = useState("");
   const [edycjaGodzina, setEdycjaGodzina] = useState("");
   const [godzinaDraft, setGodzinaDraft] = useState({});
   const [zapisGodzinyId, setZapisGodzinyId] = useState(null);
-  const [protokolTekst, setProtokolTekst] = useState("");
-  const [protokolBusy, setProtokolBusy] = useState(false);
 
   useEffect(() => {
     if (!spotkanie.startIso) return;
@@ -397,240 +387,6 @@ export function CzatKrPanel({
     setWpisy((prev) => [data, ...prev.filter((x) => x.id !== data.id)]);
     setDraft("");
     setMsg(spotkanie.aktywne ? "Dodano notatkę ze spotkania." : "Dodano wpis.");
-  }
-
-  async function wstawWpisSpotkania({ tresc, autor, createdAt }) {
-    const kr = String(wybranyKr ?? "").trim();
-    if (!kr || czyKrPlaceholder(kr)) {
-      setMsg("Wybierz prawdziwy numer KR po lewej (np. 1083) — nie zapisuję do „???”.");
-      return null;
-    }
-    const payload = {
-      kr,
-      tresc,
-      autor,
-      autor_email: null,
-    };
-    if (createdAt) payload.created_at = createdAt;
-    const { data, error } = await supabase
-      .from("kr_notatka")
-      .insert([payload])
-      .select("id, kr, tresc, autor, autor_email, created_at")
-      .single();
-    if (error) {
-      setMsg(`Nie udało się zapisać znacznika spotkania: ${error.message}`);
-      return null;
-    }
-    setWpisy((prev) => [data, ...prev.filter((x) => x.id !== data.id)]);
-    return data;
-  }
-
-  function scalPrzepisaneWpisy(ids) {
-    const set = new Set(ids);
-    setWpisy((prev) =>
-      prev.map((x) =>
-        set.has(x.id) ? { ...x, autor: SPOTKANIE_AUTOR_NOTATKA, autor_email: null } : x,
-      ),
-    );
-  }
-
-  async function zastosujPoczatekIPrzepisz({ startIso, wstawNowyZnacznik }) {
-    let kr = String(wybranyKr ?? "").trim();
-    if (czyKrPlaceholder(kr)) kr = "";
-    if (!kr) {
-      const pierwszy = listaKrLewa.find((x) => !czyKrPlaceholder(x.kr));
-      kr = pierwszy?.kr ? String(pierwszy.kr).trim() : "";
-    }
-    if (!kr || czyKrPlaceholder(kr)) {
-      setMsg("Najpierw kliknij po lewej prawdziwy KR (np. 1083). Nie zapisuję początku do „???”.");
-      return false;
-    }
-    const znacznik = znajdzZnacznikPoczatek(
-      wpisy.filter((w) => !czyKrPlaceholder(w.kr)),
-      kr,
-    );
-    const { data, error } = await upsertZnacznikPoczatek(supabase, {
-      kr,
-      startIso,
-      znacznikId: wstawNowyZnacznik ? null : znacznik?.id,
-    });
-    if (error) {
-      setMsg(`Nie udało się zapisać początku spotkania: ${error.message}`);
-      return false;
-    }
-    if (data) {
-      setWpisy((prev) => {
-        const bez = prev.filter((x) => x.id !== data.id && !(znacznik?.id && x.id === znacznik.id));
-        return [data, ...bez];
-      });
-    }
-    const doIso = isoZDatyIGodziny(spotkanieDataDo, spotkanieGodzinaDo);
-    const wynik = await przepiszMojeWpisyNaNotatkiSpotkania(supabase, {
-      odIso: startIso,
-      doIso,
-      nazwa: autorNazwa,
-      email: autorEmail,
-    });
-    if (wynik.error) {
-      setMsg(`Początek zapisany, ale nie udało się przepisać wpisów: ${wynik.error.message}`);
-      zapiszSpotkanie({ aktywne: true, startIso, startKr: kr });
-      return true;
-    }
-    scalPrzepisaneWpisy(wynik.ids);
-    zapiszSpotkanie({ aktywne: true, startIso, startKr: kr });
-    const ile = wynik.liczba;
-    setMsg(
-      ile
-        ? `Początek spotkania: ${formatData(startIso)}. Przepisano ${ile} ${
-            ile === 1 ? "Twój wpis" : "Twoich wpisów"
-          } na notatki ze spotkania (bez nazwiska).`
-        : `Początek spotkania: ${formatData(startIso)}. Brak Twoich wcześniejszych wpisów do przepisania.`,
-    );
-    return true;
-  }
-
-  async function rozpocznijSpotkanie() {
-    if (!czyMozePisac) {
-      alert("Zaloguj się, aby notować ze spotkania.");
-      return;
-    }
-    if (spotkanie.aktywne) return;
-    const startIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
-    setMsg(null);
-    setWysylanie(true);
-    await zastosujPoczatekIPrzepisz({
-      startIso,
-      wstawNowyZnacznik: !znajdzZnacznikPoczatek(
-        wpisy.filter((w) => !czyKrPlaceholder(w.kr)),
-        String(wybranyKr ?? "").trim(),
-      ),
-    });
-    setWysylanie(false);
-  }
-
-  async function zastosujDateSpotkaniaWstecz() {
-    if (!czyMozePisac) return;
-    const startIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
-    if (Number.isNaN(new Date(startIso).getTime())) {
-      setMsg("Podaj poprawną datę i godzinę początku spotkania.");
-      return;
-    }
-    const ok = window.confirm(
-      `Ustawić początek spotkania na ${formatData(startIso)} i przepisać Twoje wpisy od tej godziny do teraz na „Notatka ze spotkania” (bez nazwiska)?`,
-    );
-    if (!ok) return;
-    setMsg(null);
-    setPrzepisBusy(true);
-    await zastosujPoczatekIPrzepisz({
-      startIso,
-      wstawNowyZnacznik: !znajdzZnacznikPoczatek(
-        wpisy.filter((w) => !czyKrPlaceholder(w.kr)),
-        String(wybranyKr ?? "").trim(),
-      ),
-    });
-    setPrzepisBusy(false);
-  }
-
-  async function zamienMojeWpisyOdDo() {
-    if (!czyMozePisac) return;
-    const odIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
-    const doIso = isoZDatyIGodziny(spotkanieDataDo, spotkanieGodzinaDo);
-    if (new Date(doIso).getTime() < new Date(odIso).getTime()) {
-      setMsg("Godzina „do” musi być późniejsza niż „od”.");
-      return;
-    }
-    const ok = window.confirm(
-      `Zamienić Twoje wpisy od ${formatData(odIso)} do ${formatData(doIso)} na „Notatka ze spotkania kierowników” (zamiast nazwiska)?`,
-    );
-    if (!ok) return;
-    setMsg(null);
-    setPrzepisBusy(true);
-    const wynik = await przepiszMojeWpisyNaNotatkiSpotkania(supabase, {
-      odIso,
-      doIso,
-      nazwa: autorNazwa,
-      email: autorEmail,
-    });
-    setPrzepisBusy(false);
-    if (wynik.error) {
-      setMsg(`Nie udało się przepisać wpisów: ${wynik.error.message}`);
-      return;
-    }
-    scalPrzepisaneWpisy(wynik.ids);
-    zapiszSpotkanie({
-      aktywne: true,
-      startIso: odIso,
-      startKr: String(wybranyKr ?? "").trim(),
-    });
-    const ile = wynik.liczba;
-    setMsg(
-      ile
-        ? `Przepisano ${ile} ${ile === 1 ? "wpis" : "wpisów"} z ${formatData(odIso)} – ${formatData(doIso)} na notatki ze spotkania kierowników.`
-        : `W tym zakresie nie znaleziono Twoich wpisów do przepisania (${formatData(odIso)} – ${formatData(doIso)}).`,
-    );
-    await fetchWpisy();
-  }
-
-  async function zlozNotatkeZeSpotkania() {
-    const odIso = isoZDatyIGodziny(spotkanieData, spotkanieGodzina);
-    const doIso = isoZDatyIGodziny(spotkanieDataDo, spotkanieGodzinaDo);
-    if (new Date(doIso).getTime() < new Date(odIso).getTime()) {
-      setMsg("Godzina „do” musi być późniejsza niż „od”.");
-      return;
-    }
-    setMsg(null);
-    setProtokolBusy(true);
-    const { data, error } = await pobierzWpisyZakresu(supabase, { odIso, doIso });
-    setProtokolBusy(false);
-    if (error) {
-      setMsg(`Nie udało się złożyć notatki: ${error.message}`);
-      return;
-    }
-    const tekst = zlozProtokolSpotkania(data ?? [], { odIso, doIso });
-    setProtokolTekst(tekst);
-    const ile = (data ?? []).filter((w) => !czyZnacznikPoczatek(w) && !czyZnacznikKoniec(w)).length;
-    setMsg(
-      ile
-        ? `Złożono notatkę ze spotkania: ${ile} ${ile === 1 ? "wpis" : "wpisów"} w kolejności godzin, z numerami KR.`
-        : "W tym zakresie OD–DO nie ma wpisów do notatki.",
-    );
-  }
-
-  async function kopiujProtokol() {
-    const tekst = String(protokolTekst ?? "").trim();
-    if (!tekst) return;
-    try {
-      await navigator.clipboard.writeText(tekst);
-      setMsg("Skopiowano notatkę ze spotkania do schowka.");
-    } catch {
-      setMsg("Nie udało się skopiować — zaznacz tekst i skopiuj ręcznie.");
-    }
-  }
-
-  function pobierzProtokolPlik() {
-    const tekst = String(protokolTekst ?? "").trim();
-    if (!tekst) return;
-    const blob = new Blob([tekst], { type: "text/plain;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `notatka-spotkanie-kierownikow-${spotkanieData || "data"}.txt`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  async function zakonczSpotkanie() {
-    if (!spotkanie.aktywne) return;
-    const endIso = new Date().toISOString();
-    setMsg(null);
-    setWysylanie(true);
-    const wstawiony = await wstawWpisSpotkania({
-      tresc: trescKoniecSpotkania(spotkanie.startIso, endIso),
-      autor: SPOTKANIE_AUTOR_ZNACZNIK,
-    });
-    setWysylanie(false);
-    if (!wstawiony) return;
-    zapiszSpotkanie({ aktywne: false, startIso: null, startKr: "" });
-    setMsg("Zapisano koniec spotkania kierowników.");
   }
 
   function rozpocznijEdycje(w) {
@@ -896,206 +652,44 @@ export function CzatKrPanel({
         <div style={{ marginTop: "0.5rem", color: LIGHT.ok, fontSize: "0.8rem" }}>{msg}</div>
       ) : null}
 
-      {czyMozePisac && !brakTabeli ? (
+      {typeof onOtworzSpotkaniaKierownikow === "function" ? (
         <div
           role="region"
-          aria-label="Spotkanie kierowników"
+          aria-label="Spotkania kierowników"
           style={{
             marginTop: "0.65rem",
-            padding: "0.75rem 0.8rem",
+            padding: "0.65rem 0.8rem",
             borderRadius: 10,
             background: LIGHT.znacznikBg,
             border: LIGHT.spotkanieBorder,
             color: LIGHT.spotkanieText,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "0.55rem",
+            alignItems: "center",
+            justifyContent: "space-between",
           }}
         >
-          <strong style={{ fontSize: "1rem" }}>Spotkanie kierowników — zakres OD / DO</strong>
-          <p style={{ margin: "0.4rem 0 0.65rem", fontSize: "0.82rem", lineHeight: 1.45 }}>
-            Ustaw, od kiedy do kiedy trwało spotkanie (może być kilka godzin albo kilka dni wstecz).
-            Potem kliknij pomarańczowy przycisk — Twoje wpisy z tego czasu (np. „Monika Jakubowska”)
-            zamienią się na <strong>Notatka ze spotkania kierowników</strong>.
-          </p>
-          <div
+          <div style={{ fontSize: "0.84rem", lineHeight: 1.4, maxWidth: "36rem" }}>
+            <strong>Protokoły spotkań kierowników</strong> — lista obecnych, data i godzina, wydruk tematów i zadań
+            — są w osobnym module.
+          </div>
+          <button
+            type="button"
+            onClick={() => onOtworzSpotkaniaKierownikow()}
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
-              gap: "0.65rem",
-              marginBottom: "0.65rem",
+              background: LIGHT.spotkanieText,
+              border: "none",
+              borderRadius: 8,
+              color: "#fff",
+              fontSize: "0.84rem",
+              fontWeight: 800,
+              padding: "0.45rem 0.8rem",
+              cursor: "pointer",
             }}
           >
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "flex-end" }}>
-              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
-                OD — data
-                <input
-                  type="date"
-                  value={spotkanieData}
-                  onChange={(e) => setSpotkanieData(e.target.value)}
-                  style={{
-                    ...inputSt,
-                    width: "11.5rem",
-                    fontSize: "1rem",
-                    fontWeight: 700,
-                    padding: "0.4rem 0.5rem",
-                    border: LIGHT.spotkanieBorder,
-                  }}
-                />
-              </label>
-              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
-                OD — godzina
-                <input
-                  type="time"
-                  value={spotkanieGodzina}
-                  onChange={(e) => setSpotkanieGodzina(e.target.value)}
-                  style={{
-                    ...inputSt,
-                    width: "8.5rem",
-                    fontSize: "1rem",
-                    fontWeight: 700,
-                    padding: "0.4rem 0.5rem",
-                    border: LIGHT.spotkanieBorder,
-                  }}
-                />
-              </label>
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "flex-end" }}>
-              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
-                DO — data
-                <input
-                  type="date"
-                  value={spotkanieDataDo}
-                  onChange={(e) => setSpotkanieDataDo(e.target.value)}
-                  style={{
-                    ...inputSt,
-                    width: "11.5rem",
-                    fontSize: "1rem",
-                    fontWeight: 700,
-                    padding: "0.4rem 0.5rem",
-                    border: LIGHT.spotkanieBorder,
-                  }}
-                />
-              </label>
-              <label style={{ display: "grid", gap: 4, fontSize: "0.8rem", fontWeight: 800 }}>
-                DO — godzina
-                <input
-                  type="time"
-                  value={spotkanieGodzinaDo}
-                  onChange={(e) => setSpotkanieGodzinaDo(e.target.value)}
-                  style={{
-                    ...inputSt,
-                    width: "8.5rem",
-                    fontSize: "1rem",
-                    fontWeight: 700,
-                    padding: "0.4rem 0.5rem",
-                    border: LIGHT.spotkanieBorder,
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-            <button
-              type="button"
-              disabled={wysylanie || przepisBusy}
-              onClick={() => void zamienMojeWpisyOdDo()}
-              style={{
-                background: "#c2410c",
-                border: "none",
-                borderRadius: 8,
-                color: "#fff",
-                fontSize: "0.92rem",
-                fontWeight: 800,
-                padding: "0.55rem 0.9rem",
-                cursor: przepisBusy ? "wait" : "pointer",
-              }}
-            >
-              {przepisBusy ? "Zamieniam wpisy…" : "Zamień moje wpisy OD–DO na notatki ze spotkania"}
-            </button>
-            <button
-              type="button"
-              disabled={wysylanie || przepisBusy}
-              onClick={() => void (spotkanie.aktywne ? zakonczSpotkanie() : rozpocznijSpotkanie())}
-              style={{
-                background: "#fff",
-                border: LIGHT.spotkanieBorder,
-                borderRadius: 8,
-                color: LIGHT.spotkanieText,
-                fontSize: "0.82rem",
-                fontWeight: 800,
-                padding: "0.5rem 0.75rem",
-                cursor: wysylanie ? "wait" : "pointer",
-              }}
-            >
-              {spotkanie.aktywne ? "Zakończ spotkanie" : "Włącz tryb notowania"}
-            </button>
-            <button
-              type="button"
-              disabled={protokolBusy}
-              onClick={() => void zlozNotatkeZeSpotkania()}
-              style={{
-                background: LIGHT.spotkanieText,
-                border: "none",
-                borderRadius: 8,
-                color: "#fff",
-                fontSize: "0.88rem",
-                fontWeight: 800,
-                padding: "0.5rem 0.85rem",
-                cursor: protokolBusy ? "wait" : "pointer",
-              }}
-            >
-              {protokolBusy ? "Składam notatkę…" : "Złóż notatkę ze spotkania (wg godzin + KR)"}
-            </button>
-          </div>
-          {protokolTekst ? (
-            <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.4rem" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-                <button
-                  type="button"
-                  onClick={() => void kopiujProtokol()}
-                  style={{
-                    background: "#fff",
-                    border: LIGHT.spotkanieBorder,
-                    borderRadius: 8,
-                    color: LIGHT.spotkanieText,
-                    fontSize: "0.8rem",
-                    fontWeight: 800,
-                    padding: "0.35rem 0.65rem",
-                    cursor: "pointer",
-                  }}
-                >
-                  Kopiuj notatkę
-                </button>
-                <button
-                  type="button"
-                  onClick={pobierzProtokolPlik}
-                  style={{
-                    background: "#fff",
-                    border: LIGHT.spotkanieBorder,
-                    borderRadius: 8,
-                    color: LIGHT.spotkanieText,
-                    fontSize: "0.8rem",
-                    fontWeight: 800,
-                    padding: "0.35rem 0.65rem",
-                    cursor: "pointer",
-                  }}
-                >
-                  Pobierz plik TXT
-                </button>
-              </div>
-              <textarea
-                readOnly
-                value={protokolTekst}
-                rows={14}
-                style={{
-                  ...inputSt,
-                  minHeight: "12rem",
-                  fontFamily: "ui-monospace, Consolas, monospace",
-                  fontSize: "0.82rem",
-                  lineHeight: 1.45,
-                  background: "#fff",
-                }}
-              />
-            </div>
-          ) : null}
+            Otwórz Spotkania kierowników
+          </button>
         </div>
       ) : null}
 

@@ -5,6 +5,7 @@ import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { PlanFakturPanel } from "./PlanFakturPanel.jsx";
 import { KrNotatkiCzat } from "./KrNotatkiCzat.jsx";
 import { CzatKrPanel } from "./CzatKrPanel.jsx";
+import { SpotkaniaKierownikowPanel } from "./SpotkaniaKierownikowPanel.jsx";
 import { ProtokolyTerPanel } from "./ProtokolyTerPanel.jsx";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
 import { TerenPlanningBoard } from "./TerenPlanningBoard.jsx";
@@ -3638,6 +3639,31 @@ export default function App() {
     setWidok("fakturowanie");
     setFakturowanieBiezaceKrMsg(null);
     if (s === "czat_kr") void fetchPracownicy();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /** Moduł protokołów spotkań kierowników — ten sam dostęp co Fakturowanie. */
+  function przejdzDoSpotkanKierownikow() {
+    setWybranyKrKlucz(null);
+    setWidokKmDlaKr(null);
+    setWidokLogDlaKr(null);
+    setWidokInfoDlaKr(null);
+    setWidokPwDlaKr(null);
+    setWidokPulpitDlaKr(null);
+    setPulpitSortDaty("asc");
+    setDziennikWpisy([]);
+    setDziennikFetchError(null);
+    setLogEdycjaId(null);
+    setLogForm(logPustyForm());
+    setKmEdycjaId(null);
+    setKmForm(kmPustyForm());
+    setEditingKrKey(null);
+    setZadanieEdycjaId(null);
+    setZadanieForm(zadaniePustyForm());
+    setPwEdycjaId(null);
+    setPwForm(podwykonawcaPustyForm());
+    setWidok("spotkania_kierownikow");
+    void fetchPracownicy();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -7867,6 +7893,7 @@ export default function App() {
       samochody: "🚗",
       pracownik: "👥",
       fakturowanie_czat: "💬",
+      spotkania_kierownikow: "🗓️",
       fakturowanie_biezace_kr: "📌",
       fakturowanie_plan: "📋",
       fakturowanie_etapy: "📑",
@@ -10636,8 +10663,27 @@ export default function App() {
                 >
                   💬 CZAT KR
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoSpotkanKierownikow())}
+                  style={{
+                    background: "linear-gradient(135deg, #c2410c 0%, #ea580c 100%)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "0.55rem 1.1rem",
+                    fontWeight: 800,
+                    fontSize: "0.95rem",
+                    cursor: "pointer",
+                    boxShadow: "0 8px 22px -10px rgba(194,65,12,0.75)",
+                    letterSpacing: "0.01em",
+                  }}
+                  title="Protokoły, lista obecnych, wydruk tematów i zadań"
+                >
+                  🗓️ Spotkania kierowników
+                </button>
                 <span style={{ fontSize: "0.78rem", color: theme.muted, maxWidth: "28rem", lineHeight: 1.4 }}>
-                  Wpisy do KR (ten sam wątek co na Tablicy projektu) — nad fakturowaniem.
+                  Wpisy do KR oraz protokoły spotkań kierowników (obecność, tematy, wydruk).
                 </span>
               </div>
             ) : null}
@@ -13971,6 +14017,39 @@ export default function App() {
         </>
       ) : null}
 
+      {widok === "spotkania_kierownikow" ? (
+        <>
+          {!czyMozeWidziecFakturowanie ? (
+            <div style={s.hintBox} role="status">
+              Moduł <strong>Spotkania kierowników</strong> jest dostępny tylko dla <strong>kierownika</strong> i{" "}
+              <strong>administratora</strong>.
+            </div>
+          ) : (
+            <>
+              <div style={op.heroCard}>
+                <h2 style={{ ...op.sectionTitle, marginTop: 0 }}>Spotkania kierowników</h2>
+                <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
+                  Protokoły posiedzeń: data i godzina, lista obecnych, zestawienie omówionych tematów (wg KR) oraz
+                  zadania do wydruku. Tematy możesz wczytać z CZAT KR za wybrany zakres OD–DO.
+                </p>
+              </div>
+              <SpotkaniaKierownikowPanel
+                supabase={supabase}
+                pracownicy={pracownicy}
+                krList={krList}
+                autorNazwa={
+                  pracownikPowiazanyZSesja?.imie_nazwisko?.trim() || session?.user?.email || ""
+                }
+                autorEmail={session?.user?.email || ""}
+                autorNr={pracownikPowiazanyZSesja?.nr}
+                czyMozeEdytowac={czyMozeWidziecFakturowanie}
+                onOtworzCzatKr={() => void nawigujMenuZAutoZapisem(() => przejdzDoFakturowania("czat_kr"))}
+              />
+            </>
+          )}
+        </>
+      ) : null}
+
       {widok === "fakturowanie" ? (
         <>
           {!czyMozeWidziecFakturowanie ? (
@@ -13996,7 +14075,7 @@ export default function App() {
                 </h2>
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
                   {fakturowanieSekcja === "czat_kr"
-                    ? "Wpisy do projektów KR. Przy wpisie: „Edytuj wpis”. Spotkanie kierowników: notatki bez Twojego nazwiska."
+                    ? "Wpisy do projektów KR. Przy wpisie: „Edytuj wpis”. Protokoły spotkań — w module Spotkania kierowników."
                     : fakturowanieSekcja === "biezace_kr"
                     ? "Lista KR ze statusem „w trakcie” (projekty bieżące). Kolumna „W trakcie fakturowania” to osobna flaga w bazie — włącz ją dla KR, które aktualnie rozliczacie."
                     : fakturowanieSekcja === "plan_faktur"
@@ -14034,6 +14113,9 @@ export default function App() {
                           przejdzDoFakturowania("plan_faktur");
                         }
                       : undefined
+                  }
+                  onOtworzSpotkaniaKierownikow={() =>
+                    void nawigujMenuZAutoZapisem(() => przejdzDoSpotkanKierownikow())
                   }
                 />
               ) : null}
@@ -20211,6 +20293,28 @@ export default function App() {
           </div>
           {czyMozeWidziecFakturowanie ? (
             <>
+              <div style={{ ...op.navSectionLabel }}>🗓️ KIEROWNICTWO</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
+                <div>
+                  <button
+                    type="button"
+                    style={{
+                      ...op.navBtn,
+                      ...(widok === "spotkania_kierownikow" ? op.navBtnActive : {}),
+                      marginBottom: 0,
+                      fontWeight: 800,
+                      borderColor: "rgba(194,65,12,0.5)",
+                      color: "#c2410c",
+                    }}
+                    onClick={() => void nawigujMenuZAutoZapisem(() => przejdzDoSpotkanKierownikow())}
+                  >
+                    {etykietaMenuZIkona("spotkania_kierownikow", "Spotkania kierowników")}
+                  </button>
+                  <HelpLinijka wlaczony={trybHelp}>
+                    Protokoły, lista obecnych, data i godzina, wydruk tematów i zadań.
+                  </HelpLinijka>
+                </div>
+              </div>
               <div style={{ ...op.navSectionLabel }}>💶 FAKTUROWANIE</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.85rem" }}>
                 {[
@@ -20218,7 +20322,7 @@ export default function App() {
                     id: "fakturowanie_czat",
                     label: "CZAT KR",
                     sekcja: "czat_kr",
-                    help: "Wpisy do KR. Zadania: wybór realnych osób z pracownik (dostęp do aplikacji).",
+                    help: "Wpisy do KR. Protokoły spotkań — w module Spotkania kierowników.",
                   },
                   {
                     id: "fakturowanie_biezace_kr",
