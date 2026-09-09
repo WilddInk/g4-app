@@ -1812,6 +1812,7 @@ const FAKTURY_EDIT_MODAL_LAYOUT = {
   wiersz: { display: "flex", gap: "0.55rem", flexWrap: "wrap", alignItems: "flex-end" },
   komorka2: { flex: "1 1 240px", minWidth: "min(100%, 220px)" },
   komorka3: { flex: "1 1 160px", minWidth: "min(100%, 140px)" },
+  komorkaPelna: { flex: "1 1 100%", minWidth: "min(100%, 28rem)" },
 };
 
 /** Jedna paczka przy pełnym pobraniu listy (pętla `.range` w Supabase). */

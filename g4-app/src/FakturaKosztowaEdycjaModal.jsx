@@ -43,6 +43,10 @@ const FAKTURA_EDYCJA_BRAK_DANYCH_OKNO = {
   boxSizing: "border-box",
 };
 
+function liczbaCyfrNrKonta(raw) {
+  return String(raw ?? "").replace(/\D/g, "").length;
+}
+
 function kwotaFormularzDoLiczby(raw) {
   const t = String(raw ?? "")
     .trim()
@@ -228,6 +232,8 @@ export const FakturaKosztowaEdycjaModal = memo(function FakturaKosztowaEdycjaMod
   }, [form]);
 
   if (!form) return null;
+
+  const nrKontaCyfry = liczbaCyfrNrKonta(form.nr_konta);
 
   return (
     <div
@@ -578,15 +584,26 @@ export const FakturaKosztowaEdycjaModal = memo(function FakturaKosztowaEdycjaMod
                 ))}
               </select>
             </label>
-            <label style={{ ...s.label, ...layout.komorka2 }}>
+          </div>
+          <div style={layout.wiersz}>
+            <label style={{ ...s.label, ...layout.komorkaPelna }}>
               Nr konta
               <input
-                style={s.input}
+                style={s.inputNrKonta}
                 type="text"
+                spellCheck={false}
+                autoComplete="off"
                 value={form.nr_konta}
                 onChange={(ev) => setForm((f) => ({ ...f, nr_konta: ev.target.value }))}
-                placeholder="Opcjonalnie — np. przy odłożonej płatności"
+                placeholder="np. 12 3456 7890 1234 5678 9012 3456"
               />
+              <span style={{ fontSize: "0.75rem", fontWeight: 400, color: "#64748b" }}>
+                {!nrKontaCyfry
+                  ? "Cały numer w jednym polu — łatwiej sprawdzić, czy przy kopiowaniu z PDF nic nie ucięło się na początku ani na końcu."
+                  : nrKontaCyfry === 26
+                    ? `${nrKontaCyfry} cyfr — pełny polski NRB`
+                    : `${nrKontaCyfry} cyfr — sprawdź początek i koniec (polski NRB ma 26)`}
+              </span>
             </label>
           </div>
         </div>

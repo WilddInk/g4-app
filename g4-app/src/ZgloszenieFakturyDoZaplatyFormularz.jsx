@@ -60,13 +60,14 @@ export const ZgloszenieFakturyDoZaplatyFormularz = memo(function ZgloszenieFaktu
   }
 
   const krEtykieta = String(krKod ?? "").trim() || "—";
+  const nrKontaCyfry = String(form.nr_konta ?? "").replace(/\D/g, "").length;
 
   return (
     <>
       <h4 style={{ fontSize: "0.95rem", fontWeight: 600, color: "#0f172a", margin: "0 0 0.65rem" }}>
         Nowe zgłoszenie (projekt {krEtykieta})
       </h4>
-      <form style={{ ...s.form, maxWidth: "min(40rem, 100%)" }} onSubmit={(e) => void handleSubmit(e)}>
+      <form style={{ ...s.form, maxWidth: "min(48rem, 100%)" }} onSubmit={(e) => void handleSubmit(e)}>
         <label style={s.label}>
           NIP / VAT sprzedawcy
           <input
@@ -106,12 +107,21 @@ export const ZgloszenieFakturyDoZaplatyFormularz = memo(function ZgloszenieFaktu
         <label style={s.label}>
           Nr konta bankowego
           <input
-            style={s.input}
+            style={s.inputNrKonta}
             type="text"
+            spellCheck={false}
+            autoComplete="off"
             value={form.nr_konta}
             onChange={(ev) => setForm((f) => ({ ...f, nr_konta: ev.target.value }))}
-            placeholder="np. 12 3456…"
+            placeholder="np. 12 3456 7890 1234 5678 9012 3456"
           />
+          <span style={{ fontSize: "0.75rem", fontWeight: 400, color: "#64748b" }}>
+            {!nrKontaCyfry
+              ? "Cały numer w jednym polu — łatwiej sprawdzić, czy przy kopiowaniu z PDF nic nie ucięło się na początku ani na końcu."
+              : nrKontaCyfry === 26
+                ? `${nrKontaCyfry} cyfr — pełny polski NRB`
+                : `${nrKontaCyfry} cyfr — sprawdź początek i koniec (polski NRB ma 26)`}
+          </span>
         </label>
         <label style={s.label}>
           Kwota brutto <span style={{ color: "#b91c1c" }}>*</span>
