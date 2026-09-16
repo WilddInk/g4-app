@@ -13,6 +13,8 @@ import {
   useSpotkanieKierownikow,
   zapiszSpotkanie,
 } from "./lib/czatKrSpotkanie.js";
+import { normalizujKrZArkusza } from "./lib/krNormalize.js";
+import { NowaKrForm } from "./NowaKrForm.jsx";
 
 /**
  * Zespół CZAT KR (nieformalne imiona → konkretne nr w `pracownik` z Supabase).
@@ -169,6 +171,10 @@ export function CzatKrPanel({
   onDodajFaktureDoPlanu,
   /** Osobny moduł protokołów spotkań kierowników. */
   onOtworzSpotkaniaKierownikow,
+  /** Admin / kierownik — INSERT do `public.kr` (słownik portalu). */
+  czyMozeTworzycKr = false,
+  /** Po zapisie nowej KR — odśwież listę w App (fetchKR). */
+  onKrUtworzona,
 }) {
   const [wpisy, setWpisy] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -180,6 +186,8 @@ export function CzatKrPanel({
   const [wysylanie, setWysylanie] = useState(false);
   const [rozwiniete, setRozwiniete] = useState(false);
   const [szukajKr, setSzukajKr] = useState("");
+  const [pokazNowaKr, setPokazNowaKr] = useState(false);
+  const [nowaKrPrefill, setNowaKrPrefill] = useState("");
   const [edycjaId, setEdycjaId] = useState(null);
   const [edycjaTresc, setEdycjaTresc] = useState("");
   const [zapisywanieEdycji, setZapisywanieEdycji] = useState(false);
@@ -605,25 +613,71 @@ export function CzatKrPanel({
           <strong style={{ fontSize: "1.05rem", color: LIGHT.accent }}>CZAT KR</strong>
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
             Po lewej wybierz numer KR, potem notuj. Przy wpisie: Edytuj wpis (treść i godzinę).
+            Brak numeru na liście — „Nowa KR”.
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void fetchWpisy()}
-          style={{
-            background: "#fff",
-            border: LIGHT.cardBorder,
-            borderRadius: 8,
-            color: LIGHT.text,
-            fontSize: "0.75rem",
-            padding: "0.25rem 0.55rem",
-            cursor: "pointer",
-            alignSelf: "flex-start",
-          }}
-        >
-          Odśwież
-        </button>
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignSelf: "flex-start" }}>
+          {czyMozeTworzycKr ? (
+            <button
+              type="button"
+              onClick={() => {
+                setNowaKrPrefill(normalizujKrZArkusza(szukajKr));
+                setPokazNowaKr(true);
+              }}
+              style={{
+                background: LIGHT.accent,
+                border: "none",
+                borderRadius: 8,
+                color: "#fff",
+                fontSize: "0.75rem",
+                fontWeight: 800,
+                padding: "0.25rem 0.55rem",
+                cursor: "pointer",
+              }}
+            >
+              Nowa KR
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void fetchWpisy()}
+            style={{
+              background: "#fff",
+              border: LIGHT.cardBorder,
+              borderRadius: 8,
+              color: LIGHT.text,
+              fontSize: "0.75rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+            }}
+          >
+            Odśwież
+          </button>
+        </div>
       </div>
+
+      {pokazNowaKr ? (
+        <NowaKrForm
+          supabase={supabase}
+          krList={krList}
+          czyMozeTworzyc={czyMozeTworzycKr}
+          poczatkowyKod={nowaKrPrefill}
+          onAnuluj={() => {
+            setPokazNowaKr(false);
+            setNowaKrPrefill("");
+          }}
+          onUtworzono={async (kod) => {
+            setPokazNowaKr(false);
+            setNowaKrPrefill("");
+            setSzukajKr("");
+            if (typeof onKrUtworzona === "function") await onKrUtworzona(kod);
+            wybierzKr(kod);
+            setMsg(
+              `Dodano KR ${kod}. W księgowości: Słownik KR → „Pobierz nowe KR z portalu”.`,
+            );
+          }}
+        />
+      ) : null}
 
       {brakTabeli ? (
         <div
@@ -739,7 +793,34 @@ export function CzatKrPanel({
           </div>
           <div style={{ overflowY: "auto", flex: 1, padding: "0.25rem" }}>
             {listaKrLewa.length === 0 ? (
-              <p style={{ margin: "0.5rem", fontSize: "0.78rem", color: LIGHT.soft }}>Brak projektów.</p>
+              <div style={{ margin: "0.5rem", fontSize: "0.78rem", color: LIGHT.soft }}>
+                <p style={{ margin: 0 }}>
+                  {szukajKr.trim() ? "Brak takiego KR na liście." : "Brak projektów."}
+                </p>
+                {czyMozeTworzycKr && szukajKr.trim() ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNowaKrPrefill(normalizujKrZArkusza(szukajKr) || szukajKr.trim());
+                      setPokazNowaKr(true);
+                    }}
+                    style={{
+                      marginTop: "0.45rem",
+                      width: "100%",
+                      background: LIGHT.accentSoft,
+                      border: `1px solid ${LIGHT.accent}`,
+                      borderRadius: 8,
+                      color: LIGHT.accent,
+                      fontSize: "0.75rem",
+                      fontWeight: 800,
+                      padding: "0.35rem 0.4rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Utwórz KR {normalizujKrZArkusza(szukajKr) || szukajKr.trim()}
+                  </button>
+                ) : null}
+              </div>
             ) : (
               listaKrLewa.map((item) => {
                 const aktywny = String(wybranyKr) === item.kr;

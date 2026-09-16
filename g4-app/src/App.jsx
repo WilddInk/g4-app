@@ -5,6 +5,8 @@ import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { PlanFakturPanel } from "./PlanFakturPanel.jsx";
 import { KrNotatkiCzat } from "./KrNotatkiCzat.jsx";
 import { CzatKrPanel } from "./CzatKrPanel.jsx";
+import { NowaKrForm } from "./NowaKrForm.jsx";
+import { normalizujKrZArkusza } from "./lib/krNormalize.js";
 import { SpotkaniaKierownikowPanel } from "./SpotkaniaKierownikowPanel.jsx";
 import { ProtokolyTerPanel } from "./ProtokolyTerPanel.jsx";
 import { PasekWersjiG4 } from "./PasekWersjiG4.jsx";
@@ -2091,6 +2093,7 @@ export default function App() {
   const [fakturowanieSekcja, setFakturowanieSekcja] = useState("biezace_kr");
   const [planFakturPrefill, setPlanFakturPrefill] = useState(null);
   const [fakturowanieBiezaceKrMsg, setFakturowanieBiezaceKrMsg] = useState(null);
+  const [pokazNowaKrBiezace, setPokazNowaKrBiezace] = useState(false);
   const [fakturyPodwykonawcaFiltrNazwa, setFakturyPodwykonawcaFiltrNazwa] = useState("");
   const [fakturyKosztoweFetchError, setFakturyKosztoweFetchError] = useState(null);
   const [fakturyKosztoweLadowanieListy, setFakturyKosztoweLadowanieListy] = useState(false);
@@ -7546,6 +7549,17 @@ export default function App() {
   async function addKR(e) {
     e.preventDefault();
 
+    const kod = normalizujKrZArkusza(newKr);
+    if (!kod) {
+      alert("Pole KR jest wymagane.");
+      return;
+    }
+    const kolizja = krList.some((r) => String(r.kr).trim() === kod);
+    if (kolizja) {
+      alert("Ten kod KR już istnieje w tabeli. Podaj unikalny kod.");
+      return;
+    }
+
     const dzialIns =
       newDzial != null && String(newDzial).trim() !== "" ? String(newDzial).trim() : null;
 
@@ -7560,7 +7574,7 @@ export default function App() {
       .from("kr")
       .insert([
         {
-          kr: newKr.trim(),
+          kr: kod,
           nazwa_obiektu: newNazwaObiektu.trim() || null,
           rodzaj_pracy: newRodzajPracy.trim() || null,
           dzial: dzialIns,
@@ -14076,7 +14090,7 @@ export default function App() {
                 </h2>
                 <p style={{ ...op.muted, marginBottom: 0, maxWidth: "48rem", lineHeight: 1.5 }}>
                   {fakturowanieSekcja === "czat_kr"
-                    ? "Wpisy do projektów KR. Przy wpisie: „Edytuj wpis”. Protokoły spotkań — w module Spotkania kierowników."
+                    ? "Wpisy do projektów KR. Przy wpisie: „Edytuj wpis”. Nowa KR — przycisk u góry panelu. Protokoły spotkań — w module Spotkania kierowników."
                     : fakturowanieSekcja === "biezace_kr"
                     ? "Lista KR ze statusem „w trakcie” (projekty bieżące). Kolumna „W trakcie fakturowania” to osobna flaga w bazie — włącz ją dla KR, które aktualnie rozliczacie."
                     : fakturowanieSekcja === "plan_faktur"
@@ -14103,6 +14117,10 @@ export default function App() {
                   czyMozePisac={Boolean(session?.user)}
                   krList={krList}
                   pracownicy={pracownicy}
+                  czyMozeTworzycKr={czyAdminAktywny || czyKierownikAktywny}
+                  onKrUtworzona={async () => {
+                    await fetchKR();
+                  }}
                   onOtworzKr={(krKod) => {
                     const k = String(krKod ?? "").trim();
                     if (k) otworzKrPoKodzie(k);
@@ -14162,9 +14180,47 @@ export default function App() {
 
               {fakturowanieSekcja === "biezace_kr" ? (
                 <div style={{ ...op.sectionCard, marginTop: "0.85rem" }}>
-                  <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.35rem" }}>
-                    Bieżące KR ({fakturowanieBiezaceKrList.length})
-                  </h3>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: "0.75rem",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <h3 style={{ ...op.sectionTitle, marginTop: 0, marginBottom: "0.35rem" }}>
+                      Bieżące KR ({fakturowanieBiezaceKrList.length})
+                    </h3>
+                    {(czyAdminAktywny || czyKierownikAktywny) ? (
+                      <button
+                        type="button"
+                        onClick={() => setPokazNowaKrBiezace((v) => !v)}
+                        style={{
+                          ...s.btn,
+                          padding: "0.3rem 0.7rem",
+                          fontSize: "0.82rem",
+                        }}
+                      >
+                        {pokazNowaKrBiezace ? "Ukryj formularz" : "Nowa KR"}
+                      </button>
+                    ) : null}
+                  </div>
+                  {pokazNowaKrBiezace ? (
+                    <NowaKrForm
+                      supabase={supabase}
+                      krList={krList}
+                      czyMozeTworzyc={czyAdminAktywny || czyKierownikAktywny}
+                      onAnuluj={() => setPokazNowaKrBiezace(false)}
+                      onUtworzono={async (kod) => {
+                        setPokazNowaKrBiezace(false);
+                        await fetchKR();
+                        setFakturowanieBiezaceKrMsg(
+                          `Dodano KR ${kod}. W księgowości: Słownik KR → „Pobierz nowe KR z portalu”.`,
+                        );
+                      }}
+                    />
+                  ) : null}
                   <p style={{ ...op.muted, marginTop: 0, marginBottom: "0.75rem", fontSize: "0.84rem", maxWidth: "52rem" }}>
                     Pokazuję KR ze statusem projektu <strong>w trakcie</strong> oraz te z włączoną flagą{" "}
                     <strong>fakturowanie_w_trakcie</strong>. Jeśli flaga nie zapisuje się — uruchom w Supabase SQL:{" "}
@@ -20100,6 +20156,12 @@ export default function App() {
       !widokPulpitDlaKr ? (
         <>
       <h2 style={s.h2}>Dodaj nowy KR</h2>
+      <p style={{ ...s.muted, marginTop: "-0.35rem", marginBottom: "0.75rem", fontSize: "0.84rem" }}>
+        Zapis idzie do bazy portalu. W księgowości: Słownik KR → „Pobierz nowe KR z portalu”.
+      </p>
+      <p style={{ ...s.muted, marginTop: "-0.35rem", marginBottom: "0.75rem", fontSize: "0.84rem" }}>
+        Zapis idzie do bazy portalu. W księgowości: Słownik KR → „Pobierz nowe KR z portalu”.
+      </p>
       <form style={s.form} onSubmit={addKR}>
         <input
           style={s.input}
