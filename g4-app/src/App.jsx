@@ -9011,7 +9011,20 @@ export default function App() {
             <p style={{ ...op.muted, marginBottom: "1rem" }}>Brak zadań przypisanych do tego KR — dodaj pierwsze poniżej.</p>
           ) : (
             <div style={{ ...s.tableWrap, marginBottom: "1.25rem", borderRadius: "12px", overflow: "hidden" }}>
-              <table style={{ ...s.table, fontSize: "0.9rem", lineHeight: 1.45 }}>
+              <table style={{ ...s.table, fontSize: "0.88rem", lineHeight: 1.4, tableLayout: "fixed", width: "100%" }}>
+                <colgroup>
+                  <col style={{ width: "38%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "3%" }} />
+                </colgroup>
                 <thead>
                   <tr>
                     <th style={{ ...s.th, fontSize: "0.88rem", whiteSpace: "normal" }}>Zadanie</th>
@@ -9042,7 +9055,7 @@ export default function App() {
                             : undefined
                         }
                       >
-                        <td style={{ ...s.td, padding: "0.55rem 0.7rem", maxWidth: "20rem", verticalAlign: "top" }}>
+                        <td style={{ ...s.td, padding: "0.5rem 0.55rem", verticalAlign: "top" }}>
                           <KomorkaTresciZadaniaTabeli
                             text={zt.text}
                             title={zt.title}
@@ -9079,7 +9092,7 @@ export default function App() {
                         </td>
                         <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
                           <select
-                            style={{ ...s.input, padding: "0.45rem 0.5rem", fontSize: "0.88rem", minWidth: "10rem" }}
+                            style={{ ...s.input, padding: "0.28rem 0.3rem", fontSize: "0.78rem", minWidth: 0, width: "100%" }}
                             value={ZADANIE_STATUS_W_BAZIE.includes(stRow) ? stRow : ""}
                             onChange={(ev) => {
                               const v = ev.target.value;
@@ -13413,20 +13426,36 @@ export default function App() {
             </div>
           ) : (
             <div style={{ ...s.tableWrap, borderRadius: "16px", overflow: "hidden" }}>
-              <table style={{ ...s.table, fontSize: "0.95rem", lineHeight: 1.45 }}>
+              <table style={{ ...s.table, fontSize: "0.9rem", lineHeight: 1.4, tableLayout: "fixed", width: "100%" }}>
+                <colgroup>
+                  <col style={{ width: "34%" }} />
+                  <col style={{ width: "4%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: "4%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "4%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "3%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: "3%" }} />
+                </colgroup>
                 <thead>
                   <tr>
                     {[
                       { ch: "Zadanie", extra: null },
                       { ch: "KR", extra: { color: "#0369a1" } },
-                      { ch: "Typ zadania", extra: null },
+                      { ch: "Typ", extra: null },
                       { ch: "Dział", extra: { color: "#0369a1" } },
                       { ch: "Odpow.", extra: null },
                       { ch: "Zlecający", extra: null },
                       { ch: "Status", extra: { color: "#166534" } },
-                      { ch: "Estym.", extra: { color: "#a5b4fc" } },
+                      { ch: "Est.", extra: { color: "#a5b4fc" } },
                       { ch: "Deadline", extra: null },
-                      { ch: "Data odbioru", extra: null },
+                      { ch: "Odbiór", extra: null },
                       { ch: "Przepływ", extra: null },
                       { ch: "Zagr.", extra: null },
                       { ch: "Opis", extra: null },
@@ -13436,10 +13465,10 @@ export default function App() {
                         key={i}
                         style={{
                           ...s.th,
-                          fontSize: "0.88rem",
-                          padding: "0.75rem 0.85rem",
+                          fontSize: "0.78rem",
+                          padding: "0.55rem 0.4rem",
                           whiteSpace: "normal",
-                          lineHeight: 1.35,
+                          lineHeight: 1.3,
                           verticalAlign: "bottom",
                           ...(h.extra ?? {}),
                         }}
@@ -13467,7 +13496,7 @@ export default function App() {
                               : undefined
                         }
                       >
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", maxWidth: "22rem", verticalAlign: "top" }}>
+                        <td style={{ ...s.td, padding: "0.5rem 0.55rem", verticalAlign: "top" }}>
                           <KomorkaTresciZadaniaTabeli
                             text={zt.text}
                             title={zt.title}
@@ -13478,47 +13507,47 @@ export default function App() {
                             }}
                           />
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", fontFamily: "ui-monospace, monospace" }}>
+                        <td style={{ ...s.td, padding: "0.45rem 0.35rem", fontFamily: "ui-monospace, monospace", fontSize: "0.82rem", whiteSpace: "nowrap" }}>
                           {tekstTrim(row.kr) ? (
                             <span style={{ color: "#0369a1", fontWeight: 600 }}>{String(row.kr).trim()}</span>
                           ) : (
                             <span style={{ color: "#64748b" }}>—</span>
                           )}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
+                        <td style={{ ...s.td, padding: "0.45rem 0.35rem" }}>
                           <span
                             style={{
                               ...op.badge("rgba(99,102,241,0.22)", "#c7d2fe"),
-                              fontSize: "0.78rem",
-                              padding: "0.35rem 0.65rem",
-                              letterSpacing: "0.02em",
+                              fontSize: "0.68rem",
+                              padding: "0.18rem 0.35rem",
+                              letterSpacing: "0.01em",
                               whiteSpace: "normal",
                               wordBreak: "break-word",
-                              maxWidth: "14rem",
                             }}
                           >
                             {kat}
                           </span>
                         </td>
-                        <td style={{ ...s.td, ...s.dzialWartosc, padding: "0.65rem 0.85rem", fontSize: "0.95rem" }}>
+                        <td style={{ ...s.td, ...s.dzialWartosc, padding: "0.45rem 0.35rem", fontSize: "0.8rem" }}>
                           {row.dzial?.trim() ? row.dzial : "—"}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", verticalAlign: "top" }}>
+                        <td style={{ ...s.td, padding: "0.45rem 0.35rem", verticalAlign: "top", fontSize: "0.8rem", wordBreak: "break-word" }}>
                           <div>{podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}</div>
                           {renderZadanieWolnyOdpowiedzialny(row)}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
+                        <td style={{ ...s.td, padding: "0.45rem 0.35rem", fontSize: "0.8rem", wordBreak: "break-word" }}>
                           {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
                         </td>
-                        <td style={{ ...s.td, ...s.statusKr, fontSize: "0.92rem", padding: "0.65rem 0.85rem" }}>
+                        <td style={{ ...s.td, ...s.statusKr, fontSize: "0.82rem", padding: "0.45rem 0.3rem" }}>
                           <select
                             style={{
                               ...s.input,
-                              padding: "0.5rem 0.55rem",
-                              fontSize: "0.9rem",
+                              padding: "0.28rem 0.3rem",
+                              fontSize: "0.78rem",
                               fontWeight: 500,
-                              minWidth: "11rem",
-                              lineHeight: 1.4,
+                              minWidth: 0,
+                              width: "100%",
+                              lineHeight: 1.3,
                             }}
                             value={ZADANIE_STATUS_W_BAZIE.includes(stRow) ? stRow : ""}
                             onChange={(ev) => {
@@ -13537,49 +13566,79 @@ export default function App() {
                         <td
                           style={{
                             ...s.td,
-                            padding: "0.65rem 0.85rem",
+                            padding: "0.45rem 0.3rem",
                             fontFamily: "ui-monospace, monospace",
-                            fontSize: "0.88rem",
+                            fontSize: "0.78rem",
                             color: "#a5b4fc",
                           }}
                         >
                           {zadanieTekstEstymacjiGodzin(row) ?? "—"}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
+                        <td style={{ ...s.td, padding: "0.45rem 0.3rem", fontSize: "0.78rem", whiteSpace: "nowrap" }}>
                           {row.deadline || row.data_planowana
                             ? dataDoInputa(row.deadline ?? row.data_planowana)
                             : "—"}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
+                        <td style={{ ...s.td, padding: "0.45rem 0.3rem", fontSize: "0.78rem", whiteSpace: "nowrap" }}>
                           {tekstTrim(row.data_odbioru) ? dataDoInputa(row.data_odbioru) : "—"}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", verticalAlign: "top" }}>
-                          {komorkaPrzeplywuZadania(row)}
+                        <td style={{ ...s.td, padding: "0.45rem 0.3rem", verticalAlign: "top" }}>
+                          {komorkaPrzeplywuZadania(row, { compact: true })}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }}>
+                        <td style={{ ...s.td, padding: "0.45rem 0.3rem", fontSize: "0.78rem" }}>
                           {row.zagrozenie === true ? "tak" : row.zagrozenie === false ? "nie" : "—"}
                         </td>
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }} title={opisKom.title || undefined}>
+                        <td
+                          style={{
+                            ...s.td,
+                            padding: "0.45rem 0.3rem",
+                            fontSize: "0.75rem",
+                            color: "#64748b",
+                            overflow: "hidden",
+                            display: "-webkit-box",
+                            WebkitLineClamp: 3,
+                            WebkitBoxOrient: "vertical",
+                          }}
+                          title={opisKom.title || undefined}
+                        >
                           {opisKom.text}
                         </td>
                         <td
                           style={{
                             ...s.td,
-                            padding: "0.65rem 0.85rem",
+                            padding: "0.45rem 0.25rem",
                             textAlign: "right",
-                            whiteSpace: "nowrap",
                           }}
                         >
                           <button
                             type="button"
-                            style={{ ...s.btnGhost, padding: "0.35rem 0.55rem", fontSize: "0.85rem" }}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              padding: 0,
+                              color: "#0369a1",
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              textDecoration: "underline",
+                            }}
                             onClick={() => wczytajZadanieDoEdycji(row)}
                           >
                             Edytuj
-                          </button>{" "}
+                          </button>
+                          <br />
                           <button
                             type="button"
-                            style={{ ...s.btnGhost, padding: "0.35rem 0.55rem", fontSize: "0.85rem" }}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              padding: 0,
+                              color: "#b91c1c",
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              textDecoration: "underline",
+                            }}
                             onClick={() => usunZadanie(row.id)}
                           >
                             Usuń
