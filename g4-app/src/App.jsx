@@ -5595,7 +5595,7 @@ export default function App() {
     await fetchZadania();
   }
 
-  function komorkaPrzeplywuZadania(row) {
+  function komorkaPrzeplywuZadania(row, { compact } = {}) {
     const nr =
       pracownikWidokEfektywny?.nr != null ? String(pracownikWidokEfektywny.nr).trim() : "";
     const od = String(row.osoba_odpowiedzialna ?? "").trim();
@@ -5609,20 +5609,34 @@ export default function App() {
     const pokazPotwBrakZlec = nr && maWyk && !maOdb && !arch && !zl;
     const pokazArch = !arch && maOdb && nr && (zl === nr || od === nr);
 
+    const btnPrzeplywu = compact
+      ? {
+          background: "none",
+          border: "none",
+          padding: 0,
+          color: "#0369a1",
+          fontSize: "0.72rem",
+          fontWeight: 650,
+          cursor: "pointer",
+          textDecoration: "underline",
+        }
+      : { ...s.btnGhost, fontSize: "0.72rem", padding: "0.18rem 0.4rem" };
+
     return (
       <div
         style={{
           display: "flex",
-          flexDirection: "column",
-          gap: "0.2rem",
-          alignItems: "flex-start",
-          maxWidth: "13rem",
+          flexDirection: compact ? "row" : "column",
+          flexWrap: "wrap",
+          gap: compact ? "0.15rem 0.65rem" : "0.2rem",
+          alignItems: compact ? "center" : "flex-start",
+          maxWidth: compact ? "none" : "13rem",
         }}
       >
         {maWyk && !maOdb ? (
           <span style={{ fontSize: "0.72rem", color: "#166534" }}>Wykonanie zgłoszone</span>
         ) : null}
-        {maOdb ? (
+        {maOdb && !compact ? (
           <span style={{ fontSize: "0.72rem", color: "#0369a1" }}>
             Data odbioru: {dataDoInputa(row.data_odbioru)}
           </span>
@@ -5631,7 +5645,7 @@ export default function App() {
         {pokazZglos ? (
           <button
             type="button"
-            style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.18rem 0.4rem" }}
+            style={btnPrzeplywu}
             onClick={() => void zglosWykonanieZadania(row.id)}
           >
             Zgłoś wykonanie
@@ -5640,7 +5654,7 @@ export default function App() {
         {pokazPotwierdz ? (
           <button
             type="button"
-            style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.18rem 0.4rem" }}
+            style={btnPrzeplywu}
             onClick={() => void potwierdzOdbiorZadania(row.id)}
           >
             Potwierdź odbiór
@@ -5654,7 +5668,7 @@ export default function App() {
         {pokazArch ? (
           <button
             type="button"
-            style={{ ...s.btnGhost, fontSize: "0.72rem", padding: "0.18rem 0.4rem" }}
+            style={btnPrzeplywu}
             onClick={() => void przeniesZadanieDoArchiwum(row.id)}
           >
             Do archiwum
@@ -13140,154 +13154,201 @@ export default function App() {
           ) : zadaniaWidok === "kanban" ? (
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: "0.75rem",
+                display: "flex",
+                alignItems: "stretch",
+                gap: "0.7rem",
                 marginBottom: "1rem",
+                overflowX: "auto",
+                paddingBottom: "0.25rem",
               }}
             >
               {[
-                { key: "oczekuje", label: "Oczekuje", sub: "kolejka / backlog" },
+                { key: "oczekuje", label: "Oczekuje", sub: "kolejka" },
                 { key: "w_trakcie", label: "W trakcie", sub: "robocze" },
                 { key: "ukonczone", label: "Ukończone", sub: "zamknięte" },
-                { key: "inne", label: "Inny / brak statusu", sub: "ustaw status w formularzu" },
-              ].map((col) => (
+                { key: "inne", label: "Inny / brak statusu", sub: "do ustawienia" },
+              ].map((col) => {
+                const karty = zadaniaKanbanBuckets[col.key];
+                const n = karty.length;
+                if (col.key === "inne" && n === 0) return null;
+                const pusta = n === 0;
+                return (
                 <div
                   key={col.key}
                   style={{
-                    borderRadius: "14px",
-                    border: "1px solid rgba(148,163,184,0.18)",
-                    background: "rgba(15,23,42,0.65)",
-                    padding: "0.65rem 0.55rem",
-                    minHeight: "8rem",
+                    flex: pusta ? "0 0 11rem" : "1 1 20rem",
+                    minWidth: pusta ? "10.5rem" : "17.5rem",
+                    maxWidth: pusta ? "12rem" : "42rem",
+                    borderRadius: "12px",
+                    border: "1px solid #e2e8f0",
+                    background: "#f1f5f9",
+                    padding: "0.55rem 0.5rem 0.65rem",
+                    minHeight: "7rem",
                   }}
                 >
-                  <div style={{ marginBottom: "0.55rem", padding: "0 0.25rem" }}>
-                    <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0f172a" }}>{col.label}</div>
-                    <div style={{ ...op.muted, fontSize: "0.68rem" }}>{col.sub}</div>
-                    <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: "0.2rem" }}>
-                      {zadaniaKanbanBuckets[col.key].length} kart
+                  <div
+                    style={{
+                      marginBottom: "0.5rem",
+                      padding: "0 0.3rem",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      gap: "0.4rem",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: "0.82rem", fontWeight: 800, color: "#0f172a" }}>{col.label}</div>
+                      <div style={{ fontSize: "0.68rem", color: "#64748b" }}>{col.sub}</div>
                     </div>
+                    <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569" }}>{n}</div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
-                    {zadaniaKanbanBuckets[col.key].map((row) => {
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    {n === 0 ? (
+                      <p style={{ margin: "0.35rem 0.3rem", fontSize: "0.75rem", color: "#94a3b8" }}>Brak kart</p>
+                    ) : null}
+                    {karty.map((row) => {
                       const zt = kmTekstDoKomorki(row.zadanie);
                       const cur = String(row.status ?? "").trim();
                       const etGodz = zadanieTekstEstymacjiGodzin(row);
+                      const odp = podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId);
+                      const zlec = podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId);
+                      const linkKanban = {
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        color: "#64748b",
+                        fontSize: "0.72rem",
+                        fontWeight: 650,
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                      };
                       return (
                         <div
                           key={row.id}
                           style={{
                             borderRadius: "10px",
-                            border: "1px solid rgba(51,65,85,0.55)",
-                            background: "rgba(30,41,59,0.92)",
-                            padding: "0.5rem 0.55rem",
+                            border: "1px solid #e2e8f0",
+                            background: "#ffffff",
+                            padding: "0.7rem 0.75rem 0.55rem",
+                            boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
                           }}
                         >
                           <div
                             title={zt.title}
                             style={{
-                              fontSize: "0.8rem",
-                              fontWeight: 600,
+                              fontSize: "0.98rem",
+                              fontWeight: 650,
                               color: "#0f172a",
-                              marginBottom: "0.35rem",
-                              lineHeight: 1.35,
+                              lineHeight: 1.45,
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              marginBottom: "0.4rem",
                             }}
                           >
                             {zt.text}
                           </div>
-                          {tekstTrim(row.kr) ? (
-                            <div style={{ marginBottom: "0.35rem" }}>
-                              <span
-                                style={{
-                                  ...op.badge("rgba(56,189,248,0.2)", "#7dd3fc"),
-                                  fontSize: "0.72rem",
-                                  padding: "0.22rem 0.5rem",
-                                }}
-                              >
-                                KR {String(row.kr).trim()}
-                              </span>
-                            </div>
-                          ) : (
-                            <div style={{ ...op.muted, fontSize: "0.65rem", marginBottom: "0.3rem" }}>
-                              Ogólne (bez KR)
-                            </div>
-                          )}
                           <div
                             style={{
-                              fontSize: "0.68rem",
+                              fontSize: "0.75rem",
                               color: "#64748b",
-                              marginBottom: "0.35rem",
-                              lineHeight: 1.4,
+                              lineHeight: 1.45,
+                              marginBottom: "0.4rem",
                             }}
                           >
-                            <div>
-                              <strong style={{ color: "#0369a1" }}>Odp.:</strong>{" "}
-                              {podpisOsobyProwadzacej(row.osoba_odpowiedzialna, mapaProwadzacychId) ?? "—"}
-                            </div>
-                            <div>
-                              <strong style={{ color: "#fcd34d" }}>Zlec.:</strong>{" "}
-                              {podpisOsobyProwadzacej(row.osoba_zlecajaca, mapaProwadzacychId) ?? "—"}
-                            </div>
+                            {tekstTrim(row.kr) ? (
+                              <span style={{ color: "#0369a1", fontWeight: 700 }}>KR {String(row.kr).trim()}</span>
+                            ) : (
+                              <span>Ogólne</span>
+                            )}
+                            {odp ? (
+                              <>
+                                {" · "}
+                                <span>{odp}</span>
+                              </>
+                            ) : null}
+                            {zlec && zlec !== odp ? (
+                              <>
+                                {" · "}
+                                <span>zleca {zlec}</span>
+                              </>
+                            ) : null}
                             {etGodz ? (
-                              <div>
-                                <strong style={{ color: "#a5b4fc" }}>Estym.:</strong> {etGodz}
-                              </div>
+                              <>
+                                {" · "}
+                                <span>{etGodz}</span>
+                              </>
                             ) : null}
                             {row.deadline || row.data_planowana ? (
-                              <div>
-                                Deadline: {dataDoInputa(row.deadline ?? row.data_planowana)}
-                              </div>
+                              <>
+                                {" · "}
+                                <span>do {dataDoInputa(row.deadline ?? row.data_planowana)}</span>
+                              </>
                             ) : null}
                             {tekstTrim(row.data_odbioru) ? (
-                              <div style={{ color: "#166534" }}>
-                                Odbiór: {dataDoInputa(row.data_odbioru)}
-                              </div>
+                              <>
+                                {" · "}
+                                <span style={{ color: "#166534" }}>odbiór {dataDoInputa(row.data_odbioru)}</span>
+                              </>
                             ) : null}
                           </div>
-                          <div style={{ marginBottom: "0.35rem" }}>{komorkaPrzeplywuZadania(row)}</div>
                           {renderZadanieWolnyOdpowiedzialny(row)}
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginBottom: "0.35rem" }}>
-                            {ZADANIE_STATUS_W_BAZIE.map((st) => (
-                              <button
-                                key={`${row.id}-${st}`}
-                                type="button"
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              alignItems: "center",
+                              gap: "0.45rem 0.75rem",
+                              marginTop: "0.15rem",
+                              paddingTop: "0.4rem",
+                              borderTop: "1px solid #f1f5f9",
+                            }}
+                          >
+                            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#94a3b8", fontSize: "0.68rem" }}>
+                              Status
+                              <select
+                                value={ZADANIE_STATUS_W_BAZIE.includes(cur) ? cur : ""}
+                                onChange={(ev) => void ustawStatusZadaniaSzybko(row.id, ev.target.value)}
                                 style={{
-                                  ...s.btnGhost,
-                                  padding: "0.15rem 0.35rem",
-                                  fontSize: "0.65rem",
-                                  borderColor:
-                                    cur === st ? "rgba(74,222,128,0.55)" : "rgba(148,163,184,0.25)",
-                                  color: cur === st ? "#bbf7d0" : "#cbd5e1",
+                                  fontSize: "0.72rem",
+                                  padding: "0.12rem 0.3rem",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: 6,
+                                  background: "#fff",
+                                  color: "#475569",
+                                  maxWidth: "9.5rem",
                                 }}
-                                onClick={() => void ustawStatusZadaniaSzybko(row.id, st)}
                               >
-                                {st}
+                                <option value="">
+                                  — {cur && !ZADANIE_STATUS_W_BAZIE.includes(cur) ? cur : "brak"} —
+                                </option>
+                                {ZADANIE_STATUS_W_BAZIE.map((st) => (
+                                  <option key={st} value={st}>
+                                    {st}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            {komorkaPrzeplywuZadania(row, { compact: true })}
+                            <span style={{ marginLeft: "auto", display: "inline-flex", gap: "0.7rem" }}>
+                              <button type="button" style={linkKanban} onClick={() => wczytajZadanieDoEdycji(row)}>
+                                Edytuj
                               </button>
-                            ))}
-                          </div>
-                          <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                            <button
-                              type="button"
-                              style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.7rem" }}
-                              onClick={() => wczytajZadanieDoEdycji(row)}
-                            >
-                              Edytuj
-                            </button>
-                            <button
-                              type="button"
-                              style={{ ...s.btnGhost, padding: "0.2rem 0.45rem", fontSize: "0.7rem" }}
-                              onClick={() => usunZadanie(row.id)}
-                            >
-                              Usuń
-                            </button>
+                              <button
+                                type="button"
+                                style={{ ...linkKanban, color: "#b91c1c" }}
+                                onClick={() => usunZadanie(row.id)}
+                              >
+                                Usuń
+                              </button>
+                            </span>
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div style={{ ...s.tableWrap, borderRadius: "16px", overflow: "hidden" }}>
