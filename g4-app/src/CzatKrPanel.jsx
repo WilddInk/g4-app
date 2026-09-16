@@ -206,8 +206,6 @@ export function CzatKrPanel({
   const [notatkaGodzina, setNotatkaGodzina] = useState(() => polaDatyGodzinyZIso().godzina);
   const [edycjaData, setEdycjaData] = useState("");
   const [edycjaGodzina, setEdycjaGodzina] = useState("");
-  const [godzinaDraft, setGodzinaDraft] = useState({});
-  const [zapisGodzinyId, setZapisGodzinyId] = useState(null);
 
   useEffect(() => {
     if (!spotkanie.startIso) return;
@@ -433,57 +431,6 @@ export function CzatKrPanel({
     setMsg("Usunięto notatkę.");
   }
 
-  function polaGodzinyWpisu(w) {
-    return godzinaDraft[w.id] || polaDatyGodzinyZIso(w.created_at);
-  }
-
-  function ustawGodzineDraft(w, patch) {
-    setGodzinaDraft((prev) => ({
-      ...prev,
-      [w.id]: { ...polaDatyGodzinyZIso(w.created_at), ...(prev[w.id] || {}), ...patch },
-    }));
-  }
-
-  async function zapiszGodzineWpisu(w) {
-    if (!czyMozePisac || !w?.id) return;
-    const pola = polaGodzinyWpisu(w);
-    const iso = isoZDatyIGodziny(pola.data, pola.godzina);
-    if (Number.isNaN(new Date(iso).getTime())) {
-      setMsg("Podaj poprawną datę i godzinę wpisu.");
-      return;
-    }
-    const patch = { created_at: iso };
-    if (czyZnacznikPoczatek(w)) patch.tresc = trescPoczatekSpotkania(iso);
-    if (czyZnacznikKoniec(w)) patch.tresc = trescKoniecSpotkania(spotkanie.startIso, iso);
-    setZapisGodzinyId(w.id);
-    setMsg(null);
-    const { data, error } = await supabase
-      .from("kr_notatka")
-      .update(patch)
-      .eq("id", w.id)
-      .select("id, kr, tresc, autor, autor_email, created_at")
-      .single();
-    setZapisGodzinyId(null);
-    if (error) {
-      setMsg(`Nie udało się zapisać godziny: ${error.message}`);
-      return;
-    }
-    setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
-    setGodzinaDraft((prev) => {
-      const next = { ...prev };
-      delete next[w.id];
-      return next;
-    });
-    if (czyZnacznikPoczatek(w) && spotkanie.aktywne) {
-      zapiszSpotkanie({
-        aktywne: true,
-        startIso: iso,
-        startKr: String(w.kr ?? wybranyKr ?? "").trim(),
-      });
-    }
-    setMsg(`Zapisano godzinę wpisu: ${formatData(iso)}.`);
-  }
-
   async function zapiszEdycje(e) {
     e?.preventDefault?.();
     if (!czyMozePisac) {
@@ -491,19 +438,23 @@ export function CzatKrPanel({
       return;
     }
     const id = edycjaId;
-    const tekst = String(edycjaTresc ?? "").trim();
+    let tekst = String(edycjaTresc ?? "").trim();
     if (!id) return;
     if (!tekst) {
       setMsg("Treść wpisu nie może być pusta.");
       return;
     }
+    const iso = isoZDatyIGodziny(edycjaData, edycjaGodzina);
+    const biezacy = wpisy.find((x) => x.id === id);
+    if (biezacy && czyZnacznikPoczatek(biezacy)) tekst = trescPoczatekSpotkania(iso);
+    if (biezacy && czyZnacznikKoniec(biezacy)) tekst = trescKoniecSpotkania(spotkanie.startIso, iso);
     setZapisywanieEdycji(true);
     setMsg(null);
     const { data, error } = await supabase
       .from("kr_notatka")
       .update({
         tresc: tekst,
-        created_at: isoZDatyIGodziny(edycjaData, edycjaGodzina),
+        created_at: iso,
       })
       .eq("id", id)
       .select("id, kr, tresc, autor, autor_email, created_at")
@@ -517,6 +468,13 @@ export function CzatKrPanel({
     setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
     setEdycjaId(null);
     setEdycjaTresc("");
+    if (biezacy && czyZnacznikPoczatek(biezacy) && spotkanie.aktywne) {
+      zapiszSpotkanie({
+        aktywne: true,
+        startIso: iso,
+        startKr: String(biezacy.kr ?? wybranyKr ?? "").trim(),
+      });
+    }
     setMsg("Zapisano zmiany we wpisie.");
   }
 
@@ -612,7 +570,7 @@ export function CzatKrPanel({
         <div>
           <strong style={{ fontSize: "1.05rem", color: LIGHT.accent }}>CZAT KR</strong>
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
-            Po lewej wybierz numer KR, potem notuj. Przy wpisie: Edytuj wpis (treść i godzinę).
+            Po lewej wybierz numer KR, potem notuj. Datę i godzinę zmienisz w „Edytuj”.
             Brak numeru na liście — „Nowa KR”.
           </div>
         </div>
@@ -952,53 +910,53 @@ export function CzatKrPanel({
                       style={{
                         display: "flex",
                         flexWrap: "wrap",
-                        alignItems: "center",
-                        gap: "0.35rem 0.65rem",
-                        marginBottom: "0.3rem",
+                        alignItems: "baseline",
+                        gap: "0.35rem 0.55rem",
+                        marginBottom: "0.35rem",
                       }}
                     >
                       <span
                         style={{
-                          fontSize: "1.05rem",
-                          fontWeight: 800,
-                          color: zeSpotkania ? LIGHT.spotkanieText : LIGHT.accent,
+                          fontSize: "0.82rem",
+                          fontWeight: 700,
+                          color: zeSpotkania ? LIGHT.spotkanieText : LIGHT.muted,
                           lineHeight: 1.25,
                         }}
                       >
                         {etykietaAutoraWpisu(w)}
                       </span>
-                      <span style={{ fontSize: "0.78rem", color: LIGHT.soft }}>
+                      <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>
                         {formatData(w.created_at) || "—"}
                       </span>
                       {czyMozePisac && edycjaId !== w.id ? (
-                        <span style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                        <span style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
                           <button
                             type="button"
                             onClick={() => rozpocznijEdycje(w)}
                             style={{
-                              background: "#fff",
-                              border: `1px solid ${LIGHT.accent}`,
-                              borderRadius: 8,
-                              color: LIGHT.accent,
-                              fontSize: "0.78rem",
-                              fontWeight: 800,
-                              padding: "0.2rem 0.55rem",
+                              background: "transparent",
+                              border: LIGHT.cardBorder,
+                              borderRadius: 6,
+                              color: LIGHT.muted,
+                              fontSize: "0.72rem",
+                              fontWeight: 650,
+                              padding: "0.12rem 0.4rem",
                               cursor: "pointer",
                             }}
                           >
-                            Edytuj treść
+                            Edytuj
                           </button>
                           <button
                             type="button"
                             onClick={() => void usunWpis(w)}
                             style={{
-                              background: "#fff",
-                              border: "1px solid #dc2626",
-                              borderRadius: 8,
+                              background: "transparent",
+                              border: "1px solid #fecaca",
+                              borderRadius: 6,
                               color: "#b91c1c",
-                              fontSize: "0.78rem",
-                              fontWeight: 800,
-                              padding: "0.2rem 0.55rem",
+                              fontSize: "0.72rem",
+                              fontWeight: 650,
+                              padding: "0.12rem 0.4rem",
                               cursor: "pointer",
                             }}
                           >
@@ -1007,74 +965,6 @@ export function CzatKrPanel({
                         </span>
                       ) : null}
                     </div>
-                    {czyMozePisac && edycjaId !== w.id ? (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          alignItems: "flex-end",
-                          gap: "0.4rem",
-                          marginBottom: "0.45rem",
-                          padding: "0.4rem 0.45rem",
-                          borderRadius: 8,
-                          background: "#fff7ed",
-                          border: "1px solid #fdba74",
-                        }}
-                      >
-                        <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#9a3412", width: "100%" }}>
-                          Zmień datę i godzinę tego wpisu
-                        </span>
-                        <label style={{ display: "grid", gap: 2, fontSize: "0.7rem", fontWeight: 700, color: "#9a3412" }}>
-                          Data
-                          <input
-                            type="date"
-                            value={polaGodzinyWpisu(w).data}
-                            onChange={(e) => ustawGodzineDraft(w, { data: e.target.value })}
-                            style={{
-                              ...inputSt,
-                              width: "11rem",
-                              fontSize: "0.95rem",
-                              fontWeight: 700,
-                              padding: "0.35rem 0.4rem",
-                              border: "1px solid #fb923c",
-                            }}
-                          />
-                        </label>
-                        <label style={{ display: "grid", gap: 2, fontSize: "0.7rem", fontWeight: 700, color: "#9a3412" }}>
-                          Godzina
-                          <input
-                            type="time"
-                            value={polaGodzinyWpisu(w).godzina}
-                            onChange={(e) => ustawGodzineDraft(w, { godzina: e.target.value })}
-                            style={{
-                              ...inputSt,
-                              width: "8rem",
-                              fontSize: "0.95rem",
-                              fontWeight: 700,
-                              padding: "0.35rem 0.4rem",
-                              border: "1px solid #fb923c",
-                            }}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          disabled={zapisGodzinyId === w.id}
-                          onClick={() => void zapiszGodzineWpisu(w)}
-                          style={{
-                            background: "#c2410c",
-                            color: "#fff",
-                            border: "none",
-                            borderRadius: 8,
-                            fontSize: "0.8rem",
-                            fontWeight: 800,
-                            padding: "0.4rem 0.7rem",
-                            cursor: zapisGodzinyId === w.id ? "wait" : "pointer",
-                          }}
-                        >
-                          {zapisGodzinyId === w.id ? "Zapisuję godzinę…" : "Zapisz godzinę"}
-                        </button>
-                      </div>
-                    ) : null}
                     {edycjaId === w.id ? (
                       <div style={{ display: "grid", gap: "0.4rem" }}>
                         <textarea
@@ -1082,27 +972,43 @@ export function CzatKrPanel({
                           onChange={(e) => setEdycjaTresc(e.target.value)}
                           rows={3}
                           disabled={zapisywanieEdycji}
-                          style={{ ...inputSt, resize: "vertical", minHeight: "3.2rem", fontSize: "0.9rem" }}
+                          style={{ ...inputSt, resize: "vertical", minHeight: "3.2rem", fontSize: "1rem", lineHeight: 1.45 }}
                         />
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
-                          <label style={{ display: "grid", gap: 2, fontSize: "0.72rem", fontWeight: 700, color: LIGHT.muted }}>
-                            Data wpisu
-                            <input
-                              type="date"
-                              value={edycjaData}
-                              onChange={(e) => setEdycjaData(e.target.value)}
-                              style={{ ...inputSt, width: "11rem" }}
-                            />
-                          </label>
-                          <label style={{ display: "grid", gap: 2, fontSize: "0.72rem", fontWeight: 700, color: LIGHT.muted }}>
-                            Godzina wpisu
-                            <input
-                              type="time"
-                              value={edycjaGodzina}
-                              onChange={(e) => setEdycjaGodzina(e.target.value)}
-                              style={{ ...inputSt, width: "8rem" }}
-                            />
-                          </label>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            gap: "0.35rem 0.5rem",
+                            fontSize: "0.72rem",
+                            color: LIGHT.soft,
+                          }}
+                        >
+                          <span>Data i godzina</span>
+                          <input
+                            type="date"
+                            value={edycjaData}
+                            onChange={(e) => setEdycjaData(e.target.value)}
+                            style={{
+                              ...inputSt,
+                              width: "9.2rem",
+                              fontSize: "0.75rem",
+                              padding: "0.18rem 0.3rem",
+                              color: LIGHT.muted,
+                            }}
+                          />
+                          <input
+                            type="time"
+                            value={edycjaGodzina}
+                            onChange={(e) => setEdycjaGodzina(e.target.value)}
+                            style={{
+                              ...inputSt,
+                              width: "6.2rem",
+                              fontSize: "0.75rem",
+                              padding: "0.18rem 0.3rem",
+                              color: LIGHT.muted,
+                            }}
+                          />
                         </div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
                           <button
@@ -1144,7 +1050,15 @@ export function CzatKrPanel({
                       </div>
                     ) : (
                       <>
-                        <div style={{ whiteSpace: "pre-wrap", fontSize: "0.92rem", lineHeight: 1.45, color: LIGHT.text }}>
+                        <div
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            fontSize: "1.02rem",
+                            lineHeight: 1.5,
+                            color: LIGHT.text,
+                            fontWeight: 500,
+                          }}
+                        >
                           {w.tresc}
                         </div>
                         {mozeZadania ? (
