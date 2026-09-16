@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SPOTKANIE_AUTOR_NOTATKA,
   czyWpisSpotkania,
@@ -154,6 +154,11 @@ function czasMs(iso) {
   return Number.isFinite(t) ? t : 0;
 }
 
+function ctorRozpoznawaniaMowy() {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
 /**
  * CZAT KR — lista KR po lewej, wątek po prawej.
  */
@@ -206,6 +211,14 @@ export function CzatKrPanel({
   const [notatkaGodzina, setNotatkaGodzina] = useState(() => polaDatyGodzinyZIso().godzina);
   const [edycjaData, setEdycjaData] = useState("");
   const [edycjaGodzina, setEdycjaGodzina] = useState("");
+  const [slucham, setSlucham] = useState(false);
+  const draftRef = useRef("");
+  const sluchamRef = useRef(false);
+  const wysylanieRef = useRef(false);
+  const buforMowyRef = useRef("");
+  const recognitionRef = useRef(null);
+  const ciszaTimerRef = useRef(null);
+  const wyslijRef = useRef(null);
 
   useEffect(() => {
     if (!spotkanie.startIso) return;
@@ -330,6 +343,7 @@ export function CzatKrPanel({
   function wybierzKr(k) {
     const kod = String(k ?? "").trim();
     if (!kod) return;
+    if (kod !== wybranyKr && sluchamRef.current) zatrzymajDyktowanie({ zapisz: true });
     setWybranyKr(kod);
     setRozwiniete(false);
     setMsg(null);
@@ -337,8 +351,141 @@ export function CzatKrPanel({
     setEdycjaTresc("");
   }
 
-  async function wyslij(e) {
+  function wyczyscTimerCiszy() {
+    if (ciszaTimerRef.current) {
+      clearTimeout(ciszaTimerRef.current);
+      ciszaTimerRef.current = null;
+    }
+  }
+
+  function zaplanujZapisPoPauzie() {
+    wyczyscTimerCiszy();
+    ciszaTimerRef.current = setTimeout(() => {
+      const tekst = String(buforMowyRef.current ?? "").trim();
+      if (!tekst || !sluchamRef.current) return;
+      if (wysylanieRef.current) {
+        zaplanujZapisPoPauzie();
+        return;
+      }
+      buforMowyRef.current = "";
+      setDraft("");
+      void wyslijRef.current?.(null, tekst);
+    }, 2200);
+  }
+
+  function zatrzymajDyktowanie({ zapisz } = { zapisz: true }) {
+    wyczyscTimerCiszy();
+    sluchamRef.current = false;
+    setSlucham(false);
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    recognitionRef.current = null;
+    const tekst = String(buforMowyRef.current || draftRef.current || "").trim();
+    buforMowyRef.current = "";
+    if (zapisz && tekst) void wyslijRef.current?.(null, tekst);
+  }
+
+  function startDyktowanie() {
+    const Ctor = ctorRozpoznawaniaMowy();
+    if (!Ctor) {
+      setMsg("Dyktowanie działa w Chrome lub Edge — zezwól na mikrofon.");
+      return;
+    }
+    const kr = String(wybranyKr ?? "").trim();
+    if (!kr || czyKrPlaceholder(kr)) {
+      setMsg("Najpierw wybierz KR po lewej.");
+      return;
+    }
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    const rec = new Ctor();
+    rec.lang = "pl-PL";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    buforMowyRef.current = String(draftRef.current ?? "").trim();
+    rec.onresult = (event) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const t = String(event.results[i]?.[0]?.transcript ?? "").trim();
+        if (!t) continue;
+        if (event.results[i].isFinal) {
+          buforMowyRef.current = [buforMowyRef.current, t].filter(Boolean).join(" ");
+        } else {
+          interim = t;
+        }
+      }
+      setDraft([buforMowyRef.current, interim].filter(Boolean).join(" "));
+      if (buforMowyRef.current) zaplanujZapisPoPauzie();
+    };
+    rec.onerror = (event) => {
+      const e = String(event?.error ?? "");
+      if (e === "not-allowed" || e === "service-not-allowed") {
+        zatrzymajDyktowanie({ zapisz: false });
+        setMsg("Brak zgody na mikrofon — kliknij kłódkę przy adresie i zezwól.");
+        return;
+      }
+      if (e === "no-speech" || e === "aborted") return;
+      setMsg(`Dyktowanie: ${e}`);
+    };
+    rec.onend = () => {
+      if (!sluchamRef.current) return;
+      try {
+        rec.start();
+      } catch {
+        /* already started */
+      }
+    };
+    recognitionRef.current = rec;
+    sluchamRef.current = true;
+    setSlucham(true);
+    setMsg(null);
+    try {
+      rec.start();
+    } catch (err) {
+      sluchamRef.current = false;
+      setSlucham(false);
+      setMsg(`Nie udało się włączyć mikrofonu: ${err?.message || err}`);
+    }
+  }
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(
+    () => () => {
+      sluchamRef.current = false;
+      wyczyscTimerCiszy();
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+    },
+    [],
+  );
+
+  async function wyslij(e, tekstOverride) {
     e?.preventDefault?.();
+    if (sluchamRef.current && tekstOverride == null) {
+      wyczyscTimerCiszy();
+      sluchamRef.current = false;
+      setSlucham(false);
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+      recognitionRef.current = null;
+      buforMowyRef.current = "";
+    }
     if (!czyMozePisac) {
       alert("Zaloguj się, aby dodać wpis do CZAT KR.");
       return;
@@ -356,7 +503,7 @@ export function CzatKrPanel({
       setMsg("Wybierz prawdziwy numer KR po lewej — nie zapisuję do „???”.");
       return;
     }
-    const tekst = String(draft ?? "").trim();
+    const tekst = String(tekstOverride ?? draft ?? "").trim();
     if (!tekst) return;
     const autor = spotkanie.aktywne
       ? SPOTKANIE_AUTOR_NOTATKA
@@ -365,6 +512,7 @@ export function CzatKrPanel({
         "Użytkownik";
     setMsg(null);
     setWysylanie(true);
+    wysylanieRef.current = true;
     const payload = {
       kr,
       tresc: tekst,
@@ -380,6 +528,7 @@ export function CzatKrPanel({
       .select("id, kr, tresc, autor, autor_email, created_at")
       .single();
     setWysylanie(false);
+    wysylanieRef.current = false;
     if (error) {
       const m = String(error.message ?? "");
       if (/kr_notatka|schema cache|PGRST205|does not exist/i.test(m)) {
@@ -394,6 +543,7 @@ export function CzatKrPanel({
     setDraft("");
     setMsg(spotkanie.aktywne ? "Dodano notatkę ze spotkania." : "Dodano wpis.");
   }
+  wyslijRef.current = wyslij;
 
   function rozpocznijEdycje(w) {
     if (!czyMozePisac) {
@@ -570,8 +720,8 @@ export function CzatKrPanel({
         <div>
           <strong style={{ fontSize: "1.05rem", color: LIGHT.accent }}>CZAT KR</strong>
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
-            Po lewej wybierz numer KR, potem notuj. Datę i godzinę zmienisz w „Edytuj”.
-            Brak numeru na liście — „Nowa KR”.
+            Po lewej wybierz numer KR, potem notuj albo Dyktuj (mowa zamienia się w notatkę).
+            Datę zmienisz w „Edytuj”. Brak numeru na liście — „Nowa KR”.
           </div>
         </div>
         <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignSelf: "flex-start" }}>
@@ -1139,17 +1289,53 @@ export function CzatKrPanel({
                   />
                 </label>
               ) : null}
+              {slucham ? (
+                <div
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    color: "#b91c1c",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 999,
+                      background: "#dc2626",
+                      boxShadow: "0 0 0 4px rgba(220,38,38,0.2)",
+                    }}
+                  />
+                  Słucham… mów. Po pauzie notatka zapisze się sama. Stop kończy dyktowanie.
+                </div>
+              ) : null}
               <textarea
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setDraft(v);
+                  if (sluchamRef.current) buforMowyRef.current = v;
+                }}
                 rows={2}
                 disabled={wysylanie}
                 placeholder={
-                  spotkanie.aktywne
-                    ? `Notatka ze spotkania · KR ${wybranyKr}…`
-                    : `Wpis do KR ${wybranyKr}…`
+                  slucham
+                    ? "Mów do mikrofonu…"
+                    : spotkanie.aktywne
+                      ? `Notatka ze spotkania · KR ${wybranyKr}…`
+                      : `Wpis do KR ${wybranyKr}…`
                 }
-                style={{ ...inputSt, resize: "vertical", minHeight: "2.8rem", fontSize: "0.9rem" }}
+                style={{
+                  ...inputSt,
+                  resize: "vertical",
+                  minHeight: "2.8rem",
+                  fontSize: "0.9rem",
+                  border: slucham ? "1px solid #fca5a5" : inputSt.border,
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();
@@ -1158,6 +1344,26 @@ export function CzatKrPanel({
                 }}
               />
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", alignItems: "center" }}>
+                <button
+                  type="button"
+                  disabled={wysylanie}
+                  onClick={() => {
+                    if (slucham) zatrzymajDyktowanie({ zapisz: true });
+                    else startDyktowanie();
+                  }}
+                  style={{
+                    background: slucham ? "#dc2626" : "#fff",
+                    color: slucham ? "#fff" : LIGHT.accent,
+                    border: slucham ? "none" : `1px solid ${LIGHT.accent}`,
+                    borderRadius: 8,
+                    padding: "0.4rem 0.85rem",
+                    fontWeight: 800,
+                    fontSize: "0.84rem",
+                    cursor: wysylanie ? "wait" : "pointer",
+                  }}
+                >
+                  {slucham ? "Stop — zapisz" : "🎙 Dyktuj"}
+                </button>
                 <button
                   type="submit"
                   disabled={wysylanie || !draft.trim()}
@@ -1236,7 +1442,7 @@ export function CzatKrPanel({
                     ＋ Dodaj fakt
                   </button>
                 ) : null}
-                <span style={{ fontSize: "0.7rem", color: LIGHT.soft }}>Ctrl+Enter</span>
+                <span style={{ fontSize: "0.7rem", color: LIGHT.soft }}>Dyktuj albo Ctrl+Enter</span>
               </div>
             </form>
           ) : !brakTabeli && !czyMozePisac ? (
