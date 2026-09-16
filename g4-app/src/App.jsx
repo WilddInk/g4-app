@@ -13297,19 +13297,16 @@ export default function App() {
                             boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
                           }}
                         >
-                          <div
-                            title={zt.title}
-                            style={{
-                              fontSize: "0.98rem",
-                              fontWeight: 650,
-                              color: "#0f172a",
-                              lineHeight: 1.45,
-                              whiteSpace: "pre-wrap",
-                              wordBreak: "break-word",
-                              marginBottom: "0.4rem",
-                            }}
-                          >
-                            {zt.text}
+                          <div style={{ marginBottom: "0.4rem" }}>
+                            <KomorkaTresciZadaniaTabeli
+                              text={zt.text}
+                              title={zt.title}
+                              otwarte={Boolean(zadaniaTabelaRozwiniete[String(row.id)])}
+                              onToggle={() => {
+                                const k = String(row.id);
+                                setZadaniaTabelaRozwiniete((prev) => ({ ...prev, [k]: !prev[k] }));
+                              }}
+                            />
                           </div>
                           <div
                             style={{
