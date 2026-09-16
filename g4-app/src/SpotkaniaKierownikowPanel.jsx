@@ -8,6 +8,7 @@ import {
   zestawienieTematowPoKr,
 } from "./lib/czatKrSpotkanie.js";
 import { CZAT_KR_TEAM_NR, zbudujZespolCzatKr } from "./CzatKrPanel.jsx";
+import { ChipsMowcow, TrescZGlosami, dopiszPrefiksMowcy, htmlTresciZGlosami, zPrefiksemMowcy } from "./spotkanieMowcy.jsx";
 
 const LIGHT = {
   panelBg: "linear-gradient(180deg, #fff7ed 0%, #fffbeb 45%, #ffffff 100%)",
@@ -91,7 +92,7 @@ function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol }) {
           const punkty = (g.tematy ?? [])
             .map((t) => {
               const godz = formatGodzinaTematu(t.godzina);
-              return `<li>${godz ? `<span class="godz">${escapeHtml(godz)}</span> ` : ""}${escapeHtml(t.tresc)}</li>`;
+              return `<li>${godz ? `<span class="godz">${escapeHtml(godz)}</span> ` : ""}${htmlTresciZGlosami(t.tresc, zespol, escapeHtml)}</li>`;
             })
             .join("");
           return `<h3>KR ${escapeHtml(g.kr)}</h3><ul>${punkty}</ul>`;
@@ -120,9 +121,11 @@ function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol }) {
     h2 { font-size: 1.05rem; margin: 1.2rem 0 0.4rem; border-bottom: 1px solid #ccc; padding-bottom: 0.2rem; }
     h3 { font-size: 0.98rem; margin: 0.7rem 0 0.25rem; }
     .meta { color: #444; font-size: 0.92rem; }
-    .godz { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .godz { font-weight: 700; font-variant-numeric: tabular-nums; margin-right: 0.35rem; }
+    .ini { display: inline-flex; min-width: 1.45em; height: 1.45em; border-radius: 999px; color: #fff; font-size: 0.68rem; font-weight: 800; align-items: center; justify-content: center; padding: 0 0.3em; margin-right: 0.35em; font-family: ui-sans-serif, system-ui, sans-serif; vertical-align: middle; }
+    .glos { margin: 0.12rem 0; }
     ul { margin: 0.2rem 0 0.4rem 1.2rem; padding: 0; }
-    li { margin: 0.15rem 0; }
+    li { margin: 0.25rem 0; }
     .protokol { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 0.86rem; }
     .stopka { margin-top: 1.6rem; font-size: 0.78rem; color: #666; }
     @media print { body { margin: 1.1cm; } }
@@ -167,6 +170,12 @@ function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol }) {
   }, 250);
 }
 
+function protokolJestPusty(value) {
+  const t = String(value ?? "").trim();
+  if (!t) return true;
+  return /brak wpisów w wybranym zakresie/i.test(t);
+}
+
 export function SpotkaniaKierownikowPanel({
   supabase,
   pracownicy = [],
@@ -189,6 +198,7 @@ export function SpotkaniaKierownikowPanel({
   const [nowyTematKr, setNowyTematKr] = useState("");
   const [nowyTematTresc, setNowyTematTresc] = useState("");
   const [nowyTematGodzina, setNowyTematGodzina] = useState(() => polaDatyGodzinyZIso().godzina);
+  const [nowyTematMowcaNr, setNowyTematMowcaNr] = useState("");
   const [zadanieTytul, setZadanieTytul] = useState("");
   const [zadanieDlaNr, setZadanieDlaNr] = useState("");
   const [zadanieKr, setZadanieKr] = useState("");
@@ -211,6 +221,10 @@ export function SpotkaniaKierownikowPanel({
     }
     return [...set].sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
   }, [krList, tematy]);
+  const grupyTematow = useMemo(
+    () => zestawienieTematowPoKr(tematy.map((t, i) => ({ ...t, _idx: i }))),
+    [tematy],
+  );
 
   useEffect(() => {
     if (zadanieDlaNr) return;
@@ -270,6 +284,50 @@ export function SpotkaniaKierownikowPanel({
     ustawDomyslnaObecnosc();
   }
 
+  async function wczytajZCzatDlaDnia(dzien, { pelnyDzien = true, zachowajTematy = false, zachowajProtokol = false } = {}) {
+    const d = String(dzien || dzisYmd()).trim();
+    if (!d) return { wczytane: [], error: null };
+    const odIso = isoZDatyIGodziny(d, pelnyDzien ? "00:00" : form.godzina_od || "00:00");
+    const doIso = isoZDatyIGodziny(d, pelnyDzien ? "23:59" : form.godzina_do || "23:59");
+    if (new Date(doIso).getTime() < new Date(odIso).getTime()) {
+      setMsg("Godzina „do” musi być późniejsza niż „od” — albo zmień datę w polach.");
+      return { wczytane: [], error: "zakres" };
+    }
+    setBusy(true);
+    setMsg(null);
+    const { data, error } = await pobierzWpisyZakresu(supabase, { odIso, doIso });
+    setBusy(false);
+    if (error) {
+      setErr(error.message);
+      return { wczytane: [], error };
+    }
+    const wczytane = wpisyNaTematy(data ?? []);
+    if (!zachowajTematy) setTematy(wczytane);
+    setForm((prev) => {
+      const next = { ...prev, data: prev.data || d };
+      if (!zachowajProtokol || protokolJestPusty(prev.protokol)) {
+        next.protokol = zlozProtokolSpotkania(data ?? [], { odIso, doIso, mowcy: zespol });
+      }
+      if (pelnyDzien && wczytane.length) {
+        const first = polaDatyGodzinyZIso(wczytane[0].godzina);
+        const last = polaDatyGodzinyZIso(wczytane[wczytane.length - 1].godzina);
+        if (first.godzina) next.godzina_od = first.godzina;
+        if (last.godzina) next.godzina_do = last.godzina;
+      }
+      return next;
+    });
+    setMsg(
+      wczytane.length
+        ? `Złożono podsumowanie z CZAT KR: ${wczytane.length} ${wczytane.length === 1 ? "temat" : "tematów"} z ${d}.`
+        : `W CZAT KR z ${d} nie ma wpisów do podsumowania.`,
+    );
+    return { wczytane, error: null };
+  }
+
+  async function wczytajTematyZCzat() {
+    await wczytajZCzatDlaDnia(form.data || dzisYmd(), { pelnyDzien: false, zachowajTematy: false, zachowajProtokol: false });
+  }
+
   async function otworzSpotkanie(id) {
     setMsg(null);
     setErr(null);
@@ -318,6 +376,11 @@ export function SpotkaniaKierownikowPanel({
     ustawDomyslnaObecnosc(nrObecnych);
     setTematy(tematyDb ?? []);
     setZadania(zadDb ?? []);
+    return {
+      tematy: tematyDb ?? [],
+      protokol: data.protokol || "",
+      id: data.id,
+    };
   }
 
   function toggleObecnosc(nr) {
@@ -329,33 +392,6 @@ export function SpotkaniaKierownikowPanel({
       else next.add(n);
       return next;
     });
-  }
-
-  async function wczytajTematyZCzat() {
-    const odIso = isoZDatyIGodziny(form.data, form.godzina_od || "00:00");
-    const doIso = isoZDatyIGodziny(form.data, form.godzina_do || "23:59");
-    if (new Date(doIso).getTime() < new Date(odIso).getTime()) {
-      setMsg("Godzina „do” musi być późniejsza niż „od” — albo zmień datę w polach.");
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    const { data, error } = await pobierzWpisyZakresu(supabase, { odIso, doIso });
-    setBusy(false);
-    if (error) {
-      setErr(error.message);
-      return;
-    }
-    const wczytane = wpisyNaTematy(data ?? []);
-    setTematy(wczytane);
-    if (!String(form.protokol ?? "").trim()) {
-      setForm((prev) => ({ ...prev, protokol: zlozProtokolSpotkania(data ?? [], { odIso, doIso }) }));
-    }
-    setMsg(
-      wczytane.length
-        ? `Wczytano ${wczytane.length} ${wczytane.length === 1 ? "temat" : "tematów"} z CZAT KR.`
-        : "W tym zakresie OD–DO nie ma wpisów w CZAT KR.",
-    );
   }
 
   async function wczytajZadaniaZDnia() {
@@ -410,7 +446,8 @@ export function SpotkaniaKierownikowPanel({
   }
 
   function dodajTematRecznie() {
-    const tresc = String(nowyTematTresc ?? "").trim();
+    const mowca = zespolRdzen.find((p) => normalizujNr(p.nr) === String(nowyTematMowcaNr ?? "").trim());
+    const tresc = zPrefiksemMowcy(String(nowyTematTresc ?? "").trim(), mowca || null);
     if (!tresc) {
       setMsg("Wpisz treść tematu.");
       return;
@@ -835,33 +872,61 @@ export function SpotkaniaKierownikowPanel({
                 ) : null}
               </div>
             </div>
-            <div style={{ marginTop: "0.65rem", display: "grid", gap: "0.4rem" }}>
+            <div style={{ marginTop: "0.65rem", display: "grid", gap: "0.7rem" }}>
               {tematy.length === 0 ? (
                 <p style={{ margin: 0, fontSize: "0.8rem", color: LIGHT.soft }}>
                   Brak tematów — wczytaj wpisy z CZAT KR albo dopisz ręcznie.
                 </p>
               ) : (
-                tematy.map((t, idx) => (
-                  <div
-                    key={`${t.id || "n"}-${idx}`}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "5.5rem 4.2rem minmax(0, 1fr) auto",
-                      gap: "0.4rem",
-                      alignItems: "start",
-                      fontSize: "0.84rem",
-                    }}
-                  >
-                    <span style={{ fontWeight: 800, color: LIGHT.accent }}>KR {t.kr || "—"}</span>
-                    <span style={{ color: LIGHT.soft }}>{formatGodzinaTematu(t.godzina) || "—"}</span>
-                    <span style={{ whiteSpace: "pre-wrap" }}>{t.tresc}</span>
-                    <button type="button" onClick={() => usunTemat(idx)} style={{ ...btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}>
-                      Usuń
-                    </button>
+                grupyTematow.map((g) => (
+                  <div key={g.kr} style={{ border: LIGHT.cardBorder, borderRadius: 10, padding: "0.5rem 0.6rem" }}>
+                    <div style={{ fontWeight: 800, color: LIGHT.accent, fontSize: "0.88rem", marginBottom: "0.35rem" }}>
+                      KR {g.kr}
+                    </div>
+                    <div style={{ display: "grid", gap: "0.4rem" }}>
+                      {(g.tematy ?? []).map((t) => (
+                        <div
+                          key={`${t.id || "n"}-${t._idx}`}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "4.2rem minmax(0, 1fr) auto",
+                            gap: "0.4rem",
+                            alignItems: "start",
+                            fontSize: "0.84rem",
+                          }}
+                        >
+                          <span style={{ color: LIGHT.soft, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
+                            {formatGodzinaTematu(t.godzina) || "—"}
+                          </span>
+                          <TrescZGlosami tresc={t.tresc} mowcy={zespol} />
+                          <button
+                            type="button"
+                            onClick={() => usunTemat(t._idx)}
+                            style={{ ...btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                          >
+                            Usuń
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))
               )}
             </div>
+            {zespolRdzen.length ? (
+              <div style={{ marginTop: "0.7rem" }}>
+                <ChipsMowcow
+                  mowcy={zespolRdzen}
+                  wybranyNr={nowyTematMowcaNr}
+                  onWybierz={(p) => {
+                    const nr = normalizujNr(p.nr);
+                    const odznacz = nowyTematMowcaNr === nr;
+                    setNowyTematMowcaNr(odznacz ? "" : nr);
+                    if (!odznacz) setNowyTematTresc((t) => dopiszPrefiksMowcy(t, p));
+                  }}
+                />
+              </div>
+            ) : null}
             <div
               style={{
                 marginTop: "0.7rem",

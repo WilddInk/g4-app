@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { trescProtokoluZGlosow } from "./spotkanieMowcy.js";
 
 /** Widoczny autor notatek z posiedzenia — bez nazwiska osoby, która pisze. */
 export const SPOTKANIE_AUTOR_NOTATKA = "Notatka ze spotkania kierowników";
@@ -202,10 +203,21 @@ function etykietaKr(kr) {
   return `KR ${k}`;
 }
 
+function formatGodzinaTylko(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "—";
+  }
+}
+
 /**
- * Jedna notatka ze spotkania: chronologicznie po godzinie wpisu, każdy punkt z KR.
+ * Notatka ze spotkania: tematy pogrupowane po KR (numer raz), pod spodem godziny wpisów.
  */
-export function zlozProtokolSpotkania(wpisy, { odIso, doIso } = {}) {
+export function zlozProtokolSpotkania(wpisy, { odIso, doIso, mowcy } = {}) {
   const lista = [...(wpisy ?? [])]
     .filter((w) => !czyZnacznikPoczatek(w) && !czyZnacznikKoniec(w))
     .filter((w) => String(w?.tresc ?? "").trim())
@@ -233,10 +245,23 @@ export function zlozProtokolSpotkania(wpisy, { odIso, doIso } = {}) {
     return linie.join("\n");
   }
 
-  for (const w of lista) {
+  const grupy = zestawienieTematowPoKr(
+    lista.map((w, i) => ({
+      kr: String(w.kr ?? "").trim(),
+      tresc: String(w.tresc ?? "").trim(),
+      godzina: w.created_at || null,
+      kolejnosc: i,
+    })),
+  );
+
+  for (const g of grupy) {
     linie.push("————————————————————————");
-    linie.push(`${formatDataSpotkania(w.created_at) || "—"}  ·  ${etykietaKr(w.kr)}`);
-    linie.push(String(w.tresc ?? "").trim());
+    linie.push(g.kr === "—" ? etykietaKr("") : etykietaKr(g.kr));
+    for (const t of g.tematy) {
+      const godz = formatGodzinaTylko(t.godzina);
+      const glosy = trescProtokoluZGlosow(t.tresc, mowcy);
+      linie.push(`${godz}  ${glosy}`);
+    }
     linie.push("");
   }
   return linie.join("\n").trim() + "\n";
@@ -270,7 +295,14 @@ export function zestawienieTematowPoKr(tematy = []) {
     if (b === "—") return -1;
     return a.localeCompare(b, "pl", { numeric: true });
   });
-  return kody.map((kr) => ({ kr, tematy: map.get(kr) ?? [] }));
+  return kody.map((kr) => ({
+    kr,
+    tematy: [...(map.get(kr) ?? [])].sort((a, b) => {
+      const ta = new Date(a.godzina || 0).getTime();
+      const tb = new Date(b.godzina || 0).getTime();
+      return ta - tb;
+    }),
+  }));
 }
 
 export function odczytajSpotkanie() {

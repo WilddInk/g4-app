@@ -15,6 +15,7 @@ import {
 } from "./lib/czatKrSpotkanie.js";
 import { normalizujKrZArkusza } from "./lib/krNormalize.js";
 import { NowaKrForm } from "./NowaKrForm.jsx";
+import { ChipsMowcow, TrescZGlosami, dopiszPrefiksMowcy, zPrefiksemMowcy } from "./spotkanieMowcy.jsx";
 
 /**
  * Zespół CZAT KR (nieformalne imiona → konkretne nr w `pracownik` z Supabase).
@@ -188,6 +189,7 @@ export function CzatKrPanel({
   const [brakTabeli, setBrakTabeli] = useState(false);
   const [wybranyKr, setWybranyKr] = useState("");
   const [draft, setDraft] = useState("");
+  const [mowcaNr, setMowcaNr] = useState("");
   const [wysylanie, setWysylanie] = useState(false);
   const [rozwiniete, setRozwiniete] = useState(false);
   const [szukajKr, setSzukajKr] = useState("");
@@ -219,6 +221,8 @@ export function CzatKrPanel({
   const recognitionRef = useRef(null);
   const ciszaTimerRef = useRef(null);
   const wyslijRef = useRef(null);
+  const mowcaNrRef = useRef("");
+  const draftAreaRef = useRef(null);
 
   useEffect(() => {
     if (!spotkanie.startIso) return;
@@ -228,6 +232,14 @@ export function CzatKrPanel({
   }, [spotkanie.startIso]);
 
   const zespolDoZadan = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
+  const mowcyRdzen = useMemo(
+    () => zespolDoZadan.filter((p) => CZAT_KR_TEAM_NR.includes(normalizujNr(p.nr))),
+    [zespolDoZadan],
+  );
+
+  useEffect(() => {
+    mowcaNrRef.current = mowcaNr;
+  }, [mowcaNr]);
 
   useEffect(() => {
     if (zadanieDlaNr) return;
@@ -503,7 +515,8 @@ export function CzatKrPanel({
       setMsg("Wybierz prawdziwy numer KR po lewej — nie zapisuję do „???”.");
       return;
     }
-    const tekst = String(tekstOverride ?? draft ?? "").trim();
+    const mowca = mowcyRdzen.find((p) => normalizujNr(p.nr) === String(mowcaNrRef.current ?? "").trim());
+    const tekst = zPrefiksemMowcy(String(tekstOverride ?? draft ?? "").trim(), mowca || null);
     if (!tekst) return;
     const autor = spotkanie.aktywne
       ? SPOTKANIE_AUTOR_NOTATKA
@@ -1202,14 +1215,13 @@ export function CzatKrPanel({
                       <>
                         <div
                           style={{
-                            whiteSpace: "pre-wrap",
                             fontSize: "1.02rem",
                             lineHeight: 1.5,
                             color: LIGHT.text,
                             fontWeight: 500,
                           }}
                         >
-                          {w.tresc}
+                          <TrescZGlosami tresc={w.tresc} mowcy={zespolDoZadan} />
                         </div>
                         {mozeZadania ? (
                           <button
@@ -1289,6 +1301,19 @@ export function CzatKrPanel({
                   />
                 </label>
               ) : null}
+              {mowcyRdzen.length ? (
+                <ChipsMowcow
+                  mowcy={mowcyRdzen}
+                  wybranyNr={mowcaNr}
+                  onWybierz={(p) => {
+                    const nr = normalizujNr(p.nr);
+                    setMowcaNr((prev) => (prev === nr ? "" : nr));
+                    if (mowcaNr === nr) return;
+                    setDraft((t) => dopiszPrefiksMowcy(t, p));
+                    requestAnimationFrame(() => draftAreaRef.current?.focus());
+                  }}
+                />
+              ) : null}
               {slucham ? (
                 <div
                   style={{
@@ -1314,6 +1339,7 @@ export function CzatKrPanel({
                 </div>
               ) : null}
               <textarea
+                ref={draftAreaRef}
                 value={draft}
                 onChange={(e) => {
                   const v = e.target.value;
