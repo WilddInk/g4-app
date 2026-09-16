@@ -1534,6 +1534,61 @@ function kmTekstDoKomorki(val) {
   return { text: t || "—", title: t };
 }
 
+function zadanieTekstWymagaRozwiniecia(text) {
+  const t = String(text ?? "").trim();
+  if (!t || t === "—") return false;
+  if (t.split(/\n/).length > 3) return true;
+  return t.length > 110;
+}
+
+/** Tabela zadań: 3 linie, pełna treść po „Więcej”. */
+function KomorkaTresciZadaniaTabeli({ text, title, otwarte, onToggle }) {
+  const t = String(text ?? "").trim() || "—";
+  const dlugie = zadanieTekstWymagaRozwiniecia(t);
+  const skroc = dlugie && !otwarte;
+  return (
+    <div>
+      <strong
+        title={title || t}
+        style={{
+          color: "#0f172a",
+          fontSize: "0.95rem",
+          fontWeight: 600,
+          display: "-webkit-box",
+          WebkitLineClamp: skroc ? 3 : "unset",
+          WebkitBoxOrient: "vertical",
+          overflow: skroc ? "hidden" : "visible",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          lineHeight: 1.4,
+        }}
+      >
+        {t}
+      </strong>
+      {dlugie ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          style={{
+            display: "block",
+            marginTop: "0.2rem",
+            background: "none",
+            border: "none",
+            padding: 0,
+            color: "#0369a1",
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            cursor: "pointer",
+            textDecoration: "underline",
+          }}
+        >
+          {otwarte ? "Zwiń" : "Więcej"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 const STORAGE_TRYB_HELP = "g4_tryb_help";
 /** Zapamiętanie podglądu „jako inny pracownik” (tylko dla app_role admin). */
 const STORAGE_ADMIN_PODGLAD_NR = "g4_admin_podglad_pracownik_nr";
@@ -2003,6 +2058,7 @@ export default function App() {
   const [zadanieEdycjaId, setZadanieEdycjaId] = useState(null);
   const [zadanieForm, setZadanieForm] = useState(() => zadaniePustyForm());
   const [zadaniaWidok, setZadaniaWidok] = useState("tabela");
+  const [zadaniaTabelaRozwiniete, setZadaniaTabelaRozwiniete] = useState({});
   const [zadaniaFiltrPracNr, setZadaniaFiltrPracNr] = useState("");
   const [zadaniaFiltrTylkoOdpowiedzialny, setZadaniaFiltrTylkoOdpowiedzialny] = useState(false);
   /** "" = wszystkie, "__bez_kr__" = tylko ogólne (bez projektu), inaczej kod KR */
@@ -8986,8 +9042,16 @@ export default function App() {
                             : undefined
                         }
                       >
-                        <td style={{ ...s.td, padding: "0.55rem 0.7rem" }} title={zt.title}>
-                          <strong style={{ color: "#0f172a" }}>{zt.text}</strong>
+                        <td style={{ ...s.td, padding: "0.55rem 0.7rem", maxWidth: "20rem", verticalAlign: "top" }}>
+                          <KomorkaTresciZadaniaTabeli
+                            text={zt.text}
+                            title={zt.title}
+                            otwarte={Boolean(zadaniaTabelaRozwiniete[String(row.id)])}
+                            onToggle={() => {
+                              const k = String(row.id);
+                              setZadaniaTabelaRozwiniete((prev) => ({ ...prev, [k]: !prev[k] }));
+                            }}
+                          />
                         </td>
                         <td style={{ ...s.td, padding: "0.55rem 0.7rem" }}>
                           <span
@@ -13406,8 +13470,16 @@ export default function App() {
                               : undefined
                         }
                       >
-                        <td style={{ ...s.td, padding: "0.65rem 0.85rem" }} title={zt.title || undefined}>
-                          <strong style={{ color: "#0f172a", fontSize: "0.98rem", fontWeight: 600 }}>{zt.text}</strong>
+                        <td style={{ ...s.td, padding: "0.65rem 0.85rem", maxWidth: "22rem", verticalAlign: "top" }}>
+                          <KomorkaTresciZadaniaTabeli
+                            text={zt.text}
+                            title={zt.title}
+                            otwarte={Boolean(zadaniaTabelaRozwiniete[String(row.id)])}
+                            onToggle={() => {
+                              const k = String(row.id);
+                              setZadaniaTabelaRozwiniete((prev) => ({ ...prev, [k]: !prev[k] }));
+                            }}
+                          />
                         </td>
                         <td style={{ ...s.td, padding: "0.65rem 0.85rem", fontFamily: "ui-monospace, monospace" }}>
                           {tekstTrim(row.kr) ? (
