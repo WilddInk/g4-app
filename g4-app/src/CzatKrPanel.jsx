@@ -890,8 +890,8 @@ export function CzatKrPanel({
           }}
         >
           <div style={{ fontSize: "0.84rem", lineHeight: 1.4, maxWidth: "36rem" }}>
-            <strong>Koniec spotkania kierowników</strong> — złóż sprawozdanie z notatek CZAT KR i wyślij mailem
-            do zespołu. Szczegóły (obecni, wydruk) są też w module Spotkania.
+            <strong>Koniec spotkania kierowników</strong> — wyślij sprawozdanie mailem do zespołu.
+            Outlook się otworzy; w treści wklej <strong>Ctrl+V</strong> (ikonki kto mówił).
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
             <button
