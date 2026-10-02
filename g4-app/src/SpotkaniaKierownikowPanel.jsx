@@ -1093,7 +1093,7 @@ export function SpotkaniaKierownikowPanel({
               </button>
             ) : null}
             <span style={{ fontSize: "0.75rem", color: LIGHT.soft }}>
-              Wydruk = PDF. Mail otworzy Outlook / program pocztowy z listą obecnych i sprawozdaniem.
+              Wydruk = PDF. Mail: Outlook + wklej Ctrl+V (ikonki kto mówił, bez luk).
             </span>
           </div>
         </div>
