@@ -299,7 +299,7 @@ export function CzatKrPanel({
       .sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
   }, [krList]);
 
-  /** Lista KR po lewej: najpierw te z wpisami (po dacie), potem pozostałe z listy KR. */
+  /** Lista KR po lewej: numer KR malejąco (1087, 1086…, 00M). */
   const listaKrLewa = useMemo(() => {
     const meta = new Map();
     for (const w of wpisy) {
@@ -328,9 +328,7 @@ export function CzatKrPanel({
       const pa = czyKrPlaceholder(a.kr) ? 1 : 0;
       const pb = czyKrPlaceholder(b.kr) ? 1 : 0;
       if (pa !== pb) return pa - pb;
-      if (b.lastMs !== a.lastMs) return b.lastMs - a.lastMs;
-      if (b.count !== a.count) return b.count - a.count;
-      return a.kr.localeCompare(b.kr, "pl", { numeric: true });
+      return b.kr.localeCompare(a.kr, "pl", { numeric: true, sensitivity: "base" });
     });
     return list;
   }, [wpisy, krOpcje, szukajKr]);
