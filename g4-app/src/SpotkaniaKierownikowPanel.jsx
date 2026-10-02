@@ -5,11 +5,15 @@ import {
   pobierzWpisyZakresu,
   wpisyNaTematy,
   zlozProtokolSpotkania,
-  zestawienieTematowPoKr,
 } from "./lib/czatKrSpotkanie.js";
 import { CZAT_KR_TEAM_NR, zbudujZespolCzatKr } from "./CzatKrPanel.jsx";
-import { ChipsMowcow, TrescZGlosami, dopiszPrefiksMowcy, htmlTresciZGlosami, zPrefiksemMowcy } from "./spotkanieMowcy.jsx";
-import { wyslijMailSprawozdania } from "./lib/spotkanieMail.js";
+import { ChipsMowcow, InicjalyBadge, TrescZGlosami, dopiszPrefiksMowcy, zPrefiksemMowcy } from "./spotkanieMowcy.jsx";
+import {
+  htmlTabeliTematowMail,
+  sortujWierszeTematow,
+  wierszeTematowTabeli,
+  wyslijMailSprawozdania,
+} from "./lib/spotkanieMail.js";
 
 const LIGHT = {
   panelBg: "linear-gradient(180deg, #fff7ed 0%, #fffbeb 45%, #ffffff 100%)",
@@ -65,15 +69,53 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-function formatGodzinaTematu(iso) {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+const TH_TAB = {
+  textAlign: "left",
+  background: "#fff7ed",
+  color: "#9a3412",
+  fontSize: "0.75rem",
+  fontWeight: 800,
+  padding: "0.4rem 0.5rem",
+  border: "1px solid #fed7aa",
+  whiteSpace: "nowrap",
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+};
+const TD_TAB = {
+  verticalAlign: "top",
+  padding: "0.4rem 0.5rem",
+  border: "1px solid #fed7aa",
+  fontSize: "0.82rem",
+};
+
+function NaglowekSort({ id, label, sort, onSort }) {
+  const aktywny = sort.key === id;
+  const strzalka = aktywny ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
+  return (
+    <th style={TH_TAB}>
+      <button
+        type="button"
+        onClick={() => onSort(id)}
+        title={`Sortuj według: ${label}`}
+        style={{
+          background: "none",
+          border: "none",
+          padding: 0,
+          margin: 0,
+          color: aktywny ? "#9a3412" : "#7c2d12",
+          font: "inherit",
+          fontWeight: aktywny ? 800 : 700,
+          cursor: "pointer",
+          textAlign: "left",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+        {strzalka}
+      </button>
+    </th>
+  );
 }
 
 function czyBrakTabeli(error) {
@@ -85,31 +127,22 @@ function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol }) {
   const obecni = (zespol ?? [])
     .filter((p) => obecnosc.has(normalizujNr(p.nr)))
     .map((p) => String(p.imie_nazwisko ?? "").trim() || etykietaPracownika(p));
-  const grupy = zestawienieTematowPoKr(tematy);
   const godziny = [form.godzina_od, form.godzina_do].filter(Boolean).join(" – ");
-  const tematyHtml = grupy.length
-    ? grupy
-        .map((g) => {
-          const punkty = (g.tematy ?? [])
-            .map((t) => {
-              const godz = formatGodzinaTematu(t.godzina);
-              return `<li>${godz ? `<span class="godz">${escapeHtml(godz)}</span> ` : ""}${htmlTresciZGlosami(t.tresc, zespol, escapeHtml)}</li>`;
-            })
-            .join("");
-          return `<h3>KR ${escapeHtml(g.kr)}</h3><ul>${punkty}</ul>`;
-        })
-        .join("")
-    : "<p>Brak omówionych tematów.</p>";
+  const tematyHtml = htmlTabeliTematowMail({ tematy, zespol });
   const zadaniaHtml = (zadania ?? []).length
-    ? `<ul>${(zadania ?? [])
-        .map((z) => {
-          const kr = String(z.kr ?? "").trim();
-          const kto = String(z.osoba_odpowiedzialna ?? "").trim();
-          const status = String(z.status ?? "").trim();
-          const extra = [kr ? `KR ${kr}` : "", kto ? `dla ${kto}` : "", status].filter(Boolean).join(" · ");
-          return `<li><strong>${escapeHtml(z.zadanie || "—")}</strong>${extra ? ` <span class="meta">(${escapeHtml(extra)})</span>` : ""}</li>`;
-        })
-        .join("")}</ul>`
+    ? `<table class="raport">
+        <thead><tr><th>KR</th><th>Dla</th><th>Zadanie</th><th>Status</th></tr></thead>
+        <tbody>${(zadania ?? [])
+          .map((z) => {
+            const kr = String(z.kr ?? "").trim() || "—";
+            const kto = String(z.osoba_odpowiedzialna ?? "").trim() || "—";
+            const status = String(z.status ?? "").trim() || "—";
+            return `<tr><td>${escapeHtml(kr)}</td><td>${escapeHtml(kto)}</td><td>${escapeHtml(
+              z.zadanie || "—",
+            )}</td><td class="meta">${escapeHtml(status)}</td></tr>`;
+          })
+          .join("")}</tbody>
+      </table>`
     : "<p>Brak zadań z tego spotkania.</p>";
   const html = `<!DOCTYPE html>
 <html lang="pl">
@@ -125,6 +158,9 @@ function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol }) {
     .godz { font-weight: 700; font-variant-numeric: tabular-nums; margin-right: 0.35rem; }
     .ini { display: inline-flex; min-width: 1.45em; height: 1.45em; border-radius: 999px; color: #fff; font-size: 0.68rem; font-weight: 800; align-items: center; justify-content: center; padding: 0 0.3em; margin-right: 0.35em; font-family: ui-sans-serif, system-ui, sans-serif; vertical-align: middle; }
     .glos { margin: 0.12rem 0; }
+    table.raport { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 0.2rem 0 0.4rem; }
+    table.raport th, table.raport td { border: 1px solid #fed7aa; padding: 0.35rem 0.45rem; vertical-align: top; text-align: left; }
+    table.raport th { background: #fff7ed; color: #9a3412; }
     ul { margin: 0.2rem 0 0.4rem 1.2rem; padding: 0; }
     li { margin: 0.25rem 0; }
     .protokol { white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 0.86rem; }
@@ -145,11 +181,6 @@ function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol }) {
   ${tematyHtml}
   <h2>Zadania</h2>
   ${zadaniaHtml}
-  ${
-    String(form.protokol ?? "").trim()
-      ? `<h2>Protokół</h2><div class="protokol">${escapeHtml(form.protokol)}</div>`
-      : ""
-  }
   <p class="stopka">Wydruk z G4 · ${escapeHtml(new Date().toLocaleString("pl-PL"))}</p>
 </body>
 </html>`;
@@ -204,6 +235,8 @@ export function SpotkaniaKierownikowPanel({
   const [zadanieDlaNr, setZadanieDlaNr] = useState("");
   const [zadanieKr, setZadanieKr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sortTematy, setSortTematy] = useState({ key: "kr", dir: "asc" });
+  const [sortZadania, setSortZadania] = useState({ key: "kr", dir: "asc" });
 
   const zespol = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
   const zespolRdzen = useMemo(
@@ -222,10 +255,37 @@ export function SpotkaniaKierownikowPanel({
     }
     return [...set].sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
   }, [krList, tematy]);
-  const grupyTematow = useMemo(
-    () => zestawienieTematowPoKr(tematy.map((t, i) => ({ ...t, _idx: i }))),
-    [tematy],
+  const wierszeTematow = useMemo(
+    () =>
+      sortujWierszeTematow(
+        wierszeTematowTabeli(
+          tematy.map((t, i) => ({ ...t, _idx: i })),
+          zespol,
+        ),
+        sortTematy,
+      ),
+    [tematy, zespol, sortTematy],
   );
+
+  const wierszeZadan = useMemo(() => {
+    const lista = (zadania ?? []).map((z, i) => ({
+      ...z,
+      _idx: i,
+      kr: String(z.kr ?? "").trim() || "—",
+      kto: String(z.osoba_odpowiedzialna ?? "").trim() || "—",
+      tresc: String(z.zadanie ?? "").trim(),
+    }));
+    return sortujWierszeTematow(lista, sortZadania);
+  }, [zadania, sortZadania]);
+
+  function przestawSort(setter, kolumna) {
+    setter((prev) => {
+      if (prev.key === kolumna) {
+        return { key: kolumna, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      return { key: kolumna, dir: "asc" };
+    });
+  }
 
   useEffect(() => {
     if (zadanieDlaNr) return;
@@ -861,7 +921,7 @@ export function SpotkaniaKierownikowPanel({
 
           <section style={{ border: LIGHT.cardBorder, borderRadius: 12, background: LIGHT.cardBg, padding: "0.8rem 0.85rem" }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", alignItems: "center", justifyContent: "space-between" }}>
-              <strong style={{ color: LIGHT.accent }}>Omówione tematy (wg KR)</strong>
+              <strong style={{ color: LIGHT.accent }}>Omówione tematy</strong>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
                 <button type="button" disabled={busy} onClick={() => void wczytajTematyZCzat()} style={btnGhost}>
                   Wczytaj z CZAT KR (OD–DO)
@@ -873,45 +933,69 @@ export function SpotkaniaKierownikowPanel({
                 ) : null}
               </div>
             </div>
-            <div style={{ marginTop: "0.65rem", display: "grid", gap: "0.7rem" }}>
+            <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.75rem", color: LIGHT.muted }}>
+              Tabelka jak w mailu — kliknij nagłówek, żeby posortować (KR, godzina, kto, treść).
+            </p>
+            <div style={{ marginTop: "0.35rem" }}>
               {tematy.length === 0 ? (
                 <p style={{ margin: 0, fontSize: "0.8rem", color: LIGHT.soft }}>
                   Brak tematów — wczytaj wpisy z CZAT KR albo dopisz ręcznie.
                 </p>
               ) : (
-                grupyTematow.map((g) => (
-                  <div key={g.kr} style={{ border: LIGHT.cardBorder, borderRadius: 10, padding: "0.5rem 0.6rem" }}>
-                    <div style={{ fontWeight: 800, color: LIGHT.accent, fontSize: "0.88rem", marginBottom: "0.35rem" }}>
-                      KR {g.kr}
-                    </div>
-                    <div style={{ display: "grid", gap: "0.4rem" }}>
-                      {(g.tematy ?? []).map((t) => (
-                        <div
-                          key={`${t.id || "n"}-${t._idx}`}
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "4.2rem minmax(0, 1fr) auto",
-                            gap: "0.4rem",
-                            alignItems: "start",
-                            fontSize: "0.84rem",
-                          }}
-                        >
-                          <span style={{ color: LIGHT.soft, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
-                            {formatGodzinaTematu(t.godzina) || "—"}
-                          </span>
-                          <TrescZGlosami tresc={t.tresc} mowcy={zespol} />
-                          <button
-                            type="button"
-                            onClick={() => usunTemat(t._idx)}
-                            style={{ ...btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                <div style={{ overflow: "auto", maxHeight: "28rem", border: "1px solid #fed7aa", borderRadius: 10 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "36rem" }}>
+                    <thead>
+                      <tr>
+                        <NaglowekSort id="kr" label="KR" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
+                        <NaglowekSort id="godz" label="Godzina" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
+                        <NaglowekSort id="kto" label="Kto" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
+                        <NaglowekSort id="tresc" label="Treść" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
+                        <th style={{ ...TH_TAB, width: "4.2rem" }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {wierszeTematow.map((w, i) => (
+                        <tr key={`${w.id || "n"}-${w._idx}`} style={{ background: i % 2 ? "#fffbeb" : "#fff" }}>
+                          <td style={{ ...TD_TAB, fontWeight: 800, color: LIGHT.accent, whiteSpace: "nowrap" }}>{w.kr}</td>
+                          <td
+                            style={{
+                              ...TD_TAB,
+                              color: LIGHT.soft,
+                              fontWeight: 700,
+                              whiteSpace: "nowrap",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
                           >
-                            Usuń
-                          </button>
-                        </div>
+                            {w.godz || "—"}
+                          </td>
+                          <td style={{ ...TD_TAB, whiteSpace: "nowrap" }}>
+                            {w.mowcy?.length ? (
+                              <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                {w.mowcy.map((g) => (
+                                  <InicjalyBadge key={`${g.nr}-${g.inicjaly}`} inicjaly={g.inicjaly} nr={g.nr} title={g.nazwa} />
+                                ))}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td style={TD_TAB}>
+                            <TrescZGlosami tresc={w.tresc} mowcy={zespol} />
+                          </td>
+                          <td style={TD_TAB}>
+                            <button
+                              type="button"
+                              onClick={() => usunTemat(w._idx)}
+                              style={{ ...btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                            >
+                              Usuń
+                            </button>
+                          </td>
+                        </tr>
                       ))}
-                    </div>
-                  </div>
-                ))
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
             {zespolRdzen.length ? (
@@ -990,19 +1074,32 @@ export function SpotkaniaKierownikowPanel({
                 Wczytaj zadania z tego dnia
               </button>
             </div>
-            <div style={{ marginTop: "0.55rem", display: "grid", gap: "0.35rem" }}>
+            <div style={{ marginTop: "0.55rem" }}>
               {zadania.length === 0 ? (
                 <p style={{ margin: 0, fontSize: "0.8rem", color: LIGHT.soft }}>Brak zadań na wydruku.</p>
               ) : (
-                zadania.map((z) => (
-                  <div key={z.id || z.zadanie} style={{ fontSize: "0.84rem" }}>
-                    <strong>{z.zadanie}</strong>
-                    <span style={{ color: LIGHT.soft }}>
-                      {" "}
-                      · {z.kr ? `KR ${z.kr}` : "bez KR"} · {z.osoba_odpowiedzialna || "—"} · {z.status || "—"}
-                    </span>
-                  </div>
-                ))
+                <div style={{ overflow: "auto", border: "1px solid #fed7aa", borderRadius: 10 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "28rem" }}>
+                    <thead>
+                      <tr>
+                        <NaglowekSort id="kr" label="KR" sort={sortZadania} onSort={(k) => przestawSort(setSortZadania, k)} />
+                        <NaglowekSort id="kto" label="Dla" sort={sortZadania} onSort={(k) => przestawSort(setSortZadania, k)} />
+                        <NaglowekSort id="tresc" label="Zadanie" sort={sortZadania} onSort={(k) => przestawSort(setSortZadania, k)} />
+                        <th style={TH_TAB}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {wierszeZadan.map((z, i) => (
+                        <tr key={z.id || `${z.tresc}-${z._idx}`} style={{ background: i % 2 ? "#fffbeb" : "#fff" }}>
+                          <td style={{ ...TD_TAB, fontWeight: 800, color: LIGHT.accent, whiteSpace: "nowrap" }}>{z.kr}</td>
+                          <td style={{ ...TD_TAB, whiteSpace: "nowrap" }}>{z.kto}</td>
+                          <td style={TD_TAB}>{z.tresc || "—"}</td>
+                          <td style={{ ...TD_TAB, color: LIGHT.soft }}>{z.status || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
             {czyMozeEdytowac ? (
@@ -1052,14 +1149,22 @@ export function SpotkaniaKierownikowPanel({
           </section>
 
           <section style={{ border: LIGHT.cardBorder, borderRadius: 12, background: LIGHT.cardBg, padding: "0.8rem 0.85rem" }}>
-            <strong style={{ color: LIGHT.accent }}>Protokół</strong>
-            <textarea
-              value={form.protokol}
-              onChange={(e) => setForm((p) => ({ ...p, protokol: e.target.value }))}
-              rows={10}
-              style={{ ...inputSt, marginTop: "0.5rem", minHeight: "10rem", fontFamily: "ui-monospace, Consolas, monospace", fontSize: "0.82rem", lineHeight: 1.45 }}
-              placeholder="Złożony protokół (wczytaj z CZAT KR albo wpisz ręcznie)…"
-            />
+            <strong style={{ color: LIGHT.accent }}>Surowy protokół</strong>
+            <p style={{ margin: "0.35rem 0 0.45rem", fontSize: "0.75rem", color: LIGHT.muted }}>
+              Czytelna treść jest w tabeli powyżej. Tu zostaje pełny zapis do ewentualnej edycji.
+            </p>
+            <details>
+              <summary style={{ cursor: "pointer", fontSize: "0.8rem", fontWeight: 700, color: LIGHT.muted }}>
+                Pokaż / edytuj surowy protokół
+              </summary>
+              <textarea
+                value={form.protokol}
+                onChange={(e) => setForm((p) => ({ ...p, protokol: e.target.value }))}
+                rows={10}
+                style={{ ...inputSt, marginTop: "0.5rem", minHeight: "10rem", fontFamily: "ui-monospace, Consolas, monospace", fontSize: "0.82rem", lineHeight: 1.45 }}
+                placeholder="Złożony protokół (wczytaj z CZAT KR albo wpisz ręcznie)…"
+              />
+            </details>
           </section>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
@@ -1093,7 +1198,7 @@ export function SpotkaniaKierownikowPanel({
               </button>
             ) : null}
             <span style={{ fontSize: "0.75rem", color: LIGHT.soft }}>
-              Wydruk = PDF. Mail: Outlook + wklej Ctrl+V (ikonki kto mówił, bez luk).
+              Wydruk = PDF z tabelką. Mail: Outlook + wklej Ctrl+V — ta sama tabelka (KR / godzina / kto / treść).
             </span>
           </div>
         </div>

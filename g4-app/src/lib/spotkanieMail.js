@@ -1,4 +1,3 @@
-import { zestawienieTematowPoKr } from "./czatKrSpotkanie.js";
 import {
   inicjalyZNazwy,
   kolorInicjalow,
@@ -44,23 +43,20 @@ export function trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol
     (p) => String(p.imie_nazwisko ?? "").trim() || etykietaPracownika(p),
   );
   const godziny = [form.godzina_od, form.godzina_do].filter(Boolean).join("–");
-  const grupy = zestawienieTematowPoKr(tematy);
+  const wiersze = sortujWierszeTematow(wierszeTematowTabeli(tematy, zespol), { key: "kr", dir: "asc" });
   const linie = [
     "G4 Geodezja — sprawozdanie ze spotkania kierowników",
     `${String(form.tytul || "Spotkanie kierowników").trim()} · ${form.data || "—"}${godziny ? ` · ${godziny}` : ""}`,
     `Obecni: ${obecni.length ? obecni.join(", ") : "nie zaznaczono"}`,
     "Tematy:",
   ];
-  if (!grupy.length) {
+  if (!wiersze.length) {
     linie.push("Brak omówionych tematów.");
   } else {
-    for (const g of grupy) {
-      linie.push(`KR ${g.kr}`);
-      for (const t of g.tematy ?? []) {
-        const godz = formatGodzinaTematu(t.godzina);
-        const tresc = trescProtokoluZGlosow(t.tresc, zespol) || String(t.tresc ?? "").trim();
-        linie.push(`${godz ? `${godz} ` : ""}${tresc.replace(/\n+/g, " | ")}`);
-      }
+    linie.push("KR | Godzina | Kto | Treść");
+    for (const w of wiersze) {
+      const tresc = trescProtokoluZGlosow(w.tresc, zespol) || String(w.tresc ?? "").trim();
+      linie.push(`${w.kr} | ${w.godz || "—"} | ${w.kto || "—"} | ${tresc.replace(/\n+/g, " / ")}`);
     }
   }
   if ((zadania ?? []).length) {
@@ -75,8 +71,6 @@ export function trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol
       linie.push(`• ${z.zadanie || "—"}${extra ? ` (${extra})` : ""}`);
     }
   }
-  const prot = String(form.protokol ?? "").trim();
-  if (prot) linie.push("Protokół:", prot.replace(/\n{3,}/g, "\n"));
   return linie.join("\n");
 }
 
@@ -98,10 +92,123 @@ function htmlGlosow(tresc, zespol) {
     .join("");
 }
 
+function mowcyUnikalniZTresci(tresc, zespol) {
+  const seen = new Set();
+  const out = [];
+  for (const g of rozbijNaGlosy(tresc, zespol)) {
+    if (!g.inicjaly) continue;
+    const k = `${normalizujNr(g.nr)}|${g.inicjaly}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(g);
+  }
+  return out;
+}
+
+export function wierszeTematowTabeli(tematy = [], zespol = []) {
+  return (tematy ?? []).map((t, i) => {
+    const mowcy = mowcyUnikalniZTresci(t.tresc, zespol);
+    return {
+      _idx: t._idx ?? i,
+      id: t.id,
+      kr: String(t.kr ?? "").trim() || "—",
+      godzina: t.godzina || null,
+      godz: formatGodzinaTematu(t.godzina),
+      kto: mowcy.map((g) => g.inicjaly).join(" "),
+      mowcy,
+      tresc: t.tresc,
+      temat: t,
+    };
+  });
+}
+
+export function sortujWierszeTematow(wiersze, sort = { key: "kr", dir: "asc" }) {
+  const key = sort?.key || "kr";
+  const dir = sort?.dir === "desc" ? "desc" : "asc";
+  const m = dir === "desc" ? -1 : 1;
+  return [...(wiersze ?? [])].sort((a, b) => {
+    let cmp = 0;
+    if (key === "kr") cmp = String(a.kr).localeCompare(String(b.kr), "pl", { numeric: true });
+    else if (key === "godz") cmp = new Date(a.godzina || 0).getTime() - new Date(b.godzina || 0).getTime();
+    else if (key === "kto") cmp = String(a.kto || "").localeCompare(String(b.kto || ""), "pl");
+    else cmp = String(a.tresc || "").localeCompare(String(b.tresc || ""), "pl");
+    if (cmp === 0) {
+      const t = new Date(a.godzina || 0).getTime() - new Date(b.godzina || 0).getTime();
+      if (t !== 0) return t;
+      return String(a.kr).localeCompare(String(b.kr), "pl", { numeric: true });
+    }
+    return cmp * m;
+  });
+}
+
+function htmlKtoBadges(mowcy) {
+  if (!mowcy?.length) return "&nbsp;";
+  return mowcy.map((g) => htmlBadge(g.inicjaly, g.nr)).join("");
+}
+
+const TH_MAIL =
+  "text-align:left;background:#fff7ed;color:#9a3412;font-size:12px;font-weight:700;padding:6px 8px;border:1px solid #fed7aa;white-space:nowrap;";
+const TD_MAIL = "vertical-align:top;padding:6px 8px;border:1px solid #fed7aa;font-size:13px;";
+
+export function htmlTabeliTematowMail({ tematy, zespol }) {
+  const wiersze = sortujWierszeTematow(wierszeTematowTabeli(tematy, zespol), { key: "kr", dir: "asc" });
+  if (!wiersze.length) {
+    return `<p style="margin:0;">Brak omówionych tematów.</p>`;
+  }
+  const rows = wiersze
+    .map((w, i) => {
+      const bg = i % 2 ? "#fffbeb" : "#ffffff";
+      return `<tr style="background:${bg};">
+        <td style="${TD_MAIL}font-weight:700;color:#c2410c;white-space:nowrap;">${escapeHtml(w.kr)}</td>
+        <td style="${TD_MAIL}color:#64748b;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;">${escapeHtml(
+          w.godz || "—",
+        )}</td>
+        <td style="${TD_MAIL}white-space:nowrap;">${htmlKtoBadges(w.mowcy)}</td>
+        <td style="${TD_MAIL}">${htmlGlosow(w.tresc, zespol)}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;">
+    <thead>
+      <tr>
+        <th style="${TH_MAIL}">KR</th>
+        <th style="${TH_MAIL}">Godzina</th>
+        <th style="${TH_MAIL}">Kto</th>
+        <th style="${TH_MAIL}">Treść</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function htmlTabeliZadanMail(zadania) {
+  if (!(zadania ?? []).length) return "";
+  const rows = (zadania ?? [])
+    .map((z, i) => {
+      const bg = i % 2 ? "#fffbeb" : "#ffffff";
+      return `<tr style="background:${bg};">
+        <td style="${TD_MAIL}font-weight:700;color:#c2410c;white-space:nowrap;">${escapeHtml(z.kr || "—")}</td>
+        <td style="${TD_MAIL}white-space:nowrap;">${escapeHtml(z.osoba_odpowiedzialna || "—")}</td>
+        <td style="${TD_MAIL}">${escapeHtml(z.zadanie || "—")}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<p style="margin:12px 0 4px;font-weight:700;font-size:14px;">Zadania</p>
+  <table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;">
+    <thead>
+      <tr>
+        <th style="${TH_MAIL}">KR</th>
+        <th style="${TH_MAIL}">Dla</th>
+        <th style="${TH_MAIL}">Zadanie</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 export function htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol }) {
   const obecni = obecniPracownicy(zespol, obecnosc);
   const godziny = [form.godzina_od, form.godzina_do].filter(Boolean).join("–");
-  const grupy = zestawienieTematowPoKr(tematy);
   const obecniHtml = obecni.length
     ? obecni
         .map((p) => {
@@ -111,38 +218,6 @@ export function htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol }
         })
         .join("")
     : "<span>Nie zaznaczono obecnych.</span>";
-  let tematyHtml = `<p style="margin:0;">Brak omówionych tematów.</p>`;
-  if (grupy.length) {
-    tematyHtml = grupy
-      .map((g) => {
-        const wiersze = (g.tematy ?? [])
-          .map((t) => {
-            const godz = escapeHtml(formatGodzinaTematu(t.godzina) || "");
-            return `<tr>
-              <td style="width:44px;vertical-align:top;color:#64748b;font-weight:700;padding:2px 8px 4px 0;white-space:nowrap;font-variant-numeric:tabular-nums;">${godz}</td>
-              <td style="vertical-align:top;padding:2px 0 4px 0;">${htmlGlosow(t.tresc, zespol)}</td>
-            </tr>`;
-          })
-          .join("");
-        return `<p style="margin:10px 0 4px;font-weight:700;color:#c2410c;font-size:14px;">KR ${escapeHtml(g.kr)}</p>
-          <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">${wiersze}</table>`;
-      })
-      .join("");
-  }
-  let zadaniaHtml = "";
-  if ((zadania ?? []).length) {
-    const li = (zadania ?? [])
-      .map((z) => {
-        const extra = [z.kr ? `KR ${z.kr}` : "", z.osoba_odpowiedzialna ? `dla ${z.osoba_odpowiedzialna}` : ""]
-          .filter(Boolean)
-          .join(" · ");
-        return `<li style="margin:0 0 3px 0;">${escapeHtml(z.zadanie || "—")}${
-          extra ? ` <span style="color:#64748b;">(${escapeHtml(extra)})</span>` : ""
-        }</li>`;
-      })
-      .join("");
-    zadaniaHtml = `<p style="margin:12px 0 4px;font-weight:700;font-size:14px;">Zadania</p><ul style="margin:0;padding-left:18px;">${li}</ul>`;
-  }
   return `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;line-height:1.35;color:#111827;">
 <p style="margin:0 0 2px;font-size:16px;font-weight:700;">G4 Geodezja — sprawozdanie ze spotkania kierowników</p>
 <p style="margin:0 0 10px;color:#475569;">${escapeHtml(form.tytul || "Spotkanie kierowników")} · ${escapeHtml(
@@ -150,9 +225,9 @@ export function htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol }
   )}${godziny ? ` · ${escapeHtml(godziny)}` : ""}</p>
 <p style="margin:0 0 4px;font-weight:700;font-size:14px;">Obecni</p>
 <p style="margin:0 0 8px;">${obecniHtml}</p>
-<p style="margin:0 0 2px;font-weight:700;font-size:14px;">Omówione tematy</p>
-${tematyHtml}
-${zadaniaHtml}
+<p style="margin:0 0 6px;font-weight:700;font-size:14px;">Omówione tematy</p>
+${htmlTabeliTematowMail({ tematy, zespol })}
+${htmlTabeliZadanMail(zadania)}
 </div>`;
 }
 
