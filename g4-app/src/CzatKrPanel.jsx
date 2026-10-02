@@ -200,6 +200,7 @@ export function CzatKrPanel({
   const [nowaKrPrefill, setNowaKrPrefill] = useState("");
   const [edycjaId, setEdycjaId] = useState(null);
   const [edycjaTresc, setEdycjaTresc] = useState("");
+  const [edycjaMowcaNr, setEdycjaMowcaNr] = useState("");
   const [zapisywanieEdycji, setZapisywanieEdycji] = useState(false);
 
   const [pokazZadanie, setPokazZadanie] = useState(false);
@@ -226,6 +227,7 @@ export function CzatKrPanel({
   const wyslijRef = useRef(null);
   const mowcaNrRef = useRef("");
   const draftAreaRef = useRef(null);
+  const edycjaAreaRef = useRef(null);
 
   useEffect(() => {
     if (!spotkanie.startIso) return;
@@ -566,6 +568,7 @@ export function CzatKrPanel({
     }
     setEdycjaId(w.id);
     setEdycjaTresc(String(w.tresc ?? ""));
+    setEdycjaMowcaNr("");
     const pola = polaDatyGodzinyZIso(w.created_at);
     setEdycjaData(pola.data);
     setEdycjaGodzina(pola.godzina);
@@ -575,6 +578,7 @@ export function CzatKrPanel({
   function anulujEdycje() {
     setEdycjaId(null);
     setEdycjaTresc("");
+    setEdycjaMowcaNr("");
   }
 
   async function usunWpis(w) {
@@ -632,6 +636,7 @@ export function CzatKrPanel({
     setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
     setEdycjaId(null);
     setEdycjaTresc("");
+    setEdycjaMowcaNr("");
     if (biezacy && czyZnacznikPoczatek(biezacy) && spotkanie.aktywne) {
       zapiszSpotkanie({
         aktywne: true,
@@ -1131,7 +1136,21 @@ export function CzatKrPanel({
                     </div>
                     {edycjaId === w.id ? (
                       <div style={{ display: "grid", gap: "0.4rem" }}>
+                        {mowcyRdzen.length ? (
+                          <ChipsMowcow
+                            mowcy={mowcyRdzen}
+                            wybranyNr={edycjaMowcaNr}
+                            onWybierz={(p) => {
+                              const nr = normalizujNr(p.nr);
+                              setEdycjaMowcaNr((prev) => (prev === nr ? "" : nr));
+                              if (edycjaMowcaNr === nr) return;
+                              setEdycjaTresc((t) => dopiszPrefiksMowcy(t, p));
+                              requestAnimationFrame(() => edycjaAreaRef.current?.focus());
+                            }}
+                          />
+                        ) : null}
                         <textarea
+                          ref={edycjaAreaRef}
                           value={edycjaTresc}
                           onChange={(e) => setEdycjaTresc(e.target.value)}
                           rows={3}
