@@ -12,6 +12,8 @@ import {
   trescKoniecSpotkania,
   upsertZnacznikPoczatek,
   useSpotkanieKierownikow,
+  usunWpisKrNotatka,
+  odfiltrujUsunieteWpisy,
   zapiszSpotkanie,
   znajdzZnacznikPoczatek,
 } from "./lib/czatKrSpotkanie.js";
@@ -113,7 +115,7 @@ export function KrNotatkiCzat({
       return;
     }
     setBrakTabeli(false);
-    setWpisy(data ?? []);
+    setWpisy(odfiltrujUsunieteWpisy(data ?? []));
   }, [supabase, krKod]);
 
   useEffect(() => {
@@ -302,9 +304,9 @@ export function KrNotatkiCzat({
     );
     if (!ok) return;
     setMsg(null);
-    const { error } = await supabase.from("kr_notatka").delete().eq("id", w.id);
-    if (error) {
-      setMsg(`Nie udało się usunąć notatki: ${error.message}`);
+    const wynik = await usunWpisKrNotatka(supabase, w.id);
+    if (!wynik.ok) {
+      setMsg(`Nie udało się usunąć notatki: ${wynik.message}`);
       return;
     }
     setWpisy((prev) => prev.filter((x) => x.id !== w.id));

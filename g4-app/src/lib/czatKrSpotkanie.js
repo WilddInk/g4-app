@@ -140,6 +140,49 @@ export function znajdzZnacznikPoczatek(wpisy = [], krPrefer) {
 
 const SELECT_WPIS = "id, kr, tresc, autor, autor_email, created_at";
 
+/** Znacznik miękkiego usunięcia, gdy RLS blokuje DELETE (wpis wracał po odświeżeniu). */
+export const KR_NOTATKA_USUNIETA = "__deleted__";
+
+export function czyWpisUsuniety(w) {
+  return String(w?.kr ?? "").trim() === KR_NOTATKA_USUNIETA;
+}
+
+export function odfiltrujUsunieteWpisy(rows) {
+  return (rows ?? []).filter((w) => !czyWpisUsuniety(w));
+}
+
+/**
+ * Usuwa wpis CZAT KR. Bez `.select("id")` PostgREST zwraca sukces przy 0 usuniętych
+ * wierszach (brak polityki DELETE) — UI znika, a po odświeżeniu wpis wraca.
+ * Gdy DELETE nic nie ruszy, chowa wiersz przez UPDATE kr (edycja w tej tabeli działa).
+ */
+export async function usunWpisKrNotatka(supabase, id) {
+  if (id == null || id === "") {
+    return { ok: false, message: "Brak identyfikatora wpisu." };
+  }
+  const { data, error } = await supabase.from("kr_notatka").delete().eq("id", id).select("id");
+  if (error) {
+    const m = String(error.message ?? "");
+    if (!/permission|rls|policy|42501|PGRST301/i.test(m)) {
+      return { ok: false, message: m };
+    }
+  } else if (Array.isArray(data) && data.length > 0) {
+    return { ok: true };
+  }
+  const { data: ukryte, error: e2 } = await supabase
+    .from("kr_notatka")
+    .update({ kr: KR_NOTATKA_USUNIETA })
+    .eq("id", id)
+    .select("id");
+  if (e2) return { ok: false, message: e2.message };
+  if (Array.isArray(ukryte) && ukryte.length > 0) return { ok: true };
+  return {
+    ok: false,
+    message:
+      "Baza nie usunęła wpisu (brak uprawnienia DELETE). W Supabase SQL Editor uruchom: g4-app/supabase/kr-notatki-czat-delete.sql",
+  };
+}
+
 export async function upsertZnacznikPoczatek(supabase, { kr, startIso, znacznikId }) {
   const payload = {
     tresc: trescPoczatekSpotkania(startIso),
@@ -174,7 +217,9 @@ export async function przepiszMojeWpisyNaNotatkiSpotkania(
     .order("created_at", { ascending: true })
     .limit(2000);
   if (error) return { liczba: 0, ids: [], error };
-  const moje = (data ?? []).filter((w) => czyMojOsobistyWpis(w, { nazwa, email }));
+  const moje = odfiltrujUsunieteWpisy(data ?? []).filter((w) =>
+    czyMojOsobistyWpis(w, { nazwa, email }),
+  );
   const ids = moje.map((w) => w.id).filter((id) => id != null);
   for (let i = 0; i < ids.length; i += 80) {
     const chunk = ids.slice(i, i + 80);
@@ -188,13 +233,15 @@ export async function przepiszMojeWpisyNaNotatkiSpotkania(
 }
 
 export async function pobierzWpisyZakresu(supabase, { odIso, doIso }) {
-  return supabase
+  const res = await supabase
     .from("kr_notatka")
     .select(SELECT_WPIS)
     .gte("created_at", odIso)
     .lte("created_at", doIso)
     .order("created_at", { ascending: true })
     .limit(2000);
+  if (res.data) res.data = odfiltrujUsunieteWpisy(res.data);
+  return res;
 }
 
 function etykietaKr(kr) {

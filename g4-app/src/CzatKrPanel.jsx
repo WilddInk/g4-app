@@ -11,6 +11,9 @@ import {
   trescKoniecSpotkania,
   trescPoczatekSpotkania,
   useSpotkanieKierownikow,
+  usunWpisKrNotatka,
+  odfiltrujUsunieteWpisy,
+  KR_NOTATKA_USUNIETA,
   zapiszSpotkanie,
 } from "./lib/czatKrSpotkanie.js";
 import { normalizujKrZArkusza } from "./lib/krNormalize.js";
@@ -285,7 +288,7 @@ export function CzatKrPanel({
       return;
     }
     setBrakTabeli(false);
-    setWpisy(data ?? []);
+    setWpisy(odfiltrujUsunieteWpisy(data ?? []));
   }, [supabase]);
 
   useEffect(() => {
@@ -304,7 +307,7 @@ export function CzatKrPanel({
     const meta = new Map();
     for (const w of wpisy) {
       const k = String(w.kr ?? "").trim();
-      if (!k) continue;
+      if (!k || k === KR_NOTATKA_USUNIETA) continue;
       const prev = meta.get(k);
       const ms = czasMs(w.created_at);
       if (!prev) {
@@ -582,9 +585,9 @@ export function CzatKrPanel({
     );
     if (!ok) return;
     setMsg(null);
-    const { error } = await supabase.from("kr_notatka").delete().eq("id", w.id);
-    if (error) {
-      setMsg(`Nie udało się usunąć notatki: ${error.message}`);
+    const wynik = await usunWpisKrNotatka(supabase, w.id);
+    if (!wynik.ok) {
+      setMsg(`Nie udało się usunąć notatki: ${wynik.message}`);
       return;
     }
     setWpisy((prev) => prev.filter((x) => x.id !== w.id));
