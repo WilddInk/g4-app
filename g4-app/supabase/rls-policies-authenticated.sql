@@ -298,3 +298,16 @@ CREATE POLICY "auth_insert_kr_teren_zadanie" ON public.kr_teren_zadanie FOR INSE
 CREATE POLICY "auth_update_kr_teren_zadanie" ON public.kr_teren_zadanie FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "auth_delete_kr_teren_zadanie" ON public.kr_teren_zadanie FOR DELETE TO authenticated USING (true);
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_teren_zadanie TO authenticated;
+
+-- CZAT KR (kr_notatka) — zalogowani; bez DELETE wpis wraca po odświeżeniu
+ALTER TABLE public.kr_notatka ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "auth_select_kr_notatka" ON public.kr_notatka;
+DROP POLICY IF EXISTS "auth_insert_kr_notatka" ON public.kr_notatka;
+DROP POLICY IF EXISTS "auth_update_kr_notatka" ON public.kr_notatka;
+DROP POLICY IF EXISTS "auth_delete_kr_notatka" ON public.kr_notatka;
+CREATE POLICY "auth_select_kr_notatka" ON public.kr_notatka FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_insert_kr_notatka" ON public.kr_notatka FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth_update_kr_notatka" ON public.kr_notatka FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "auth_delete_kr_notatka" ON public.kr_notatka FOR DELETE TO authenticated USING (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.kr_notatka TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.kr_notatka_id_seq TO authenticated;

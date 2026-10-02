@@ -140,11 +140,14 @@ export function znajdzZnacznikPoczatek(wpisy = [], krPrefer) {
 
 const SELECT_WPIS = "id, kr, tresc, autor, autor_email, created_at";
 
-/** Znacznik miękkiego usunięcia, gdy RLS blokuje DELETE (wpis wracał po odświeżeniu). */
+/** Znacznik miękkiego usunięcia, gdy RLS blokuje DELETE. */
 export const KR_NOTATKA_USUNIETA = "__deleted__";
+export const KR_NOTATKA_USUNIETA_TRESC = "__G4_USUNIETO__";
 
 export function czyWpisUsuniety(w) {
-  return String(w?.kr ?? "").trim() === KR_NOTATKA_USUNIETA;
+  const kr = String(w?.kr ?? "").trim();
+  const tresc = String(w?.tresc ?? "").trim();
+  return kr === KR_NOTATKA_USUNIETA || tresc === KR_NOTATKA_USUNIETA_TRESC || tresc.startsWith(KR_NOTATKA_USUNIETA_TRESC);
 }
 
 export function odfiltrujUsunieteWpisy(rows) {
@@ -152,34 +155,46 @@ export function odfiltrujUsunieteWpisy(rows) {
 }
 
 /**
- * Usuwa wpis CZAT KR. Bez `.select("id")` PostgREST zwraca sukces przy 0 usuniętych
- * wierszach (brak polityki DELETE) — UI znika, a po odświeżeniu wpis wraca.
- * Gdy DELETE nic nie ruszy, chowa wiersz przez UPDATE kr (edycja w tej tabeli działa).
+ * Usuwa wpis CZAT KR. DELETE bywa „sukcesem” przy 0 wierszach (brak polityki
+ * authenticated DELETE). Wtedy chowamy treść — ten sam UPDATE co „Edytuj”.
  */
 export async function usunWpisKrNotatka(supabase, id) {
   if (id == null || id === "") {
     return { ok: false, message: "Brak identyfikatora wpisu." };
   }
-  const { data, error } = await supabase.from("kr_notatka").delete().eq("id", id).select("id");
-  if (error) {
-    const m = String(error.message ?? "");
-    if (!/permission|rls|policy|42501|PGRST301/i.test(m)) {
-      return { ok: false, message: m };
-    }
-  } else if (Array.isArray(data) && data.length > 0) {
-    return { ok: true };
+  const idEq = Number.isFinite(Number(id)) && String(id).trim() !== "" ? Number(id) : id;
+
+  await supabase.from("kr_notatka").delete().eq("id", idEq);
+
+  const { data: poDelete, error: eDel } = await supabase
+    .from("kr_notatka")
+    .select("id, kr, tresc")
+    .eq("id", idEq)
+    .maybeSingle();
+  if (eDel && eDel.code !== "PGRST116") {
+    return { ok: false, message: eDel.message };
   }
+  if (!poDelete) return { ok: true };
+
   const { data: ukryte, error: e2 } = await supabase
     .from("kr_notatka")
-    .update({ kr: KR_NOTATKA_USUNIETA })
-    .eq("id", id)
-    .select("id");
+    .update({ tresc: KR_NOTATKA_USUNIETA_TRESC })
+    .eq("id", idEq)
+    .select("id, tresc");
   if (e2) return { ok: false, message: e2.message };
   if (Array.isArray(ukryte) && ukryte.length > 0) return { ok: true };
+
+  const { data: poUpdate } = await supabase
+    .from("kr_notatka")
+    .select("id, kr, tresc")
+    .eq("id", idEq)
+    .maybeSingle();
+  if (!poUpdate || czyWpisUsuniety(poUpdate)) return { ok: true };
+
   return {
     ok: false,
     message:
-      "Baza nie usunęła wpisu (brak uprawnienia DELETE). W Supabase SQL Editor uruchom: g4-app/supabase/kr-notatki-czat-delete.sql",
+      "Baza nie usunęła wpisu. W Supabase SQL Editor uruchom: g4-app/supabase/kr-notatki-czat-delete.sql",
   };
 }
 
