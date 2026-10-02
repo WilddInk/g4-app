@@ -1080,9 +1080,8 @@ export function SpotkaniaKierownikowPanel({
             <button
               type="button"
               onClick={() => {
-                void wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol }).then((wynik) => {
-                  if (wynik.msg) setMsg(wynik.msg);
-                });
+                const wynik = wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol });
+                if (wynik.msg) setMsg(wynik.msg);
               }}
               style={{ ...btnPrimary, background: "#0369a1" }}
             >

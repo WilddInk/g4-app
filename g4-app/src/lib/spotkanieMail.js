@@ -94,34 +94,50 @@ export function emaileObecnych(zespol, obecnosc) {
   return { zMailem, bezMaila };
 }
 
-export async function wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol }) {
-  const { zMailem, bezMaila } = emaileObecnych(zespol, obecnosc);
-  if (!zMailem.length) {
-    alert(
-      bezMaila.length
-        ? `Brak adresów e-mail u zaznaczonych obecnych:\n${bezMaila.join(", ")}\n\nUzupełnij e-mail w kartotece pracowników.`
-        : "Zaznacz obecnych na liście, potem wyślij mail.",
-    );
-    return { ok: false, msg: null };
+function kopiujDoSchowkaSync(tekst) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = String(tekst ?? "");
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    return true;
+  } catch {
+    return false;
   }
+}
+
+/** Otwiera lokalny Outlook / domyślną pocztę (mailto) w tym samym kliknięciu — bez await. */
+function otworzMailto(url) {
+  window.location.href = url;
+}
+
+/**
+ * Od razu po kliknięciu otwiera Outlook (domyślny program pocztowy).
+ * Nie używać await przed wywołaniem — przeglądarka zablokuje okno.
+ */
+export function wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol }) {
+  const { zMailem, bezMaila } = emaileObecnych(zespol, obecnosc);
   const temat = `${form.tytul || "Spotkanie kierowników"} — ${form.data || ""}`.replace(/\s+—\s+$/, "").trim();
   const body = trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol });
+  kopiujDoSchowkaSync(body);
   const to = zMailem.join(",");
   const mailtoPelny = `mailto:${to}?subject=${encodeURIComponent(temat)}&body=${encodeURIComponent(body)}`;
-  const zaDlugi = mailtoPelny.length > 1800;
-  if (zaDlugi) {
-    try {
-      await navigator.clipboard.writeText(body);
-    } catch {
-      /* schowek może być zablokowany */
-    }
-    const skrot = `Dzień dobry,\n\nwklejam sprawozdanie ze spotkania kierowników ${form.data || ""} (Ctrl+V — treść jest w schowku).\n\nPozdrawiam`;
-    window.location.href = `mailto:${to}?subject=${encodeURIComponent(temat)}&body=${encodeURIComponent(skrot)}`;
-  } else {
-    window.location.href = mailtoPelny;
-  }
-  let info = `Otworzono pocztę do ${zMailem.length} ${zMailem.length === 1 ? "osoby" : "osób"}.`;
+  const zaDlugi = mailtoPelny.length > 1600;
+  const mailto = zaDlugi
+    ? `mailto:${to}?subject=${encodeURIComponent(temat)}&body=${encodeURIComponent(
+        "Dzień dobry,\n\nsprawozdanie ze spotkania jest w schowku — wklej w treści wiadomości (Ctrl+V).\n\nPozdrawiam",
+      )}`
+    : mailtoPelny;
+  otworzMailto(mailto);
+  let info = to
+    ? `Otwarto Outlook do ${zMailem.length} ${zMailem.length === 1 ? "osoby" : "osób"}.`
+    : "Otwarto Outlook — uzupełnij adresy, bo w kartotece brak e-maili zespołu.";
   if (bezMaila.length) info += ` Bez e-maila: ${bezMaila.join(", ")}.`;
-  if (zaDlugi) info += " Treść skopiowano do schowka — wklej w mailu (Ctrl+V).";
+  if (zaDlugi) info += " Treść sprawozdania jest w schowku — wklej w mailu (Ctrl+V).";
   return { ok: true, msg: info };
 }

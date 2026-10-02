@@ -8,7 +8,6 @@ import {
   etykietaAutoraWpisu,
   isoZDatyIGodziny,
   polaDatyGodzinyZIso,
-  pobierzWpisyZakresu,
   trescKoniecSpotkania,
   trescPoczatekSpotkania,
   useSpotkanieKierownikow,
@@ -222,7 +221,6 @@ export function CzatKrPanel({
   const [edycjaData, setEdycjaData] = useState("");
   const [edycjaGodzina, setEdycjaGodzina] = useState("");
   const [slucham, setSlucham] = useState(false);
-  const [sprawozdanieBusy, setSprawozdanieBusy] = useState(false);
   const draftRef = useRef("");
   const sluchamRef = useRef(false);
   const wysylanieRef = useRef(false);
@@ -715,7 +713,7 @@ export function CzatKrPanel({
     setMsg(`Utworzono zadanie dla ${nazwaOsoby}${kr ? ` (KR ${kr})` : ""}.`);
   }
 
-  async function wyslijSprawozdanieNaKoniec() {
+  function wyslijSprawozdanieNaKoniec() {
     const odPola = polaDatyGodzinyZIso(
       spotkanie.startIso || new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
     );
@@ -723,33 +721,18 @@ export function CzatKrPanel({
     const dzien = odPola.data || doPola.data;
     const odIso = spotkanie.startIso || isoZDatyIGodziny(dzien, "00:00");
     const doIso = new Date().toISOString();
-    const ok = window.confirm(
-      `Wysłać sprawozdanie ze spotkania kierowników ${dzien} na e-maile zespołu (wpisy CZAT KR z tego zakresu)?`,
-    );
-    if (!ok) return;
-    setSprawozdanieBusy(true);
-    setMsg(null);
-    const { data, error } = await pobierzWpisyZakresu(supabase, { odIso, doIso });
-    if (error) {
-      setSprawozdanieBusy(false);
-      setMsg(`Nie udało się złożyć sprawozdania: ${error.message}`);
-      return;
-    }
-    const wpisy = odfiltrujUsunieteWpisy(data ?? []);
-    const tematy = wpisyNaTematy(wpisy);
-    const protokol = zlozProtokolSpotkania(wpisy, { odIso, doIso, mowcy: zespolDoZadan });
+    const odMs = new Date(odIso).getTime();
+    const doMs = new Date(doIso).getTime();
+    const wpisyZakres = odfiltrujUsunieteWpisy(wpisy).filter((w) => {
+      const t = new Date(w.created_at || 0).getTime();
+      return Number.isFinite(t) && t >= odMs && t <= doMs;
+    });
+    const tematy = wpisyNaTematy(wpisyZakres);
+    const protokol = zlozProtokolSpotkania(wpisyZakres, { odIso, doIso, mowcy: zespolDoZadan });
     const obecnosc = new Set(
       (mowcyRdzen.length ? mowcyRdzen : zespolDoZadan).map((p) => normalizujNr(p.nr)).filter(Boolean),
     );
-    let zadaniaDnia = [];
-    const zadRes = await supabase
-      .from("zadania")
-      .select("id, kr, zadanie, osoba_odpowiedzialna, status, deadline, typ_zadania, created_at")
-      .or(`typ_zadania.eq.czat_kr,typ_zadania.eq.spotkanie_kierownikow,deadline.eq.${dzien}`)
-      .order("id", { ascending: false })
-      .limit(80);
-    if (!zadRes.error) zadaniaDnia = zadRes.data ?? [];
-    const wynik = await wyslijMailSprawozdania({
+    const wynik = wyslijMailSprawozdania({
       form: {
         tytul: "Spotkanie kierowników",
         data: dzien,
@@ -759,10 +742,9 @@ export function CzatKrPanel({
       },
       obecnosc,
       tematy,
-      zadania: zadaniaDnia,
+      zadania: [],
       zespol: zespolDoZadan,
     });
-    setSprawozdanieBusy(false);
     if (wynik.msg) setMsg(wynik.msg);
   }
 
@@ -914,8 +896,7 @@ export function CzatKrPanel({
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
             <button
               type="button"
-              disabled={sprawozdanieBusy}
-              onClick={() => void wyslijSprawozdanieNaKoniec()}
+              onClick={() => wyslijSprawozdanieNaKoniec()}
               style={{
                 background: LIGHT.spotkanieText,
                 border: "none",
@@ -924,10 +905,10 @@ export function CzatKrPanel({
                 fontSize: "0.84rem",
                 fontWeight: 800,
                 padding: "0.45rem 0.8rem",
-                cursor: sprawozdanieBusy ? "wait" : "pointer",
+                cursor: "pointer",
               }}
             >
-              {sprawozdanieBusy ? "Składam…" : "Wyślij sprawozdanie"}
+              Wyślij sprawozdanie
             </button>
             <button
               type="button"
