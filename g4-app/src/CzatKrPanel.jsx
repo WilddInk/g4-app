@@ -202,6 +202,13 @@ export function CzatKrPanel({
   const [wysylanie, setWysylanie] = useState(false);
   const [rozwiniete, setRozwiniete] = useState(false);
   const [szukajKr, setSzukajKr] = useState("");
+  const [sortListyKr, setSortListyKr] = useState(() => {
+    try {
+      return localStorage.getItem("g4-czat-kr-sort-listy") === "nowe" ? "nowe" : "numer";
+    } catch {
+      return "numer";
+    }
+  });
   const [pokazNowaKr, setPokazNowaKr] = useState(false);
   const [nowaKrPrefill, setNowaKrPrefill] = useState("");
   const [edycjaId, setEdycjaId] = useState(null);
@@ -311,7 +318,7 @@ export function CzatKrPanel({
       .sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
   }, [krList]);
 
-  /** Lista KR po lewej: numer KR malejąco (1087, 1086…, 00M). */
+  /** Lista KR po lewej: numer malejąco albo ostatni wpis na górze. */
   const listaKrLewa = useMemo(() => {
     const meta = new Map();
     for (const w of wpisy) {
@@ -347,10 +354,15 @@ export function CzatKrPanel({
       const pa = czyKrPlaceholder(a.kr) ? 1 : 0;
       const pb = czyKrPlaceholder(b.kr) ? 1 : 0;
       if (pa !== pb) return pa - pb;
+      if (sortListyKr === "nowe") {
+        const ma = a.lastMs || 0;
+        const mb = b.lastMs || 0;
+        if (ma !== mb) return mb - ma;
+      }
       return b.kr.localeCompare(a.kr, "pl", { numeric: true, sensitivity: "base" });
     });
     return list;
-  }, [wpisy, krOpcje, szukajKr, nazwyKr]);
+  }, [wpisy, krOpcje, szukajKr, nazwyKr, sortListyKr]);
 
   useEffect(() => {
     const pierwszy = listaKrLewa.find((x) => !czyKrPlaceholder(x.kr));
@@ -973,15 +985,53 @@ export function CzatKrPanel({
         >
           <div
             style={{
-              padding: "0.55rem 0.6rem",
+              padding: "0.45rem 0.5rem",
               borderBottom: LIGHT.cardBorder,
               background: LIGHT.accentSoft,
               fontWeight: 800,
               fontSize: "0.82rem",
               color: LIGHT.accent,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 6,
             }}
           >
-            KR
+            <span>KR</span>
+            <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 4 }}>
+              {[
+                ["numer", "Numer"],
+                ["nowe", "Nowe wpisy"],
+              ].map(([id, label]) => {
+                const aktywny = sortListyKr === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      setSortListyKr(id);
+                      try {
+                        localStorage.setItem("g4-czat-kr-sort-listy", id);
+                      } catch {
+                        /* przeglądarka bez pamięci */
+                      }
+                    }}
+                    style={{
+                      border: aktywny ? `1px solid ${LIGHT.accent}` : "1px solid transparent",
+                      background: aktywny ? "#fff" : "transparent",
+                      color: LIGHT.accent,
+                      borderRadius: 6,
+                      fontSize: "0.68rem",
+                      fontWeight: 800,
+                      padding: "0.12rem 0.35rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </span>
           </div>
           <div style={{ padding: "0.45rem 0.5rem", borderBottom: LIGHT.cardBorder }}>
             <input
@@ -1059,13 +1109,14 @@ export function CzatKrPanel({
                       {item.nazwa ? (
                         <span
                           style={{
-                            fontSize: "0.68rem",
+                            fontSize: "0.74rem",
                             fontWeight: 600,
                             lineHeight: 1.25,
                             color: LIGHT.muted,
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
                             overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
                           }}
                           title={item.nazwa}
                         >
