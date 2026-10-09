@@ -259,10 +259,37 @@ export async function pobierzWpisyZakresu(supabase, { odIso, doIso }) {
   return res;
 }
 
-function etykietaKr(kr) {
+/** Kod KR → nazwa obiektu (temat projektu) ze słownika `kr`. */
+export function mapaNazwObiektowKr(krList) {
+  const map = new Map();
+  for (const row of krList ?? []) {
+    const k = String(row?.kr ?? "").trim();
+    const nazwa = String(row?.nazwa_obiektu ?? "").trim();
+    if (k && nazwa) map.set(k, nazwa);
+  }
+  return map;
+}
+
+export function nazwaObiektuKr(kod, nazwyKr) {
+  const k = String(kod ?? "").trim();
+  if (!k || !nazwyKr) return "";
+  if (nazwyKr instanceof Map) return String(nazwyKr.get(k) ?? "").trim();
+  return String(nazwyKr[k] ?? "").trim();
+}
+
+/** `1083 — S19 Babica` albo sam numer, gdy obiektu nie ma w słowniku. */
+export function etykietaKrZNazwa(kod, nazwyKr) {
+  const k = String(kod ?? "").trim() || "—";
+  if (k === "—") return "—";
+  const nazwa = nazwaObiektuKr(k, nazwyKr);
+  return nazwa ? `${k} — ${nazwa}` : k;
+}
+
+function etykietaKr(kr, nazwyKr) {
   const k = String(kr ?? "").trim();
   if (!k || czyKrPlaceholder(k)) return "KR (brak numeru)";
-  return `KR ${k}`;
+  const nazwa = nazwaObiektuKr(k, nazwyKr);
+  return nazwa ? `KR ${k} — ${nazwa}` : `KR ${k}`;
 }
 
 function formatGodzinaTylko(iso) {
@@ -279,7 +306,7 @@ function formatGodzinaTylko(iso) {
 /**
  * Notatka ze spotkania: tematy pogrupowane po KR (numer raz), pod spodem godziny wpisów.
  */
-export function zlozProtokolSpotkania(wpisy, { odIso, doIso, mowcy } = {}) {
+export function zlozProtokolSpotkania(wpisy, { odIso, doIso, mowcy, nazwyKr } = {}) {
   const lista = [...(wpisy ?? [])]
     .filter((w) => !czyZnacznikPoczatek(w) && !czyZnacznikKoniec(w))
     .filter((w) => String(w?.tresc ?? "").trim())
@@ -297,7 +324,9 @@ export function zlozProtokolSpotkania(wpisy, { odIso, doIso, mowcy } = {}) {
     odIso || doIso
       ? `Okres: ${formatDataSpotkania(odIso) || "—"} – ${formatDataSpotkania(doIso) || "—"}`
       : "",
-    kody.length ? `Projekty (KR): ${kody.join(", ")}` : "Projekty (KR): —",
+    kody.length
+      ? `Projekty (KR): ${kody.map((k) => etykietaKrZNazwa(k, nazwyKr)).join(", ")}`
+      : "Projekty (KR): —",
     `Liczba wpisów: ${lista.length}`,
     "",
   ].filter((x, i, arr) => x !== "" || arr[i - 1] !== "");
@@ -318,7 +347,7 @@ export function zlozProtokolSpotkania(wpisy, { odIso, doIso, mowcy } = {}) {
 
   for (const g of grupy) {
     linie.push("————————————————————————");
-    linie.push(g.kr === "—" ? etykietaKr("") : etykietaKr(g.kr));
+    linie.push(g.kr === "—" ? etykietaKr("") : etykietaKr(g.kr, nazwyKr));
     for (const t of g.tematy) {
       const godz = formatGodzinaTylko(t.godzina);
       const glosy = trescProtokoluZGlosow(t.tresc, mowcy);

@@ -1,3 +1,4 @@
+import { etykietaKrZNazwa } from "./czatKrSpotkanie.js";
 import {
   inicjalyZNazwy,
   kolorInicjalow,
@@ -38,7 +39,7 @@ export function obecniPracownicy(zespol, obecnosc) {
   return (zespol ?? []).filter((p) => obecnosc.has(normalizujNr(p.nr)));
 }
 
-export function trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol }) {
+export function trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol, nazwyKr }) {
   const obecni = obecniPracownicy(zespol, obecnosc).map(
     (p) => String(p.imie_nazwisko ?? "").trim() || etykietaPracownika(p),
   );
@@ -56,14 +57,16 @@ export function trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol
     linie.push("KR | Godzina | Kto | Treść");
     for (const w of wiersze) {
       const tresc = trescProtokoluZGlosow(w.tresc, zespol) || String(w.tresc ?? "").trim();
-      linie.push(`${w.kr} | ${w.godz || "—"} | ${w.kto || "—"} | ${tresc.replace(/\n+/g, " / ")}`);
+      linie.push(
+        `${etykietaKrZNazwa(w.kr, nazwyKr)} | ${w.godz || "—"} | ${w.kto || "—"} | ${tresc.replace(/\n+/g, " / ")}`,
+      );
     }
   }
   if ((zadania ?? []).length) {
     linie.push("Zadania:");
     for (const z of zadania ?? []) {
       const extra = [
-        z.kr ? `KR ${z.kr}` : "",
+        z.kr ? `KR ${etykietaKrZNazwa(z.kr, nazwyKr)}` : "",
         z.osoba_odpowiedzialna ? `dla ${z.osoba_odpowiedzialna}` : "",
       ]
         .filter(Boolean)
@@ -150,7 +153,7 @@ const TH_MAIL =
   "text-align:left;background:#fff7ed;color:#9a3412;font-size:12px;font-weight:700;padding:6px 8px;border:1px solid #fed7aa;white-space:nowrap;";
 const TD_MAIL = "vertical-align:top;padding:6px 8px;border:1px solid #fed7aa;font-size:13px;";
 
-export function htmlTabeliTematowMail({ tematy, zespol }) {
+export function htmlTabeliTematowMail({ tematy, zespol, nazwyKr }) {
   const wiersze = sortujWierszeTematow(wierszeTematowTabeli(tematy, zespol), { key: "kr", dir: "asc" });
   if (!wiersze.length) {
     return `<p style="margin:0;">Brak omówionych tematów.</p>`;
@@ -159,7 +162,7 @@ export function htmlTabeliTematowMail({ tematy, zespol }) {
     .map((w, i) => {
       const bg = i % 2 ? "#fffbeb" : "#ffffff";
       return `<tr style="background:${bg};">
-        <td style="${TD_MAIL}font-weight:700;color:#c2410c;white-space:nowrap;">${escapeHtml(w.kr)}</td>
+        <td style="${TD_MAIL}font-weight:700;color:#c2410c;">${escapeHtml(etykietaKrZNazwa(w.kr, nazwyKr))}</td>
         <td style="${TD_MAIL}color:#64748b;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;">${escapeHtml(
           w.godz || "—",
         )}</td>
@@ -181,13 +184,13 @@ export function htmlTabeliTematowMail({ tematy, zespol }) {
   </table>`;
 }
 
-function htmlTabeliZadanMail(zadania) {
+function htmlTabeliZadanMail(zadania, nazwyKr) {
   if (!(zadania ?? []).length) return "";
   const rows = (zadania ?? [])
     .map((z, i) => {
       const bg = i % 2 ? "#fffbeb" : "#ffffff";
       return `<tr style="background:${bg};">
-        <td style="${TD_MAIL}font-weight:700;color:#c2410c;white-space:nowrap;">${escapeHtml(z.kr || "—")}</td>
+        <td style="${TD_MAIL}font-weight:700;color:#c2410c;">${escapeHtml(etykietaKrZNazwa(z.kr, nazwyKr))}</td>
         <td style="${TD_MAIL}white-space:nowrap;">${escapeHtml(z.osoba_odpowiedzialna || "—")}</td>
         <td style="${TD_MAIL}">${escapeHtml(z.zadanie || "—")}</td>
       </tr>`;
@@ -206,7 +209,7 @@ function htmlTabeliZadanMail(zadania) {
   </table>`;
 }
 
-export function htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol }) {
+export function htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol, nazwyKr }) {
   const obecni = obecniPracownicy(zespol, obecnosc);
   const godziny = [form.godzina_od, form.godzina_do].filter(Boolean).join("–");
   const obecniHtml = obecni.length
@@ -226,8 +229,8 @@ export function htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol }
 <p style="margin:0 0 4px;font-weight:700;font-size:14px;">Obecni</p>
 <p style="margin:0 0 8px;">${obecniHtml}</p>
 <p style="margin:0 0 6px;font-weight:700;font-size:14px;">Omówione tematy</p>
-${htmlTabeliTematowMail({ tematy, zespol })}
-${htmlTabeliZadanMail(zadania)}
+${htmlTabeliTematowMail({ tematy, zespol, nazwyKr })}
+${htmlTabeliZadanMail(zadania, nazwyKr)}
 </div>`;
 }
 
@@ -289,11 +292,11 @@ function otworzMailto(url) {
  * Od razu po kliknięciu otwiera Outlook (domyślny program pocztowy).
  * Nie używać await przed wywołaniem — przeglądarka zablokuje okno.
  */
-export function wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol }) {
+export function wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol, nazwyKr }) {
   const { zMailem, bezMaila } = emaileObecnych(zespol, obecnosc);
   const temat = `${form.tytul || "Spotkanie kierowników"} — ${form.data || ""}`.replace(/\s+—\s+$/, "").trim();
-  const plain = trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol });
-  const html = htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol });
+  const plain = trescSprawozdaniaTekst({ form, obecnosc, tematy, zadania, zespol, nazwyKr });
+  const html = htmlSprawozdaniaMail({ form, obecnosc, tematy, zadania, zespol, nazwyKr });
   kopiujHtmlDoSchowka(html, plain);
   const to = zMailem.join(",");
   const mailto = `mailto:${to}?subject=${encodeURIComponent(temat)}&body=${encodeURIComponent(

@@ -6,7 +6,10 @@ import {
   czyZnacznikPoczatek,
   czyKrPlaceholder,
   etykietaAutoraWpisu,
+  etykietaKrZNazwa,
   isoZDatyIGodziny,
+  mapaNazwObiektowKr,
+  nazwaObiektuKr,
   polaDatyGodzinyZIso,
   trescKoniecSpotkania,
   trescPoczatekSpotkania,
@@ -300,6 +303,7 @@ export function CzatKrPanel({
     void fetchWpisy();
   }, [fetchWpisy]);
 
+  const nazwyKr = useMemo(() => mapaNazwObiektowKr(krList), [krList]);
   const krOpcje = useMemo(() => {
     return [...(krList ?? [])]
       .map((r) => String(r.kr ?? "").trim())
@@ -329,9 +333,16 @@ export function CzatKrPanel({
       if (czyKrPlaceholder(k)) continue;
       if (!meta.has(k)) meta.set(k, { kr: k, count: 0, lastMs: 0, lastIso: null });
     }
+    for (const item of meta.values()) {
+      item.nazwa = nazwaObiektuKr(item.kr, nazwyKr);
+    }
     const q = String(szukajKr ?? "").trim().toLowerCase();
     let list = [...meta.values()];
-    if (q) list = list.filter((x) => x.kr.toLowerCase().includes(q));
+    if (q) {
+      list = list.filter(
+        (x) => x.kr.toLowerCase().includes(q) || String(x.nazwa ?? "").toLowerCase().includes(q),
+      );
+    }
     list.sort((a, b) => {
       const pa = czyKrPlaceholder(a.kr) ? 1 : 0;
       const pb = czyKrPlaceholder(b.kr) ? 1 : 0;
@@ -339,7 +350,7 @@ export function CzatKrPanel({
       return b.kr.localeCompare(a.kr, "pl", { numeric: true, sensitivity: "base" });
     });
     return list;
-  }, [wpisy, krOpcje, szukajKr]);
+  }, [wpisy, krOpcje, szukajKr, nazwyKr]);
 
   useEffect(() => {
     const pierwszy = listaKrLewa.find((x) => !czyKrPlaceholder(x.kr));
@@ -728,7 +739,12 @@ export function CzatKrPanel({
       return Number.isFinite(t) && t >= odMs && t <= doMs;
     });
     const tematy = wpisyNaTematy(wpisyZakres);
-    const protokol = zlozProtokolSpotkania(wpisyZakres, { odIso, doIso, mowcy: zespolDoZadan });
+    const protokol = zlozProtokolSpotkania(wpisyZakres, {
+      odIso,
+      doIso,
+      mowcy: zespolDoZadan,
+      nazwyKr,
+    });
     const obecnosc = new Set(
       (mowcyRdzen.length ? mowcyRdzen : zespolDoZadan).map((p) => normalizujNr(p.nr)).filter(Boolean),
     );
@@ -744,6 +760,7 @@ export function CzatKrPanel({
       tematy,
       zadania: [],
       zespol: zespolDoZadan,
+      nazwyKr,
     });
     if (wynik.msg) setMsg(wynik.msg);
   }
@@ -935,7 +952,7 @@ export function CzatKrPanel({
         style={{
           marginTop: "0.75rem",
           display: "grid",
-          gridTemplateColumns: "minmax(7.5rem, 11rem) minmax(0, 1fr)",
+          gridTemplateColumns: "minmax(12rem, 18rem) minmax(0, 1fr)",
           gap: "0.75rem",
           alignItems: "stretch",
           minHeight: "22rem",
@@ -971,7 +988,7 @@ export function CzatKrPanel({
               style={{ ...inputSt, fontSize: "0.78rem" }}
               value={szukajKr}
               onChange={(e) => setSzukajKr(e.target.value)}
-              placeholder="Szukaj KR…"
+              placeholder="Szukaj KR lub nazwy…"
             />
           </div>
           <div style={{ overflowY: "auto", flex: 1, padding: "0.25rem" }}>
@@ -1029,15 +1046,33 @@ export function CzatKrPanel({
                       font: "inherit",
                     }}
                   >
-                    <strong
-                      style={{
-                        fontSize: "0.95rem",
-                        fontWeight: 800,
-                        color: aktywny ? LIGHT.accent : LIGHT.text,
-                      }}
-                    >
-                      {item.kr}
-                    </strong>
+                    <span style={{ display: "grid", minWidth: 0, gap: 1 }}>
+                      <strong
+                        style={{
+                          fontSize: "0.95rem",
+                          fontWeight: 800,
+                          color: aktywny ? LIGHT.accent : LIGHT.text,
+                        }}
+                      >
+                        {item.kr}
+                      </strong>
+                      {item.nazwa ? (
+                        <span
+                          style={{
+                            fontSize: "0.68rem",
+                            fontWeight: 600,
+                            lineHeight: 1.25,
+                            color: LIGHT.muted,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                          title={item.nazwa}
+                        >
+                          {item.nazwa}
+                        </span>
+                      ) : null}
+                    </span>
                     {item.count > 0 ? (
                       <span
                         style={{
@@ -1085,7 +1120,7 @@ export function CzatKrPanel({
             }}
           >
             <strong style={{ fontSize: "0.95rem", color: LIGHT.accent }}>
-              {wybranyKr ? `Czat · KR ${wybranyKr}` : "Czat"}
+              {wybranyKr ? `Czat · KR ${etykietaKrZNazwa(wybranyKr, nazwyKr)}` : "Czat"}
             </strong>
             {wybranyKr && typeof onOtworzKr === "function" ? (
               <button

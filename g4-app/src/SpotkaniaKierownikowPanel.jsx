@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  etykietaKrZNazwa,
   isoZDatyIGodziny,
+  mapaNazwObiektowKr,
+  nazwaObiektuKr,
   polaDatyGodzinyZIso,
   pobierzWpisyZakresu,
   wpisyNaTematy,
@@ -123,18 +126,18 @@ function czyBrakTabeli(error) {
   return /spotkanie_kierownikow|schema cache|PGRST205|does not exist/i.test(m) || error?.code === "PGRST205";
 }
 
-function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol }) {
+function drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol, nazwyKr }) {
   const obecni = (zespol ?? [])
     .filter((p) => obecnosc.has(normalizujNr(p.nr)))
     .map((p) => String(p.imie_nazwisko ?? "").trim() || etykietaPracownika(p));
   const godziny = [form.godzina_od, form.godzina_do].filter(Boolean).join(" – ");
-  const tematyHtml = htmlTabeliTematowMail({ tematy, zespol });
+  const tematyHtml = htmlTabeliTematowMail({ tematy, zespol, nazwyKr });
   const zadaniaHtml = (zadania ?? []).length
     ? `<table class="raport">
         <thead><tr><th>KR</th><th>Dla</th><th>Zadanie</th><th>Status</th></tr></thead>
         <tbody>${(zadania ?? [])
           .map((z) => {
-            const kr = String(z.kr ?? "").trim() || "—";
+            const kr = etykietaKrZNazwa(z.kr, nazwyKr);
             const kto = String(z.osoba_odpowiedzialna ?? "").trim() || "—";
             const status = String(z.status ?? "").trim() || "—";
             return `<tr><td>${escapeHtml(kr)}</td><td>${escapeHtml(kto)}</td><td>${escapeHtml(
@@ -243,6 +246,7 @@ export function SpotkaniaKierownikowPanel({
     () => zespol.filter((p) => CZAT_KR_TEAM_NR.includes(normalizujNr(p.nr))),
     [zespol],
   );
+  const nazwyKr = useMemo(() => mapaNazwObiektowKr(krList), [krList]);
   const kodyKr = useMemo(() => {
     const set = new Set();
     for (const row of krList ?? []) {
@@ -367,7 +371,7 @@ export function SpotkaniaKierownikowPanel({
     setForm((prev) => {
       const next = { ...prev, data: prev.data || d };
       if (!zachowajProtokol || protokolJestPusty(prev.protokol)) {
-        next.protokol = zlozProtokolSpotkania(data ?? [], { odIso, doIso, mowcy: zespol });
+        next.protokol = zlozProtokolSpotkania(data ?? [], { odIso, doIso, mowcy: zespol, nazwyKr });
       }
       if (pelnyDzien && wczytane.length) {
         const first = polaDatyGodzinyZIso(wczytane[0].godzina);
@@ -934,7 +938,7 @@ export function SpotkaniaKierownikowPanel({
               </div>
             </div>
             <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.75rem", color: LIGHT.muted }}>
-              Tabelka jak w mailu — kliknij nagłówek, żeby posortować (KR, godzina, kto, treść).
+              Tabelka jak w mailu — obok numeru KR jest nazwa obiektu. Kliknij nagłówek, żeby posortować (KR, godzina, kto, treść).
             </p>
             <div style={{ marginTop: "0.35rem" }}>
               {tematy.length === 0 ? (
@@ -956,7 +960,7 @@ export function SpotkaniaKierownikowPanel({
                     <tbody>
                       {wierszeTematow.map((w, i) => (
                         <tr key={`${w.id || "n"}-${w._idx}`} style={{ background: i % 2 ? "#fffbeb" : "#fff" }}>
-                          <td style={{ ...TD_TAB, fontWeight: 800, color: LIGHT.accent, whiteSpace: "nowrap" }}>{w.kr}</td>
+                          <td style={{ ...TD_TAB, fontWeight: 800, color: LIGHT.accent }}>{etykietaKrZNazwa(w.kr, nazwyKr)}</td>
                           <td
                             style={{
                               ...TD_TAB,
@@ -1030,10 +1034,18 @@ export function SpotkaniaKierownikowPanel({
                   placeholder="np. 1083"
                   style={inputSt}
                 />
+                {nazwaObiektuKr(nowyTematKr, nazwyKr) ? (
+                  <span style={{ fontWeight: 600, color: LIGHT.muted }}>{nazwaObiektuKr(nowyTematKr, nazwyKr)}</span>
+                ) : null}
                 <datalist id="spotkanie-kr-list">
-                  {kodyKr.map((k) => (
-                    <option key={k} value={k} />
-                  ))}
+                  {kodyKr.map((k) => {
+                    const nazwa = nazwaObiektuKr(k, nazwyKr);
+                    return (
+                      <option key={k} value={k}>
+                        {nazwa ? `${k} — ${nazwa}` : k}
+                      </option>
+                    );
+                  })}
                 </datalist>
               </label>
               <label style={{ display: "grid", gap: 3, fontSize: "0.72rem", fontWeight: 700 }}>
@@ -1091,7 +1103,7 @@ export function SpotkaniaKierownikowPanel({
                     <tbody>
                       {wierszeZadan.map((z, i) => (
                         <tr key={z.id || `${z.tresc}-${z._idx}`} style={{ background: i % 2 ? "#fffbeb" : "#fff" }}>
-                          <td style={{ ...TD_TAB, fontWeight: 800, color: LIGHT.accent, whiteSpace: "nowrap" }}>{z.kr}</td>
+                          <td style={{ ...TD_TAB, fontWeight: 800, color: LIGHT.accent }}>{etykietaKrZNazwa(z.kr, nazwyKr)}</td>
                           <td style={{ ...TD_TAB, whiteSpace: "nowrap" }}>{z.kto}</td>
                           <td style={TD_TAB}>{z.tresc || "—"}</td>
                           <td style={{ ...TD_TAB, color: LIGHT.soft }}>{z.status || "—"}</td>
@@ -1140,6 +1152,9 @@ export function SpotkaniaKierownikowPanel({
                     onChange={(e) => setZadanieKr(e.target.value)}
                     style={inputSt}
                   />
+                  {nazwaObiektuKr(zadanieKr, nazwyKr) ? (
+                    <span style={{ fontWeight: 600, color: LIGHT.muted }}>{nazwaObiektuKr(zadanieKr, nazwyKr)}</span>
+                  ) : null}
                 </label>
                 <button type="button" disabled={busy} onClick={() => void dodajZadanie()} style={btnGhost}>
                   Dodaj zadanie
@@ -1176,7 +1191,7 @@ export function SpotkaniaKierownikowPanel({
             <button
               type="button"
               onClick={() =>
-                drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol })
+                drukujSpotkanie({ form, obecnosc, tematy, zadania, zespol, nazwyKr })
               }
               style={{ ...btnPrimary, background: "#9a3412" }}
             >
@@ -1185,7 +1200,7 @@ export function SpotkaniaKierownikowPanel({
             <button
               type="button"
               onClick={() => {
-                const wynik = wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol });
+                const wynik = wyslijMailSprawozdania({ form, obecnosc, tematy, zadania, zespol, nazwyKr });
                 if (wynik.msg) setMsg(wynik.msg);
               }}
               style={{ ...btnPrimary, background: "#0369a1" }}
