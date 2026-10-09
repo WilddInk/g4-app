@@ -14248,6 +14248,18 @@ export default function App() {
                 autorNr={pracownikPowiazanyZSesja?.nr}
                 czyMozeEdytowac={czyMozeWidziecFakturowanie}
                 onOtworzCzatKr={() => void nawigujMenuZAutoZapisem(() => przejdzDoFakturowania("czat_kr"))}
+                onEdytujKr={(kod) => {
+                  const k = String(kod ?? "").trim();
+                  if (!k || k === "—") return;
+                  const item =
+                    (krList ?? []).find((r) => String(r.kr ?? "").trim() === k) ||
+                    (krZApiPelen ?? []).find((r) => String(r.kr ?? "").trim() === k);
+                  if (!item) {
+                    alert(`Brak KR ${k} w słowniku — nie da się otworzyć edycji.`);
+                    return;
+                  }
+                  void nawigujMenuZAutoZapisem(() => otworzEdycjeKrZTabeli(item));
+                }}
               />
             </>
           )}

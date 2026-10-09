@@ -221,6 +221,7 @@ export function SpotkaniaKierownikowPanel({
   autorNr,
   czyMozeEdytowac,
   onOtworzCzatKr,
+  onEdytujKr,
 }) {
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1030,11 +1031,25 @@ export function SpotkaniaKierownikowPanel({
                           color: LIGHT.accent,
                           fontWeight: 800,
                           fontSize: "0.92rem",
-                          padding: "0.45rem 0.7rem",
+                          padding: "0.35rem 0.7rem",
                           borderBottom: "1px solid #fed7aa",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "0.5rem",
                         }}
                       >
-                        {etykietaKrZNazwa(g.kr, nazwyKr)}
+                        <span>{etykietaKrZNazwa(g.kr, nazwyKr)}</span>
+                        {g.kr !== "—" && typeof onEdytujKr === "function" ? (
+                          <button
+                            type="button"
+                            onClick={() => onEdytujKr(g.kr)}
+                            title="Edycja KR — nazwa i terminy"
+                            style={{ ...btnGhost, padding: "0.15rem 0.45rem", fontSize: "0.72rem", flexShrink: 0 }}
+                          >
+                            Edytuj
+                          </button>
+                        ) : null}
                       </div>
                       {g.wiersze.map((w, i) =>
                         edycjaTematu?.idx === w._idx ? (
