@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   etykietaKrZNazwa,
   isoZDatyIGodziny,
@@ -17,6 +17,7 @@ import {
   sortujWierszeTematow,
   wyslijMailSprawozdania,
 } from "./lib/spotkanieMail.js";
+import { useDyktowanie } from "./lib/useDyktowanie.js";
 
 const LIGHT = {
   panelBg: "linear-gradient(180deg, #fff7ed 0%, #fffbeb 45%, #ffffff 100%)",
@@ -240,6 +241,18 @@ export function SpotkaniaKierownikowPanel({
   const [busy, setBusy] = useState(false);
   const [edycjaTematu, setEdycjaTematu] = useState(null);
   const [sortZadania, setSortZadania] = useState({ key: "kr", dir: "asc" });
+  const celDyktRef = useRef("nowy");
+  const dodajZMowyRef = useRef(() => false);
+  const dykt = useDyktowanie({
+    onTekst: (tekst) => {
+      if (celDyktRef.current === "edycja") {
+        setEdycjaTematu((s) => (s ? { ...s, tresc: tekst } : s));
+      } else {
+        setNowyTematTresc(tekst);
+      }
+    },
+    onGotowe: (tekst) => dodajZMowyRef.current(tekst),
+  });
 
   const zespol = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
   const zespolRdzen = useMemo(
@@ -335,6 +348,7 @@ export function SpotkaniaKierownikowPanel({
   }, [fetchLista]);
 
   function resetSzkic() {
+    dykt.zatrzymaj({ zapisz: false });
     setForm(nowySzkic());
     setTematy([]);
     setEdycjaTematu(null);
@@ -529,6 +543,37 @@ export function SpotkaniaKierownikowPanel({
     ]);
     setNowyTematTresc("");
     setMsg("Dodano temat do protokołu.");
+  }
+
+  dodajZMowyRef.current = (surowy) => {
+    const mowca = zespolRdzen.find((p) => normalizujNr(p.nr) === String(nowyTematMowcaNr ?? "").trim());
+    const tresc = zPrefiksemMowcy(String(surowy ?? "").trim(), mowca || null);
+    if (!tresc) return false;
+    const teraz = polaDatyGodzinyZIso().godzina;
+    const godz = isoZDatyIGodziny(form.data || dzisYmd(), teraz);
+    setTematy((prev) => [
+      ...prev,
+      {
+        kr: String(nowyTematKr ?? "").trim(),
+        tresc,
+        godzina: godz,
+        kolejnosc: prev.length,
+      },
+    ]);
+    setNowyTematGodzina(teraz);
+    setNowyTematTresc("");
+    return true;
+  };
+
+  function przelaczDyktowanie(cel) {
+    const tenSam = dykt.slucham && celDyktRef.current === cel;
+    if (dykt.slucham) {
+      dykt.zatrzymaj({ zapisz: celDyktRef.current === "nowy" });
+      if (tenSam) return;
+    }
+    celDyktRef.current = cel;
+    const baza = cel === "edycja" ? String(edycjaTematu?.tresc ?? "") : String(nowyTematTresc ?? "");
+    dykt.start({ tekstBazowy: baza, zatwierdzPoPauzie: cel === "nowy" });
   }
 
   function usunTemat(idx) {
@@ -968,7 +1013,7 @@ export function SpotkaniaKierownikowPanel({
               </div>
             </div>
             <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.75rem", color: LIGHT.muted }}>
-              Numer KR z nazwą jest raz, pod nim rozmowa po godzinie. Edycja zostaje po zapisaniu spotkania.
+              Numer KR z nazwą jest raz, pod nim rozmowa. Dyktuj dopisuje kolejne zdania po pauzie — najpierw ustaw KR.
             </p>
             <div style={{ marginTop: "0.35rem" }}>
               {tematy.length === 0 ? (
@@ -1027,16 +1072,41 @@ export function SpotkaniaKierownikowPanel({
                               Rozmowa
                               <textarea
                                 value={edycjaTematu.tresc}
-                                onChange={(e) => setEdycjaTematu((s) => ({ ...s, tresc: e.target.value }))}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEdycjaTematu((s) => ({ ...s, tresc: v }));
+                                  if (dykt.slucham && celDyktRef.current === "edycja") dykt.ustawBaze(v);
+                                }}
                                 rows={3}
                                 style={{ ...inputSt, resize: "vertical" }}
                               />
                             </label>
-                            <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.4rem" }}>
+                            <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                              <button
+                                type="button"
+                                onClick={() => przelaczDyktowanie("edycja")}
+                                style={{
+                                  ...btnGhost,
+                                  fontWeight: 800,
+                                  background: dykt.slucham && celDyktRef.current === "edycja" ? "#dc2626" : "#fff",
+                                  color: dykt.slucham && celDyktRef.current === "edycja" ? "#fff" : LIGHT.accent,
+                                  border:
+                                    dykt.slucham && celDyktRef.current === "edycja" ? "none" : `1px solid ${LIGHT.accent}`,
+                                }}
+                              >
+                                {dykt.slucham && celDyktRef.current === "edycja" ? "Stop" : "🎙 Dyktuj"}
+                              </button>
                               <button type="button" onClick={zapiszEdycjeTematu} style={{ ...btnGhost, fontWeight: 800 }}>
                                 Zapisz wpis
                               </button>
-                              <button type="button" onClick={() => setEdycjaTematu(null)} style={btnGhost}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (dykt.slucham && celDyktRef.current === "edycja") dykt.zatrzymaj({ zapisz: false });
+                                  setEdycjaTematu(null);
+                                }}
+                                style={btnGhost}
+                              >
                                 Anuluj
                               </button>
                             </div>
@@ -1098,7 +1168,12 @@ export function SpotkaniaKierownikowPanel({
                     const nr = normalizujNr(p.nr);
                     const odznacz = nowyTematMowcaNr === nr;
                     setNowyTematMowcaNr(odznacz ? "" : nr);
-                    if (!odznacz) setNowyTematTresc((t) => dopiszPrefiksMowcy(t, p));
+                    if (!odznacz) {
+                      setNowyTematTresc((t) => dopiszPrefiksMowcy(t, p));
+                      if (dykt.slucham && celDyktRef.current === "nowy") {
+                        dykt.ustawBaze(dopiszPrefiksMowcy(nowyTematTresc, p));
+                      }
+                    }
                   }}
                 />
               </div>
@@ -1149,9 +1224,16 @@ export function SpotkaniaKierownikowPanel({
                 <input
                   type="text"
                   value={nowyTematTresc}
-                  onChange={(e) => setNowyTematTresc(e.target.value)}
-                  placeholder="Omówiony temat…"
-                  style={inputSt}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setNowyTematTresc(v);
+                    if (dykt.slucham && celDyktRef.current === "nowy") dykt.ustawBaze(v);
+                  }}
+                  placeholder="Mów albo wpisz temat…"
+                  style={{
+                    ...inputSt,
+                    border: dykt.slucham && celDyktRef.current === "nowy" ? "1px solid #fca5a5" : inputSt.border,
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
@@ -1160,10 +1242,33 @@ export function SpotkaniaKierownikowPanel({
                   }}
                 />
               </label>
-              <button type="button" onClick={dodajTematRecznie} style={btnGhost}>
-                Dodaj temat
-              </button>
+              <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={() => przelaczDyktowanie("nowy")}
+                  style={{
+                    ...btnGhost,
+                    fontWeight: 800,
+                    background: dykt.slucham && celDyktRef.current === "nowy" ? "#dc2626" : "#fff",
+                    color: dykt.slucham && celDyktRef.current === "nowy" ? "#fff" : LIGHT.accent,
+                    border: dykt.slucham && celDyktRef.current === "nowy" ? "none" : `1px solid ${LIGHT.accent}`,
+                  }}
+                >
+                  {dykt.slucham && celDyktRef.current === "nowy" ? "Stop — zapisz" : "🎙 Dyktuj"}
+                </button>
+                <button type="button" onClick={dodajTematRecznie} style={btnGhost}>
+                  Dodaj temat
+                </button>
+              </div>
             </div>
+            {dykt.slucham && celDyktRef.current === "nowy" ? (
+              <p style={{ margin: "0.45rem 0 0", fontSize: "0.78rem", fontWeight: 700, color: "#b91c1c" }}>
+                Słucham… po pauzie wpis sam wskoczy pod wybrane KR. Mów dalej — powstanie kolejny.
+              </p>
+            ) : null}
+            {dykt.blad ? (
+              <p style={{ margin: "0.45rem 0 0", fontSize: "0.78rem", color: LIGHT.dangerText }}>{dykt.blad}</p>
+            ) : null}
           </section>
 
           <section style={{ border: LIGHT.cardBorder, borderRadius: 12, background: LIGHT.cardBg, padding: "0.8rem 0.85rem" }}>
