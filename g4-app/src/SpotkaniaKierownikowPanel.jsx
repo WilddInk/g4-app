@@ -10,11 +10,11 @@ import {
   zlozProtokolSpotkania,
 } from "./lib/czatKrSpotkanie.js";
 import { CZAT_KR_TEAM_NR, zbudujZespolCzatKr } from "./CzatKrPanel.jsx";
-import { ChipsMowcow, InicjalyBadge, TrescZGlosami, dopiszPrefiksMowcy, zPrefiksemMowcy } from "./spotkanieMowcy.jsx";
+import { ChipsMowcow, TrescZGlosami, dopiszPrefiksMowcy, zPrefiksemMowcy } from "./spotkanieMowcy.jsx";
 import {
+  grupyTematowDoWidoku,
   htmlTabeliTematowMail,
   sortujWierszeTematow,
-  wierszeTematowTabeli,
   wyslijMailSprawozdania,
 } from "./lib/spotkanieMail.js";
 
@@ -238,7 +238,7 @@ export function SpotkaniaKierownikowPanel({
   const [zadanieDlaNr, setZadanieDlaNr] = useState("");
   const [zadanieKr, setZadanieKr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [sortTematy, setSortTematy] = useState({ key: "kr", dir: "asc" });
+  const [edycjaTematu, setEdycjaTematu] = useState(null);
   const [sortZadania, setSortZadania] = useState({ key: "kr", dir: "asc" });
 
   const zespol = useMemo(() => zbudujZespolCzatKr(pracownicy), [pracownicy]);
@@ -259,16 +259,9 @@ export function SpotkaniaKierownikowPanel({
     }
     return [...set].sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
   }, [krList, tematy]);
-  const wierszeTematow = useMemo(
-    () =>
-      sortujWierszeTematow(
-        wierszeTematowTabeli(
-          tematy.map((t, i) => ({ ...t, _idx: i })),
-          zespol,
-        ),
-        sortTematy,
-      ),
-    [tematy, zespol, sortTematy],
+  const grupyTematow = useMemo(
+    () => grupyTematowDoWidoku(tematy.map((t, i) => ({ ...t, _idx: i })), zespol),
+    [tematy, zespol],
   );
 
   const wierszeZadan = useMemo(() => {
@@ -344,6 +337,7 @@ export function SpotkaniaKierownikowPanel({
   function resetSzkic() {
     setForm(nowySzkic());
     setTematy([]);
+    setEdycjaTematu(null);
     setZadania([]);
     setMsg(null);
     ustawDomyslnaObecnosc();
@@ -367,7 +361,10 @@ export function SpotkaniaKierownikowPanel({
       return { wczytane: [], error };
     }
     const wczytane = wpisyNaTematy(data ?? []);
-    if (!zachowajTematy) setTematy(wczytane);
+    if (!zachowajTematy) {
+      setTematy(wczytane);
+      setEdycjaTematu(null);
+    }
     setForm((prev) => {
       const next = { ...prev, data: prev.data || d };
       if (!zachowajProtokol || protokolJestPusty(prev.protokol)) {
@@ -440,6 +437,7 @@ export function SpotkaniaKierownikowPanel({
       .filter(Boolean);
     ustawDomyslnaObecnosc(nrObecnych);
     setTematy(tematyDb ?? []);
+    setEdycjaTematu(null);
     setZadania(zadDb ?? []);
     return {
       tematy: tematyDb ?? [],
@@ -534,7 +532,39 @@ export function SpotkaniaKierownikowPanel({
   }
 
   function usunTemat(idx) {
+    setEdycjaTematu(null);
     setTematy((prev) => prev.filter((_, i) => i !== idx).map((t, i) => ({ ...t, kolejnosc: i })));
+  }
+
+  function rozpocznijEdycjeTematu(w) {
+    const pola = polaDatyGodzinyZIso(w.godzina);
+    setEdycjaTematu({
+      idx: w._idx,
+      kr: w.kr === "—" ? "" : String(w.kr ?? ""),
+      godzina: pola.godzina || "",
+      tresc: String(w.tresc ?? ""),
+    });
+  }
+
+  function zapiszEdycjeTematu() {
+    if (!edycjaTematu) return;
+    const tresc = String(edycjaTematu.tresc ?? "").trim();
+    if (!tresc) {
+      setMsg("Wpisz treść wpisu.");
+      return;
+    }
+    const godz = edycjaTematu.godzina
+      ? isoZDatyIGodziny(form.data || dzisYmd(), edycjaTematu.godzina)
+      : null;
+    setTematy((prev) =>
+      prev.map((t, i) =>
+        i === edycjaTematu.idx
+          ? { ...t, kr: String(edycjaTematu.kr ?? "").trim(), tresc, godzina: godz }
+          : t,
+      ),
+    );
+    setEdycjaTematu(null);
+    setMsg("Zmieniono wpis. Zapisz spotkanie, żeby został w protokole.");
   }
 
   async function dodajZadanie() {
@@ -938,7 +968,7 @@ export function SpotkaniaKierownikowPanel({
               </div>
             </div>
             <p style={{ margin: "0.35rem 0 0.55rem", fontSize: "0.75rem", color: LIGHT.muted }}>
-              Tabelka jak w mailu — obok numeru KR jest nazwa obiektu. Kliknij nagłówek, żeby posortować (KR, godzina, kto, treść).
+              Numer KR z nazwą jest raz, pod nim rozmowa po godzinie. Edycja zostaje po zapisaniu spotkania.
             </p>
             <div style={{ marginTop: "0.35rem" }}>
               {tematy.length === 0 ? (
@@ -946,59 +976,116 @@ export function SpotkaniaKierownikowPanel({
                   Brak tematów — wczytaj wpisy z CZAT KR albo dopisz ręcznie.
                 </p>
               ) : (
-                <div style={{ overflow: "auto", maxHeight: "28rem", border: "1px solid #fed7aa", borderRadius: 10 }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "36rem" }}>
-                    <thead>
-                      <tr>
-                        <NaglowekSort id="kr" label="KR" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
-                        <NaglowekSort id="godz" label="Godzina" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
-                        <NaglowekSort id="kto" label="Kto" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
-                        <NaglowekSort id="tresc" label="Treść" sort={sortTematy} onSort={(k) => przestawSort(setSortTematy, k)} />
-                        <th style={{ ...TH_TAB, width: "4.2rem" }} />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {wierszeTematow.map((w, i) => (
-                        <tr key={`${w.id || "n"}-${w._idx}`} style={{ background: i % 2 ? "#fffbeb" : "#fff" }}>
-                          <td style={{ ...TD_TAB, fontWeight: 800, color: LIGHT.accent }}>{etykietaKrZNazwa(w.kr, nazwyKr)}</td>
-                          <td
+                <div style={{ overflow: "auto", maxHeight: "32rem", border: "1px solid #fed7aa", borderRadius: 10 }}>
+                  {grupyTematow.map((g) => (
+                    <section key={g.kr}>
+                      <div
+                        style={{
+                          background: "#fff7ed",
+                          color: LIGHT.accent,
+                          fontWeight: 800,
+                          fontSize: "0.92rem",
+                          padding: "0.45rem 0.7rem",
+                          borderBottom: "1px solid #fed7aa",
+                        }}
+                      >
+                        {etykietaKrZNazwa(g.kr, nazwyKr)}
+                      </div>
+                      {g.wiersze.map((w, i) =>
+                        edycjaTematu?.idx === w._idx ? (
+                          <div
+                            key={`e-${w._idx}`}
                             style={{
-                              ...TD_TAB,
-                              color: LIGHT.soft,
-                              fontWeight: 700,
-                              whiteSpace: "nowrap",
-                              fontVariantNumeric: "tabular-nums",
+                              display: "grid",
+                              gridTemplateColumns: "7.5rem 6.5rem minmax(0, 1fr)",
+                              gap: "0.4rem",
+                              padding: "0.5rem 0.7rem",
+                              background: "#fff",
+                              borderBottom: "1px solid #ffedd5",
+                              alignItems: "start",
                             }}
                           >
-                            {w.godz || "—"}
-                          </td>
-                          <td style={{ ...TD_TAB, whiteSpace: "nowrap" }}>
-                            {w.mowcy?.length ? (
-                              <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                                {w.mowcy.map((g) => (
-                                  <InicjalyBadge key={`${g.nr}-${g.inicjaly}`} inicjaly={g.inicjaly} nr={g.nr} title={g.nazwa} />
-                                ))}
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td style={TD_TAB}>
-                            <TrescZGlosami tresc={w.tresc} mowcy={zespol} />
-                          </td>
-                          <td style={TD_TAB}>
-                            <button
-                              type="button"
-                              onClick={() => usunTemat(w._idx)}
-                              style={{ ...btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                            <label style={{ display: "grid", gap: 3, fontSize: "0.72rem", fontWeight: 700 }}>
+                              KR
+                              <input
+                                list="spotkanie-kr-list"
+                                value={edycjaTematu.kr}
+                                onChange={(e) => setEdycjaTematu((s) => ({ ...s, kr: e.target.value }))}
+                                style={inputSt}
+                              />
+                            </label>
+                            <label style={{ display: "grid", gap: 3, fontSize: "0.72rem", fontWeight: 700 }}>
+                              Godzina
+                              <input
+                                type="time"
+                                value={edycjaTematu.godzina}
+                                onChange={(e) => setEdycjaTematu((s) => ({ ...s, godzina: e.target.value }))}
+                                style={inputSt}
+                              />
+                            </label>
+                            <label style={{ display: "grid", gap: 3, fontSize: "0.72rem", fontWeight: 700 }}>
+                              Rozmowa
+                              <textarea
+                                value={edycjaTematu.tresc}
+                                onChange={(e) => setEdycjaTematu((s) => ({ ...s, tresc: e.target.value }))}
+                                rows={3}
+                                style={{ ...inputSt, resize: "vertical" }}
+                              />
+                            </label>
+                            <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.4rem" }}>
+                              <button type="button" onClick={zapiszEdycjeTematu} style={{ ...btnGhost, fontWeight: 800 }}>
+                                Zapisz wpis
+                              </button>
+                              <button type="button" onClick={() => setEdycjaTematu(null)} style={btnGhost}>
+                                Anuluj
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            key={`${w.id || "n"}-${w._idx}`}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "4.4rem minmax(0, 1fr) auto",
+                              gap: "0.55rem",
+                              alignItems: "start",
+                              padding: "0.4rem 0.7rem",
+                              background: i % 2 ? "#fffbeb" : "#fff",
+                              borderBottom: "1px solid #ffedd5",
+                            }}
+                          >
+                            <span
+                              style={{
+                                color: LIGHT.soft,
+                                fontWeight: 700,
+                                fontVariantNumeric: "tabular-nums",
+                                paddingTop: "0.12rem",
+                              }}
                             >
-                              Usuń
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                              {w.godz || "—"}
+                            </span>
+                            <TrescZGlosami tresc={w.tresc} mowcy={zespol} />
+                            <span style={{ display: "flex", gap: 4 }}>
+                              <button
+                                type="button"
+                                onClick={() => rozpocznijEdycjeTematu(w)}
+                                style={{ ...btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                              >
+                                Edytuj
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => usunTemat(w._idx)}
+                                style={{ ...btnGhost, padding: "0.15rem 0.4rem", fontSize: "0.72rem" }}
+                              >
+                                Usuń
+                              </button>
+                            </span>
+                          </div>
+                        ),
+                      )}
+                    </section>
+                  ))}
                 </div>
               )}
             </div>
