@@ -209,6 +209,13 @@ export function CzatKrPanel({
       return "numer";
     }
   });
+  const [ukryjZakonczone, setUkryjZakonczone] = useState(() => {
+    try {
+      return localStorage.getItem("g4-czat-kr-ukryj-zakonczone") !== "0";
+    } catch {
+      return true;
+    }
+  });
   const [pokazNowaKr, setPokazNowaKr] = useState(false);
   const [nowaKrPrefill, setNowaKrPrefill] = useState("");
   const [edycjaId, setEdycjaId] = useState(null);
@@ -323,9 +330,9 @@ export function CzatKrPanel({
   const krOpcje = useMemo(() => {
     return [...(krList ?? [])]
       .map((r) => String(r.kr ?? "").trim())
-      .filter((k) => k && !czyKrPlaceholder(k) && !kodyKrZakonczonych.has(k))
+      .filter((k) => k && !czyKrPlaceholder(k))
       .sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
-  }, [krList, kodyKrZakonczonych]);
+  }, [krList]);
 
   /** Lista KR po lewej: numer malejąco albo ostatni wpis na górze. */
   const listaKrLewa = useMemo(() => {
@@ -353,7 +360,10 @@ export function CzatKrPanel({
       item.nazwa = nazwaObiektuKr(item.kr, nazwyKr);
     }
     const q = String(szukajKr ?? "").trim().toLowerCase();
-    let list = [...meta.values()].filter((x) => !kodyKrZakonczonych.has(x.kr));
+    let list = [...meta.values()];
+    if (ukryjZakonczone) {
+      list = list.filter((x) => !kodyKrZakonczonych.has(x.kr));
+    }
     if (q) {
       list = list.filter(
         (x) => x.kr.toLowerCase().includes(q) || String(x.nazwa ?? "").toLowerCase().includes(q),
@@ -371,17 +381,18 @@ export function CzatKrPanel({
       return b.kr.localeCompare(a.kr, "pl", { numeric: true, sensitivity: "base" });
     });
     return list;
-  }, [wpisy, krOpcje, szukajKr, nazwyKr, sortListyKr, kodyKrZakonczonych]);
+  }, [wpisy, krOpcje, szukajKr, nazwyKr, sortListyKr, kodyKrZakonczonych, ukryjZakonczone]);
 
   useEffect(() => {
-    const ukryty = kodyKrZakonczonych.has(String(wybranyKr ?? "").trim());
+    const ukryty =
+      ukryjZakonczone && kodyKrZakonczonych.has(String(wybranyKr ?? "").trim());
     const pierwszy = listaKrLewa.find((x) => !czyKrPlaceholder(x.kr));
     if (!pierwszy) {
       if (ukryty) setWybranyKr("");
       return;
     }
     if (!wybranyKr || czyKrPlaceholder(wybranyKr) || ukryty) setWybranyKr(pierwszy.kr);
-  }, [listaKrLewa, wybranyKr, kodyKrZakonczonych]);
+  }, [listaKrLewa, wybranyKr, kodyKrZakonczonych, ukryjZakonczone]);
 
   const wpisyWybranego = useMemo(() => {
     const k = String(wybranyKr ?? "").trim();
@@ -1008,10 +1019,46 @@ export function CzatKrPanel({
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              flexWrap: "wrap",
               gap: 6,
             }}
           >
-            <span>KR</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
+              <span>KR</span>
+              <button
+                type="button"
+                title={
+                  ukryjZakonczone
+                    ? "Kliknij, aby pokazać też KR zakończone / archiwalne"
+                    : "Kliknij, aby ukryć KR zakończone / archiwalne"
+                }
+                aria-pressed={ukryjZakonczone}
+                onClick={() => {
+                  setUkryjZakonczone((prev) => {
+                    const next = !prev;
+                    try {
+                      localStorage.setItem("g4-czat-kr-ukryj-zakonczone", next ? "1" : "0");
+                    } catch {
+                      /* przeglądarka bez pamięci */
+                    }
+                    return next;
+                  });
+                }}
+                style={{
+                  border: ukryjZakonczone ? `1px solid ${LIGHT.accent}` : "1px solid #7dd3fc",
+                  background: ukryjZakonczone ? "#fff" : "transparent",
+                  color: LIGHT.accent,
+                  borderRadius: 6,
+                  fontSize: "0.68rem",
+                  fontWeight: 800,
+                  padding: "0.12rem 0.4rem",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Ukryj zakończone
+              </button>
+            </span>
             <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 4 }}>
               {[
                 ["numer", "Numer"],
