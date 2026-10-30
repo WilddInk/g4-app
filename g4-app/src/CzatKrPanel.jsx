@@ -22,7 +22,7 @@ import {
   zapiszSpotkanie,
 } from "./lib/czatKrSpotkanie.js";
 import { wyslijMailSprawozdania } from "./lib/spotkanieMail.js";
-import { normalizujKrZArkusza } from "./lib/krNormalize.js";
+import { czyKrZakonczonaLubArchiwalna, normalizujKrZArkusza } from "./lib/krNormalize.js";
 import { NowaKrForm } from "./NowaKrForm.jsx";
 import { ChipsMowcow, TrescZGlosami, dopiszPrefiksMowcy, zPrefiksemMowcy } from "./spotkanieMowcy.jsx";
 
@@ -311,12 +311,21 @@ export function CzatKrPanel({
   }, [fetchWpisy]);
 
   const nazwyKr = useMemo(() => mapaNazwObiektowKr(krList), [krList]);
+  const kodyKrZakonczonych = useMemo(() => {
+    const set = new Set();
+    for (const row of krList ?? []) {
+      if (!czyKrZakonczonaLubArchiwalna(row)) continue;
+      const k = String(row?.kr ?? "").trim();
+      if (k) set.add(k);
+    }
+    return set;
+  }, [krList]);
   const krOpcje = useMemo(() => {
     return [...(krList ?? [])]
       .map((r) => String(r.kr ?? "").trim())
-      .filter((k) => k && !czyKrPlaceholder(k))
+      .filter((k) => k && !czyKrPlaceholder(k) && !kodyKrZakonczonych.has(k))
       .sort((a, b) => a.localeCompare(b, "pl", { numeric: true }));
-  }, [krList]);
+  }, [krList, kodyKrZakonczonych]);
 
   /** Lista KR po lewej: numer malejąco albo ostatni wpis na górze. */
   const listaKrLewa = useMemo(() => {
@@ -344,7 +353,7 @@ export function CzatKrPanel({
       item.nazwa = nazwaObiektuKr(item.kr, nazwyKr);
     }
     const q = String(szukajKr ?? "").trim().toLowerCase();
-    let list = [...meta.values()];
+    let list = [...meta.values()].filter((x) => !kodyKrZakonczonych.has(x.kr));
     if (q) {
       list = list.filter(
         (x) => x.kr.toLowerCase().includes(q) || String(x.nazwa ?? "").toLowerCase().includes(q),
@@ -362,13 +371,17 @@ export function CzatKrPanel({
       return b.kr.localeCompare(a.kr, "pl", { numeric: true, sensitivity: "base" });
     });
     return list;
-  }, [wpisy, krOpcje, szukajKr, nazwyKr, sortListyKr]);
+  }, [wpisy, krOpcje, szukajKr, nazwyKr, sortListyKr, kodyKrZakonczonych]);
 
   useEffect(() => {
+    const ukryty = kodyKrZakonczonych.has(String(wybranyKr ?? "").trim());
     const pierwszy = listaKrLewa.find((x) => !czyKrPlaceholder(x.kr));
-    if (!pierwszy) return;
-    if (!wybranyKr || czyKrPlaceholder(wybranyKr)) setWybranyKr(pierwszy.kr);
-  }, [listaKrLewa, wybranyKr]);
+    if (!pierwszy) {
+      if (ukryty) setWybranyKr("");
+      return;
+    }
+    if (!wybranyKr || czyKrPlaceholder(wybranyKr) || ukryty) setWybranyKr(pierwszy.kr);
+  }, [listaKrLewa, wybranyKr, kodyKrZakonczonych]);
 
   const wpisyWybranego = useMemo(() => {
     const k = String(wybranyKr ?? "").trim();
@@ -808,6 +821,7 @@ export function CzatKrPanel({
           <div style={{ fontSize: "0.78rem", color: LIGHT.soft, marginTop: 4 }}>
             Po lewej wybierz numer KR, potem notuj albo Dyktuj (mowa zamienia się w notatkę).
             Datę zmienisz w „Edytuj”. Brak numeru na liście — „Nowa KR”.
+            KR ze statusem zakończone / archiwalne (sekcja KR) nie są na tej liście.
           </div>
         </div>
         <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignSelf: "flex-start" }}>

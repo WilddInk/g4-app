@@ -18,3 +18,21 @@ export function normalizujKrZArkusza(krVal) {
   if (s === "0") return KR_OGOLNOBIUROWY;
   return dopelnijKrTrzyCyfryLeadingZero(s);
 }
+
+/**
+ * Status KR ze słownika (`public.kr.status`): zakończone / archiwalne nie wchodzą do CZAT KR.
+ * @param {unknown} statusLubWiersz — tekst statusu albo rekord z polem `status`
+ */
+export function czyKrZakonczonaLubArchiwalna(statusLubWiersz) {
+  const raw =
+    statusLubWiersz && typeof statusLubWiersz === "object"
+      ? statusLubWiersz.status
+      : statusLubWiersz;
+  const s = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+  if (!s) return false;
+  return s.includes("zakonczon") || s.includes("archiw");
+}
