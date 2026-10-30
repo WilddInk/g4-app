@@ -631,6 +631,18 @@ export function CzatKrPanel({
     setEdycjaMowcaNr("");
   }
 
+  function otworzZadanieZWpisu(w) {
+    const tytul = String(w?.tresc ?? "").trim().slice(0, 200);
+    setZadanieTytul(tytul);
+    setPokazZadanie(true);
+    requestAnimationFrame(() => {
+      document.getElementById("czat-kr-form-zadania")?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+  }
+
   async function usunWpis(w) {
     if (!czyMozePisac || !w?.id) return;
     const skrot = String(w.tresc ?? "").trim().slice(0, 80);
@@ -1300,40 +1312,62 @@ export function CzatKrPanel({
                       <span style={{ fontSize: "0.72rem", color: LIGHT.soft }}>
                         {formatData(w.created_at) || "—"}
                       </span>
-                      {czyMozePisac && edycjaId !== w.id ? (
+                      {(mozeZadania || czyMozePisac) && edycjaId !== w.id ? (
                         <span style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-                          <button
-                            type="button"
-                            onClick={() => rozpocznijEdycje(w)}
-                            style={{
-                              background: "transparent",
-                              border: LIGHT.cardBorder,
-                              borderRadius: 6,
-                              color: LIGHT.muted,
-                              fontSize: "0.72rem",
-                              fontWeight: 650,
-                              padding: "0.12rem 0.4rem",
-                              cursor: "pointer",
-                            }}
-                          >
-                            Edytuj
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void usunWpis(w)}
-                            style={{
-                              background: "transparent",
-                              border: "1px solid #fecaca",
-                              borderRadius: 6,
-                              color: "#b91c1c",
-                              fontSize: "0.72rem",
-                              fontWeight: 650,
-                              padding: "0.12rem 0.4rem",
-                              cursor: "pointer",
-                            }}
-                          >
-                            Usuń
-                          </button>
+                          {mozeZadania && !znacznik ? (
+                            <button
+                              type="button"
+                              onClick={() => otworzZadanieZWpisu(w)}
+                              style={{
+                                background: LIGHT.accentSoft,
+                                border: `1px solid ${LIGHT.accent}`,
+                                borderRadius: 6,
+                                color: LIGHT.accent,
+                                fontSize: "0.72rem",
+                                fontWeight: 700,
+                                padding: "0.12rem 0.4rem",
+                                cursor: "pointer",
+                              }}
+                            >
+                              Utwórz zadanie
+                            </button>
+                          ) : null}
+                          {czyMozePisac ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => rozpocznijEdycje(w)}
+                                style={{
+                                  background: "transparent",
+                                  border: LIGHT.cardBorder,
+                                  borderRadius: 6,
+                                  color: LIGHT.muted,
+                                  fontSize: "0.72rem",
+                                  fontWeight: 650,
+                                  padding: "0.12rem 0.4rem",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Edytuj
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void usunWpis(w)}
+                                style={{
+                                  background: "transparent",
+                                  border: "1px solid #fecaca",
+                                  borderRadius: 6,
+                                  color: "#b91c1c",
+                                  fontSize: "0.72rem",
+                                  fontWeight: 650,
+                                  padding: "0.12rem 0.4rem",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Usuń
+                              </button>
+                            </>
+                          ) : null}
                         </span>
                       ) : null}
                     </div>
@@ -1446,28 +1480,6 @@ export function CzatKrPanel({
                         >
                           <TrescZGlosami tresc={w.tresc} mowcy={zespolDoZadan} />
                         </div>
-                        {mozeZadania ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setZadanieTytul(String(w.tresc ?? "").slice(0, 200));
-                              setPokazZadanie(true);
-                            }}
-                            style={{
-                              marginTop: "0.4rem",
-                              background: "none",
-                              border: "none",
-                              padding: 0,
-                              color: LIGHT.accent,
-                              fontSize: "0.75rem",
-                              fontWeight: 700,
-                              cursor: "pointer",
-                              textDecoration: "underline",
-                            }}
-                          >
-                            Utwórz zadanie z tej wiadomości
-                          </button>
-                        ) : null}
                       </>
                     )}
                   </div>
@@ -1704,6 +1716,7 @@ export function CzatKrPanel({
 
       {pokazZadanie && mozeZadania && !brakTabeli ? (
         <form
+          id="czat-kr-form-zadania"
           onSubmit={(e) => void utworzZadanie(e)}
           style={{
             marginTop: "0.75rem",
