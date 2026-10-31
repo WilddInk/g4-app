@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "test:slack": "node scripts/test-slack-webhook.mjs",
+    "test:podwykonawcy": "node --test src/podwykonawcyZlecenieModel.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

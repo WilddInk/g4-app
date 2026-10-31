@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { FakturaKosztowaEdycjaModal } from "./FakturaKosztowaEdycjaModal.jsx";
+import { PodwykonawcyZlecenieForm } from "./PodwykonawcyZlecenieForm.jsx";
 import { AuthScreen } from "./AuthScreen.jsx";
 import { CzasPracyPanel } from "./CzasPracyPanel.jsx";
 import { PlanFakturPanel } from "./PlanFakturPanel.jsx";
@@ -1424,7 +1425,7 @@ function krZleceniePwKwotaDoPayload(raw) {
 }
 
 function krZleceniePwKwotaEtykieta(wartosc) {
-  if (wartosc == null || wartosc === "") return "—";
+  if (wartosc == null || wartosc === "") return "do ustalenia";
   const n =
     typeof wartosc === "number"
       ? wartosc
@@ -2199,6 +2200,7 @@ export default function App() {
   const [krFakturySprzedazList, setKrFakturySprzedazList] = useState([]);
   const [krFakturySprzedazFetchError, setKrFakturySprzedazFetchError] = useState(null);
   const [krZleceniePwEdycjaId, setKrZleceniePwEdycjaId] = useState(null);
+  const [pokazNoweZleceniePw, setPokazNoweZleceniePw] = useState(false);
   const [krZleceniePwForm, setKrZleceniePwForm] = useState(() => krZleceniePwPustyForm());
   /** Kod KR dla zapisywanego zlecenia — wypełniany przy edycji z zakładki PW (gdy brak widokPwDlaKr). */
   const [krZleceniePwKontekstKr, setKrZleceniePwKontekstKr] = useState(null);
@@ -4823,6 +4825,45 @@ export default function App() {
     setKrZleceniePwForm(krZleceniePwPustyForm());
   }
 
+  function renderFormularzZleceniaPw(krDomyslne) {
+    const wiersz =
+      krZleceniePwEdycjaId == null
+        ? null
+        : pwZleceniaWszystkieList.find((z) => String(z.id) === String(krZleceniePwEdycjaId)) ||
+          krZleceniaPwList.find((z) => String(z.id) === String(krZleceniePwEdycjaId)) ||
+          null;
+    if (!krDomyslne && krZleceniePwEdycjaId == null && !pokazNoweZleceniePw) {
+      return (
+        <button type="button" style={s.btn} onClick={() => setPokazNoweZleceniePw(true)}>
+          Dodaj zlecenie
+        </button>
+      );
+    }
+    return (
+      <PodwykonawcyZlecenieForm
+        styles={s}
+        supabase={supabase}
+        session={session}
+        pracownicy={pracownicy}
+        podwykonawcy={podwykonawcyPosortowani}
+        krList={krList}
+        krDomyslne={krDomyslne || krZleceniePwKontekstKr || ""}
+        zlecenie={wiersz}
+        onZapisano={() => {
+          setPokazNoweZleceniePw(false);
+          anulujKrZleceniePwEdycje();
+          void fetchWszystkieZleceniaPw();
+          const kod = krDomyslne || widokPwDlaKr;
+          if (kod) void fetchKrZleceniaPwForKr(kod);
+        }}
+        onAnuluj={() => {
+          setPokazNoweZleceniePw(false);
+          anulujKrZleceniePwEdycje();
+        }}
+      />
+    );
+  }
+
   async function zapiszKrZleceniePw(e) {
     e.preventDefault();
     const k =
@@ -4936,6 +4977,14 @@ export default function App() {
     if (widok !== "podwykonawca") return;
     void fetchWszystkieZleceniaPw();
   }, [widok]);
+
+  useEffect(() => {
+    const numer = new URLSearchParams(window.location.search).get("zlecenie");
+    if (!numer) return;
+    setPodwykonawcaSekcja("zlecenia");
+    setWidok("podwykonawca");
+    setKrZleceniePwEdycjaId(numer);
+  }, []);
 
   useEffect(() => {
     if (widok === "zadania" && ["z_kr", "teren", "ogolne"].includes(taskSekcja)) {
@@ -15357,7 +15406,8 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-              {krZleceniePwEdycjaId != null ? (
+              {renderFormularzZleceniaPw("")}
+              {false && krZleceniePwEdycjaId != null ? (
                 <>
                   <h3
                     style={{
@@ -17745,6 +17795,9 @@ export default function App() {
               </table>
             </div>
           )}
+          {renderFormularzZleceniaPw(String(widokPwDlaKr || krZleceniePwKontekstKr || ""))}
+          {false && (
+          <>
           <h3
             style={{
               fontSize: "0.95rem",
@@ -17997,6 +18050,8 @@ export default function App() {
               ) : null}
             </div>
           </form>
+          </>
+          )}
         </section>
       ) : null}
 
