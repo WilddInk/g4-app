@@ -183,7 +183,7 @@ export function PodwykonawcyZlecenieForm({
       <Pole styles={s} etykieta="Termin wykonania robót">
         <input style={s.input} type="date" value={String(form.termin_zlecenia || "").slice(0, 10)} onChange={(e) => ustaw("termin_zlecenia", e.target.value)} />
       </Pole>
-      <Pole styles={s} etykieta="Planowana data faktury">
+      <Pole styles={s} etykieta="Data faktury">
         <input style={s.input} type="date" value={String(form.plan_data_faktury || "").slice(0, 10)} onChange={(e) => ustaw("plan_data_faktury", e.target.value)} />
       </Pole>
       <Pole styles={s} etykieta="Planowana kwota faktury netto">
@@ -244,7 +244,7 @@ export function PodwykonawcyZlecenieForm({
               }}
             />
           </Pole>
-          <Pole styles={s} etykieta="Plan faktury etapu">
+          <Pole styles={s} etykieta="Data faktury etapu">
             <input
               style={s.input}
               type="date"

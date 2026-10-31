@@ -224,7 +224,7 @@ function stylEtykietyUwagiPulpitu(czyUwaga) {
 const PULPIT_KIND_ORDER = { kr_start: 0, etap: 1, pw: 2, log: 3 };
 
 /** Przy tym samym dniu na osi: PW — najpierw data zlecenia, potem termin planowy, na końcu oddanie faktyczne. */
-const PW_PULPIT_ANCHOR_ORDER = { data_zlecenia: 0, termin_zlecenia: 1, data_oddania: 2 };
+const PW_PULPIT_ANCHOR_ORDER = { data_zlecenia: 0, termin_zlecenia: 1, data_oddania: 2, plan_data_faktury: 3 };
 
 /** Mała ikonka typu wpisu na osi czasu pulpitu (ETAP / PW / LOG / start KR). */
 function pulpitIkonTypu(kind) {
@@ -7300,6 +7300,7 @@ export default function App() {
           ? `Termin zlecenia (plan): ${dataPLZFormat(dataDoInputa(z.termin_zlecenia))}`
           : null,
         z.data_oddania ? `Data oddania (faktyczna): ${dataPLZFormat(dataDoInputa(z.data_oddania))}` : null,
+        z.plan_data_faktury ? `Data faktury: ${dataPLZFormat(dataDoInputa(z.plan_data_faktury))}` : null,
         z.cena_netto != null && z.cena_netto !== ""
           ? `Cena netto: ${krZleceniePwKwotaEtykieta(z.cena_netto)}`
           : null,
@@ -7319,6 +7320,7 @@ export default function App() {
       const dZ = dataDoSortuYYYYMMDD(z.data_zlecenia);
       const dT = dataDoSortuYYYYMMDD(z.termin_zlecenia);
       const dO = dataDoSortuYYYYMMDD(z.data_oddania);
+      const dF = dataDoSortuYYYYMMDD(z.plan_data_faktury);
       const pwPunkty = [
         dZ ? { sortKey: dZ, pwAnchor: "data_zlecenia", subtitle: "Data zlecenia", uwaga: false } : null,
         dT
@@ -7331,6 +7333,9 @@ export default function App() {
           : null,
         dO
           ? { sortKey: dO, pwAnchor: "data_oddania", subtitle: "Data oddania (faktyczna)", uwaga: false }
+          : null,
+        dF
+          ? { sortKey: dF, pwAnchor: "plan_data_faktury", subtitle: "Data faktury", uwaga: false }
           : null,
       ].filter(Boolean);
       const punkty =
@@ -15335,6 +15340,7 @@ export default function App() {
                       <th style={s.th}>Data zlecenia</th>
                       <th style={s.th}>Termin zlecenia</th>
                       <th style={s.th}>Data oddania</th>
+                      <th style={s.th}>Data faktury</th>
                       <th style={s.th}>Netto</th>
                       <th style={s.th}>Status</th>
                       <th style={s.th}>Spr.</th>
@@ -15372,6 +15378,7 @@ export default function App() {
                           <td style={s.td}>{z.data_zlecenia ? dataDoInputa(z.data_zlecenia) : "—"}</td>
                           <td style={s.td}>{z.termin_zlecenia ? dataDoInputa(z.termin_zlecenia) : "—"}</td>
                           <td style={s.td}>{z.data_oddania ? dataDoInputa(z.data_oddania) : "—"}</td>
+                          <td style={s.td}>{z.plan_data_faktury ? dataDoInputa(z.plan_data_faktury) : "—"}</td>
                           <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
                             {krZleceniePwKwotaEtykieta(z.cena_netto)}
                           </td>
@@ -17715,6 +17722,7 @@ export default function App() {
                     <th style={s.th}>Zakres</th>
                     <th style={s.th}>Data zlec.</th>
                     <th style={s.th}>Termin</th>
+                    <th style={s.th}>Data faktury</th>
                     <th style={s.th}>Netto</th>
                     <th style={s.th}>Status</th>
                     <th style={s.th}>Spr.</th>
@@ -17753,6 +17761,7 @@ export default function App() {
                         >
                           {z.termin_zlecenia ? dataDoInputa(z.termin_zlecenia) : "—"}
                         </td>
+                        <td style={s.td}>{z.plan_data_faktury ? dataDoInputa(z.plan_data_faktury) : "—"}</td>
                         <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
                           {krZleceniePwKwotaEtykieta(z.cena_netto)}
                         </td>
@@ -19211,6 +19220,7 @@ export default function App() {
                             <th style={s.th}>Data zlecenia</th>
                             <th style={s.th}>Termin zlecenia</th>
                             <th style={s.th}>Data oddania</th>
+                            <th style={s.th}>Data faktury</th>
                             <th style={s.th}>Netto</th>
                             <th style={s.th}>Status</th>
                             <th style={s.th}>Spr.</th>
@@ -19256,6 +19266,9 @@ export default function App() {
                                 </td>
                                 <td style={s.td}>
                                   {z.data_oddania ? dataDoInputa(z.data_oddania) : "—"}
+                                </td>
+                                <td style={s.td}>
+                                  {z.plan_data_faktury ? dataDoInputa(z.plan_data_faktury) : "—"}
                                 </td>
                                 <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
                                   {krZleceniePwKwotaEtykieta(z.cena_netto)}
