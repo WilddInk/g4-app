@@ -198,6 +198,70 @@ export async function usunWpisKrNotatka(supabase, id) {
   };
 }
 
+/** Podpowiedź dla administratora, gdy baza (RLS / GRANT) blokuje edycję wpisów. */
+export const PODPOWIEDZ_SQL_EDYCJI_KR_NOTATKA =
+  "Administrator: Supabase → SQL Editor → uruchom plik g4-app/supabase/kr-notatki-czat-edycja-naprawa.sql.";
+
+/** Czytelny opis błędu zapisu wpisu CZAT KR (sesja, sieć, uprawnienia w bazie). */
+export function opisBleduZapisuKrNotatka(error) {
+  const m = String(error?.message ?? error ?? "").trim();
+  const kod = String(error?.code ?? "").trim();
+  if (/jwt expired|invalid jwt|auth session missing|not authenticated/i.test(m) || kod === "PGRST301" || kod === "PGRST303") {
+    return "sesja logowania wygasła — odśwież stronę (F5), zaloguj się i kliknij „Zapisz” jeszcze raz.";
+  }
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) {
+    return "brak połączenia z serwerem — sprawdź internet i kliknij „Zapisz” jeszcze raz.";
+  }
+  if (kod === "42501" || /permission denied|row-level security/i.test(m)) {
+    return `baza nie pozwala zmieniać notatek (uprawnienia). ${PODPOWIEDZ_SQL_EDYCJI_KR_NOTATKA}`;
+  }
+  return m || "nieznany błąd zapisu.";
+}
+
+/**
+ * Zapis edycji wpisu CZAT KR (UPDATE na kr_notatka) — CLD 2026-11-20, zgłoszenie Damiana
+ * „po edycji wpisu nie da się zapisać zmiany”.
+ * Bez `.single()`: gdy baza (RLS) zablokuje UPDATE, PostgREST zwraca 0 wierszy bez błędu,
+ * a `.single()` zamieniał to w niezrozumiałe „Cannot coerce the result to a single JSON object”.
+ * Zwraca { ok: true, wpis } albo { ok: false, message, brakUprawnien? }.
+ */
+export async function zapiszEdycjeKrNotatka(supabase, id, zmiany) {
+  if (id == null || id === "") return { ok: false, message: "brak identyfikatora wpisu." };
+  const idEq = Number.isFinite(Number(id)) && String(id).trim() !== "" ? Number(id) : id;
+  try {
+    const { data, error } = await supabase
+      .from("kr_notatka")
+      .update(zmiany)
+      .eq("id", idEq)
+      .select(SELECT_WPIS);
+    if (error) return { ok: false, message: opisBleduZapisuKrNotatka(error) };
+    const wpis = Array.isArray(data) ? data[0] : data;
+    if (wpis) return { ok: true, wpis };
+
+    const { data: jest, error: eSel } = await supabase
+      .from("kr_notatka")
+      .select("id")
+      .eq("id", idEq)
+      .maybeSingle();
+    if (eSel) return { ok: false, message: opisBleduZapisuKrNotatka(eSel) };
+    if (!jest) {
+      return { ok: false, message: "tego wpisu nie ma już w bazie (usunięty) — kliknij „Odśwież”." };
+    }
+    return {
+      ok: false,
+      brakUprawnien: true,
+      message: `baza odrzuciła zmianę — brak uprawnienia do edycji notatek CZAT KR. ${PODPOWIEDZ_SQL_EDYCJI_KR_NOTATKA}`,
+    };
+  } catch (err) {
+    return { ok: false, message: opisBleduZapisuKrNotatka(err) };
+  }
+}
+
+/** Komunikaty o niepowodzeniu (czerwone), reszta komunikatów panelu jest zielona. */
+export function czyKomunikatBledu(msg) {
+  return /^(nie udało|baza nie|baza odrzuciła|błąd|brak tabeli)/i.test(String(msg ?? "").trim());
+}
+
 export async function upsertZnacznikPoczatek(supabase, { kr, startIso, znacznikId }) {
   const payload = {
     tresc: trescPoczatekSpotkania(startIso),

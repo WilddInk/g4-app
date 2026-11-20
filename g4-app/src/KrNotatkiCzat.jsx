@@ -16,6 +16,8 @@ import {
   odfiltrujUsunieteWpisy,
   zapiszSpotkanie,
   znajdzZnacznikPoczatek,
+  zapiszEdycjeKrNotatka,
+  czyKomunikatBledu,
 } from "./lib/czatKrSpotkanie.js";
 
 const LIGHT = {
@@ -79,6 +81,8 @@ export function KrNotatkiCzat({
   const [edycjaId, setEdycjaId] = useState(null);
   const [edycjaTresc, setEdycjaTresc] = useState("");
   const [zapisywanieEdycji, setZapisywanieEdycji] = useState(false);
+  /** Błąd zapisu pokazywany przy edytowanym wpisie (CLD 2026-11-20). */
+  const [edycjaBlad, setEdycjaBlad] = useState(null);
   const spotkanie = useSpotkanieKierownikow();
   const [poczatekLocal, setPoczatekLocal] = useState(() =>
     datetimeLocalZIso(spotkanie.startIso || new Date().toISOString()),
@@ -122,6 +126,7 @@ export function KrNotatkiCzat({
     void fetchWpisy();
     setEdycjaId(null);
     setEdycjaTresc("");
+    setEdycjaBlad(null);
   }, [fetchWpisy]);
 
   const widoczne = useMemo(() => {
@@ -288,12 +293,14 @@ export function KrNotatkiCzat({
     }
     setEdycjaId(w.id);
     setEdycjaTresc(String(w.tresc ?? ""));
+    setEdycjaBlad(null);
     setMsg(null);
   }
 
   function anulujEdycje() {
     setEdycjaId(null);
     setEdycjaTresc("");
+    setEdycjaBlad(null);
   }
 
   async function usunWpis(w) {
@@ -324,25 +331,24 @@ export function KrNotatkiCzat({
     const tekst = String(edycjaTresc ?? "").trim();
     if (!id) return;
     if (!tekst) {
-      setMsg("Treść notatki nie może być pusta.");
+      setEdycjaBlad("Treść notatki nie może być pusta.");
       return;
     }
     setZapisywanieEdycji(true);
+    setEdycjaBlad(null);
     setMsg(null);
-    const { data, error } = await supabase
-      .from("kr_notatka")
-      .update({ tresc: tekst })
-      .eq("id", id)
-      .select("id, kr, tresc, autor, autor_email, created_at")
-      .single();
+    const wynik = await zapiszEdycjeKrNotatka(supabase, id, { tresc: tekst });
     setZapisywanieEdycji(false);
-    if (error) {
-      setMsg(`Nie udało się zapisać zmian: ${error.message}`);
+    if (!wynik.ok) {
+      // Edycja zostaje otwarta — tekst się nie gubi (CLD 2026-11-20).
+      setEdycjaBlad(`Nie udało się zapisać zmian: ${wynik.message}`);
       return;
     }
+    const data = wynik.wpis;
     setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
     setEdycjaId(null);
     setEdycjaTresc("");
+    setEdycjaBlad(null);
     setMsg("Zapisano zmiany w notatce.");
   }
 
@@ -453,7 +459,16 @@ export function KrNotatkiCzat({
         </div>
       ) : null}
       {msg ? (
-        <div style={{ marginBottom: "0.5rem", fontSize: "0.8rem", color: LIGHT.ok }}>{msg}</div>
+        <div
+          role={czyKomunikatBledu(msg) ? "alert" : "status"}
+          style={{
+            marginBottom: "0.5rem",
+            fontSize: "0.8rem",
+            color: czyKomunikatBledu(msg) ? LIGHT.dangerText : LIGHT.ok,
+          }}
+        >
+          {msg}
+        </div>
       ) : null}
 
       {spotkanie.aktywne ? (
@@ -607,6 +622,22 @@ export function KrNotatkiCzat({
                       Anuluj
                     </button>
                   </div>
+                  {edycjaBlad ? (
+                    <div
+                      role="alert"
+                      style={{
+                        padding: "0.35rem 0.5rem",
+                        borderRadius: 8,
+                        background: LIGHT.dangerBg,
+                        border: LIGHT.dangerBorder,
+                        color: LIGHT.dangerText,
+                        fontSize: "0.78rem",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {edycjaBlad}
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div style={{ whiteSpace: "pre-wrap", fontSize: "0.82rem", lineHeight: 1.4, color: LIGHT.text }}>

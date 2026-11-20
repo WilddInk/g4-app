@@ -20,6 +20,8 @@ import {
   zlozProtokolSpotkania,
   KR_NOTATKA_USUNIETA,
   zapiszSpotkanie,
+  zapiszEdycjeKrNotatka,
+  czyKomunikatBledu,
 } from "./lib/czatKrSpotkanie.js";
 import { wyslijMailSprawozdania } from "./lib/spotkanieMail.js";
 import { czyKrZakonczonaLubArchiwalna, normalizujKrZArkusza } from "./lib/krNormalize.js";
@@ -222,6 +224,8 @@ export function CzatKrPanel({
   const [edycjaTresc, setEdycjaTresc] = useState("");
   const [edycjaMowcaNr, setEdycjaMowcaNr] = useState("");
   const [zapisywanieEdycji, setZapisywanieEdycji] = useState(false);
+  /** Błąd zapisu pokazywany przy edytowanym wpisie (nie na górze panelu, gdzie nikt go nie widzi). */
+  const [edycjaBlad, setEdycjaBlad] = useState(null);
 
   const [pokazZadanie, setPokazZadanie] = useState(false);
   const [zadanieTytul, setZadanieTytul] = useState("");
@@ -414,6 +418,7 @@ export function CzatKrPanel({
     setMsg(null);
     setEdycjaId(null);
     setEdycjaTresc("");
+    setEdycjaBlad(null);
   }
 
   function wyczyscTimerCiszy() {
@@ -622,6 +627,7 @@ export function CzatKrPanel({
     const pola = polaDatyGodzinyZIso(w.created_at);
     setEdycjaData(pola.data);
     setEdycjaGodzina(pola.godzina);
+    setEdycjaBlad(null);
     setMsg(null);
   }
 
@@ -629,6 +635,7 @@ export function CzatKrPanel({
     setEdycjaId(null);
     setEdycjaTresc("");
     setEdycjaMowcaNr("");
+    setEdycjaBlad(null);
   }
 
   function otworzZadanieZWpisu(w) {
@@ -671,34 +678,35 @@ export function CzatKrPanel({
     let tekst = String(edycjaTresc ?? "").trim();
     if (!id) return;
     if (!tekst) {
-      setMsg("Treść wpisu nie może być pusta.");
+      setEdycjaBlad("Treść wpisu nie może być pusta.");
       return;
     }
-    const iso = isoZDatyIGodziny(edycjaData, edycjaGodzina);
     const biezacy = wpisy.find((x) => x.id === id);
+    // CLD 2026-11-20: datę wysyłamy tylko, gdy ktoś ją zmienił — inaczej zostaje oryginalna.
+    const polaPrzed = biezacy ? polaDatyGodzinyZIso(biezacy.created_at) : null;
+    const dataZmieniona =
+      !polaPrzed || polaPrzed.data !== edycjaData || polaPrzed.godzina !== edycjaGodzina;
+    const iso = dataZmieniona ? isoZDatyIGodziny(edycjaData, edycjaGodzina) : biezacy.created_at;
     if (biezacy && czyZnacznikPoczatek(biezacy)) tekst = trescPoczatekSpotkania(iso);
     if (biezacy && czyZnacznikKoniec(biezacy)) tekst = trescKoniecSpotkania(spotkanie.startIso, iso);
+    const zmiany = { tresc: tekst };
+    if (dataZmieniona) zmiany.created_at = iso;
     setZapisywanieEdycji(true);
+    setEdycjaBlad(null);
     setMsg(null);
-    const { data, error } = await supabase
-      .from("kr_notatka")
-      .update({
-        tresc: tekst,
-        created_at: iso,
-      })
-      .eq("id", id)
-      .select("id, kr, tresc, autor, autor_email, created_at")
-      .single();
+    const wynik = await zapiszEdycjeKrNotatka(supabase, id, zmiany);
     setZapisywanieEdycji(false);
-    if (error) {
-      const m = String(error.message ?? "");
-      setMsg(`Nie udało się zapisać zmian: ${m}`);
+    if (!wynik.ok) {
+      // Edycja zostaje otwarta — wpisany tekst się nie gubi, można kliknąć „Zapisz” jeszcze raz.
+      setEdycjaBlad(`Nie udało się zapisać zmian: ${wynik.message}`);
       return;
     }
+    const data = wynik.wpis;
     setWpisy((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)));
     setEdycjaId(null);
     setEdycjaTresc("");
     setEdycjaMowcaNr("");
+    setEdycjaBlad(null);
     if (biezacy && czyZnacznikPoczatek(biezacy) && spotkanie.aktywne) {
       zapiszSpotkanie({
         aktywne: true,
@@ -934,7 +942,16 @@ export function CzatKrPanel({
         <div style={{ marginTop: "0.5rem", color: LIGHT.dangerText, fontSize: "0.8rem" }}>{err}</div>
       ) : null}
       {msg ? (
-        <div style={{ marginTop: "0.5rem", color: LIGHT.ok, fontSize: "0.8rem" }}>{msg}</div>
+        <div
+          role={czyKomunikatBledu(msg) ? "alert" : "status"}
+          style={{
+            marginTop: "0.5rem",
+            color: czyKomunikatBledu(msg) ? LIGHT.dangerText : LIGHT.ok,
+            fontSize: "0.8rem",
+          }}
+        >
+          {msg}
+        </div>
       ) : null}
 
       {typeof onOtworzSpotkaniaKierownikow === "function" ? (
@@ -1467,6 +1484,22 @@ export function CzatKrPanel({
                             Anuluj
                           </button>
                         </div>
+                        {edycjaBlad ? (
+                          <div
+                            role="alert"
+                            style={{
+                              padding: "0.4rem 0.55rem",
+                              borderRadius: 8,
+                              background: LIGHT.dangerBg,
+                              border: LIGHT.dangerBorder,
+                              color: LIGHT.dangerText,
+                              fontSize: "0.8rem",
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {edycjaBlad}
+                          </div>
+                        ) : null}
                       </div>
                     ) : (
                       <>
